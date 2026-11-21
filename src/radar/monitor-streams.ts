@@ -12,8 +12,9 @@ import { assembleLive, type RadarLive, type StreamRow } from "./live-view.ts"
  *
  * ```
  * radar.sessions (40) ─┬─ per session: radar.nativeCalls (18)
- * radar.assignments (40)┴─ per worker:  liveHistory toolsOnly (18), radar.steps (18)
- * radar.transcripts (the workers listed) ─► which sessions' phases are still being read
+ * radar.assignments (40)┼─ per session: radar.steps (18)
+ *                       └─ per worker:  liveHistory toolsOnly (18)
+ * radar.transcripts (every session listed) ─► which sessions' phases are still being read
  * radar.scheduler (1), radar.workload (1)
  *                         └─────────────► assembleLive ─► RadarLive
  * ```
@@ -59,7 +60,7 @@ type SessionStreams = {
   sessionID: string
   calls?: GuiStream<typeof liveHistoryRef.columns>
   native: GuiStream<typeof radarRefs.nativeCalls.columns>
-  steps?: GuiStream<typeof radarFlowRefs.steps.columns>
+  steps: GuiStream<typeof radarFlowRefs.steps.columns>
   /** A worker outside the sessions window: its own session row. */
   own?: GuiStream<typeof radarRefs.sessions.columns>
 }
@@ -124,17 +125,18 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
           order: "recent",
           window: CALLS_WINDOW,
         })),
+        // Every shown session's model steps are stored (Architect and unmanaged ones too).
+        steps: createStream(source.transport, radarFlowRefs.steps, () => ({
+          filter: one,
+          order: "recent",
+          window: STEPS_WINDOW,
+        })),
       }
       if (attemptID) {
         streams.calls = createStream(source.transport, liveHistoryRef, () => ({
           filter: { ...one, attemptID, toolsOnly: true },
           order: "recent",
           window: CALLS_WINDOW,
-        }))
-        streams.steps = createStream(source.transport, radarFlowRefs.steps, () => ({
-          filter: one,
-          order: "recent",
-          window: STEPS_WINDOW,
         }))
         if (!windowed().has(sessionID))
           streams.own = createStream(source.transport, radarRefs.sessions, () => ({
@@ -146,11 +148,21 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
       return streams
     }),
   )
-  const workers = createMemo(() => [...attempts().keys()].toSorted(), [], { equals: sameList })
+  /** Every session the Monitor reads: their stored transcript read state says what is final. */
+  const listed = createMemo(
+    () =>
+      keys()
+        .map((key) => key.split("\u0000")[0]!)
+        .toSorted(),
+    [],
+    {
+      equals: sameList,
+    },
+  )
   const transcripts = createStream(source.transport, radarFlowRefs.transcripts, () => ({
-    filter: { ...base, sessionIDs: workers() },
+    filter: { ...base, sessionIDs: listed() },
     order: "key",
-    window: Math.max(1, workers().length),
+    window: Math.max(1, listed().length),
   }))
 
   const streams = () => [
@@ -187,9 +199,7 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
     )
     // Not read in full yet, or the transcripts stream itself has not answered: still loading.
     const phasesLoading = new Set(
-      workers().filter(
-        (id) => !transcripts.loaded() || (read.get(id) ?? "not-read") === "not-read",
-      ),
+      listed().filter((id) => !transcripts.loaded() || (read.get(id) ?? "not-read") === "not-read"),
     )
     const calls = new Map<string, readonly StreamRow[]>()
     const nativeCalls = new Map<string, readonly StreamRow[]>()
@@ -198,7 +208,7 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
     for (const item of perSession()) {
       nativeCalls.set(item.sessionID, rowsOf(item.native))
       if (item.calls) calls.set(item.sessionID, rowsOf(item.calls))
-      if (item.steps) steps.set(item.sessionID, rowsOf(item.steps))
+      steps.set(item.sessionID, rowsOf(item.steps))
       const own = rowsOf(item.own).find((row) => row.session_id === item.sessionID)
       if (own) extra.push(own)
     }

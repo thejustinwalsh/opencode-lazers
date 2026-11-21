@@ -6,7 +6,10 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { ensureHostSessionStateSchema, writeHostSession } from "../../src/host-sessions/state.ts"
 import { ensureNativeCallDisplaySchema } from "../../src/progress/native-call-display.ts"
-import { ensureTranscriptMetaSchema } from "../../src/transcript-meta/schema.ts"
+import {
+  ensureTranscriptMetaSchema,
+  writeTranscriptPage,
+} from "../../src/transcript-meta/schema.ts"
 import { ProgressRecorder } from "../../src/progress/recorder.ts"
 import { refreshProgressDisplay } from "../../src/progress/display-store.ts"
 import { Streams } from "../../src/streams/contract.ts"
@@ -368,6 +371,45 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       updatedAt: Date.now(),
       model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
     })
+    // Every shown session's model steps are stored (`transcript_steps`): the Architect's, an
+    // unmanaged session's, and one whose transcript is still being read (a page not at its end).
+    hostSession("ses-dom-human", { agent: "build", busy: true, updatedAt: Date.now() - 2_000 })
+    hostSession("ses-dom-reading", { agent: "build", busy: true, updatedAt: Date.now() - 3_000 })
+    const step = (id: string, model: string, at: number) => ({
+      type: "assistant",
+      id,
+      model: { providerID: "openai", id: model, variant: "high" },
+      time: { created: at, streamed: at + 200, completed: at + 600 },
+      tokens: { input: 1_200, output: 40 },
+    })
+    const unread = { cursor: null, base: 0, messageCount: 0, state: "not-read" as const }
+    fixture.repository.atomic((db) => {
+      const now = Date.now()
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        "ses-view-architect",
+        unread,
+        [{ type: "user", id: "u-arch" }, step("msg_ui_architect", "gpt-6-luna", now - 5_000)],
+        undefined,
+      )
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        "ses-dom-human",
+        unread,
+        [step("msg_dom_human", "kimi-k3", now - 4_000)],
+        undefined,
+      )
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        "ses-dom-reading",
+        unread,
+        [step("msg_dom_reading", "kimi-k3", now - 3_500)],
+        "next-page",
+      )
+    })
     // Every Monitor read is a stream, backed here by a real reader pool over the fixture's database.
     const streamBus = changeBus<{ stream: string; seq: number }>()
     const streamOpens: { source: string; filter: Record<string, unknown>; window: number }[] = []
@@ -603,10 +645,18 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       await until(() => disclosure(label) !== undefined)
       if (disclosure(label)!.getAttribute("aria-expanded") !== "true") disclosure(label)!.click()
     }
-    // An Architect's model steps have no stored form (`transcript_steps` folds worker attempts):
-    // it shows no Messages rather than anything not stored.
-    await until(() => inspectorText().includes("gpt-6-luna · high"))
-    expect(container.querySelectorAll(".lazers-radar-message").length).toBe(0)
+    // The Architect's stored model steps are its Messages; no message id or text is shown.
+    await openDisclosure("Messages")
+    await until(() =>
+      [...container.querySelectorAll(".lazers-radar-message")].some((row) =>
+        row.textContent?.includes("Architect Model request"),
+      ),
+    )
+    expect(
+      [...container.querySelectorAll(".lazers-radar-message")].some((row) =>
+        row.textContent?.includes("Response received"),
+      ),
+    ).toBe(true)
     expect(inspectorText()).not.toContain("msg_ui_architect")
     expect(inspectorText()).toContain("gpt-6-luna · high")
     expect(container.querySelector('[role="separator"]')).not.toBeNull()
@@ -931,6 +981,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     expect(text()).not.toMatch(/Unavailable|not observed/)
     const flowCanvas = container.querySelector(".lazers-radar-flowcanvas svg")
+    // The Architect's and the unmanaged session's model calls are flows to their models.
+    expect(flowCanvas).not.toBeNull()
     // Flow's pane is collapsed to its tab bar; a tab click opens it on that tab.
     expect(paneOpen()).toBe("false")
     if (flowCanvas) {
@@ -943,6 +995,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       flowTabs()[1]!.click()
       await until(() => paneOpen() === "true")
       expect(flowTabs()[1]!.getAttribute("aria-selected")).toBe("true")
+      // The Models tab names the Architect's and the unmanaged session's models in full.
+      await until(() => text().includes("gpt-6-luna") && text().includes("kimi-k3"))
       expect(container.querySelector(".lazers-radar-models")).not.toBeNull()
       expect(
         [...container.querySelectorAll('.lazers-radar-flow-tabs [role="tab"]')].map((item) =>
@@ -981,6 +1035,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(false)
     expect(headerShape()).toEqual(monitorHeaderShape)
 
+    // A session whose transcript is still being read says so in Messages, never an empty list.
+    await until(() => sessionButton("ses-dom-reading") !== undefined)
+    sessionButton("ses-dom-reading")!.click()
+    openPane()
+    await openDisclosure("Messages")
+    await until(() => inspectorText().includes("model steps are still being read"))
     // Losing the service keeps the last sessions on screen, dimmed, under one banner.
     session.server.connected = false
     hostSession("ses-view-architect", {

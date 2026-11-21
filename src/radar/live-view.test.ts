@@ -114,3 +114,72 @@ test("a worker whose stored phases are not read yet is marked loading, never emp
   expect(live.sessions[0]?.phasesLoading).toBe(true)
   expect(fromStreams().sessions[0]?.phasesLoading).toBeUndefined()
 })
+
+/**
+ * The same fixture's `shown` section: stream rows of an Architect, an unmanaged session and a
+ * session still being read, now that every shown session's steps are stored.
+ */
+function shownLive(): RadarLive {
+  const shown = recorded.shown
+  const steps = shown.steps as Record<string, StreamRow[]>
+  const read = new Map(shown.transcripts.map((row) => [row.session_id, row.read_state]))
+  return assembleLive({
+    scope: shown.scope as { kind: "project"; sessionID: string },
+    projectDirectory: shown.project,
+    now: NOW,
+    includeUnmanagedSessions: true,
+    sessions: shown.sessions as StreamRow[],
+    assignments: [],
+    calls: new Map(),
+    nativeCalls: new Map(),
+    steps: new Map(Object.entries(steps)),
+    phasesLoading: new Set(
+      shown.sessions
+        .map((row) => row.session_id)
+        .filter((id) => (read.get(id) ?? "not-read") === "not-read"),
+    ),
+  })
+}
+
+test("Architect and unmanaged sessions draw their stored model steps in Flow and Messages", () => {
+  const live = shownLive()
+  const model = createFlowModel(live, NOW)
+  const feed = (sessionID: string) => model.feed.filter((row) => row.sessionID === sessionID)
+  expect(feed("ses-arch").map((row) => [row.destName, row.detail, row.failed])).toEqual([
+    ["gpt-6-sol", "request", true],
+    ["gpt-6-sol", "request · 3.0k in · 90 out", false],
+  ])
+  expect(feed("ses-human").map((row) => row.destName)).toEqual(["kimi-k3"])
+  expect(model.models.find((card) => card.id === "gpt-6-sol")).toMatchObject({
+    calls: 2,
+    inputTokens: 3_000,
+    outputTokens: 90,
+  })
+  const messages = (sessionID: string) =>
+    live.flow
+      .filter((item) => item.sessionID === sessionID && item.kind !== "tool-phase")
+      .map((item) => flowPhase(item, live).label)
+  expect(messages("ses-arch")).toEqual([
+    "Model request",
+    "Streaming response",
+    "Response received",
+    "Model request",
+    "Streaming response",
+    "Model request failed",
+  ])
+  expect(messages("ses-human")).toEqual([
+    "Model request",
+    "Streaming response",
+    "Response received",
+  ])
+})
+
+test("a session whose stored steps are still being read is marked loading; read ones are final", () => {
+  const live = shownLive()
+  const loading = (id: string) => live.sessions.find((s) => s.sessionID === id)?.phasesLoading
+  expect([loading("ses-arch"), loading("ses-human"), loading("ses-reading")]).toEqual([
+    undefined,
+    undefined,
+    true,
+  ])
+})

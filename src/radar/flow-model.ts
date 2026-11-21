@@ -458,7 +458,7 @@ export function modelWhen(card: ModelCard, now: number) {
 }
 
 /**
- * Sentences for the quiet state; a clause without data is omitted. While a worker's stored model
+ * Sentences for the quiet state; a clause without data is omitted. While a session's stored model
  * steps are still being read, an empty Flow is not final: it says so instead of "nothing".
  */
 export function quietSentences(live: Live) {

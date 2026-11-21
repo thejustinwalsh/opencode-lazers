@@ -5,7 +5,7 @@ import type { RadarScope } from "./radar-ref.ts"
 /**
  * The Monitor's model phases, the part a consumer without a database needs. Rows come from the
  * stored transcript metadata (`transcript_steps`, `transcript_sessions`, `src/transcript-meta/`):
- * one row per assistant message of a worker attempt session, no text.
+ * one row per assistant message of every session the Monitor shows, no text.
  *
  * ```
  * radar.steps        one session's steps, newest first   ─► model request / stream / response

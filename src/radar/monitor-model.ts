@@ -199,6 +199,9 @@ export function flowPhase(item: LiveFlow, live?: Live) {
       "Tool"
     return { label: `${tool} ${callStatusWord(callStatus(item.status))}`, status: "ended" as const }
   }
+  // Stored steps carry the recorder's step statuses: a failed response is a failed request.
+  if (item.kind === "model-response" && item.status === "failed")
+    return { label: "Model request failed", status: "failed" as const }
   return (
     PHASES[item.status] ?? {
       label:

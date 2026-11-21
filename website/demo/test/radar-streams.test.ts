@@ -155,3 +155,27 @@ test("the demo answers the Monitor's sessions, calls and model steps; Flow draws
   expect(flow.models[0]).toMatchObject({ name: "gpt-6-luna", calls: 3 })
   expect(flow.feed.some((row) => row.kind === "model")).toBe(true)
 })
+
+test("the demo answers the Architect's model steps too: every shown session's are stored", () => {
+  const withCalls: RadarData = {
+    ...data,
+    architect: { ...data.architect, calls: [{ tool: "read", at: 500, ms: 40 }] },
+  }
+  const server = radarStreams(() => withCalls, {
+    project: "/demo",
+    architect: "ses-demo",
+    taskID: (n) => uid(1, n),
+    attemptID: (n) => uid(2, n),
+    ref: (n) => `LZ-${n}`,
+    workerSession: (n) => `ses-worker-${n}`,
+    abs: (at) => 1_000_000 + at,
+  })
+  const reply = server.open({
+    stream: crypto.randomUUID(),
+    source: "radar.steps",
+    filter: { sessionID: "ses-demo" },
+    order: "recent",
+    window: 18,
+  })
+  expect(decode(reply, radarStepColumns).rows).toMatchObject([{ model_id: "gpt-6-luna" }])
+})

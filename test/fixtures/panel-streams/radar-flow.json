@@ -642,5 +642,177 @@
         "message_count": 4
       }
     ]
+  },
+  "shown": {
+    "project": "/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/lazers-trajectory-z4sBgD",
+    "scope": {
+      "kind": "project",
+      "sessionID": "ses-arch"
+    },
+    "sessions": [
+      {
+        "id": 1,
+        "session_id": "ses-arch",
+        "role": "architect",
+        "agent": "architect",
+        "title": null,
+        "attempt_id": null,
+        "task_id": null,
+        "parent_session_id": null,
+        "directory": "/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/lazers-trajectory-z4sBgD",
+        "busy": true,
+        "pending_input": false,
+        "pending_permissions": 0,
+        "pending_forms": 0,
+        "outcome": null,
+        "archived": false,
+        "route_provider": "openai",
+        "route_model": "gpt-6-sol",
+        "route_variant": "high",
+        "tokens_in": null,
+        "tokens_out": null,
+        "created_at": 1800000000000,
+        "updated_at": 1800000006000,
+        "host_updated_at": 1800000006000
+      },
+      {
+        "id": 2,
+        "session_id": "ses-human",
+        "role": "unmanaged",
+        "agent": "build",
+        "title": null,
+        "attempt_id": null,
+        "task_id": null,
+        "parent_session_id": null,
+        "directory": "/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/lazers-trajectory-z4sBgD",
+        "busy": true,
+        "pending_input": false,
+        "pending_permissions": 0,
+        "pending_forms": 0,
+        "outcome": null,
+        "archived": false,
+        "route_provider": "openai",
+        "route_model": "gpt-6-sol",
+        "route_variant": "high",
+        "tokens_in": null,
+        "tokens_out": null,
+        "created_at": 1800000000000,
+        "updated_at": 1800000005000,
+        "host_updated_at": 1800000005000
+      },
+      {
+        "id": 3,
+        "session_id": "ses-reading",
+        "role": "unmanaged",
+        "agent": "build",
+        "title": null,
+        "attempt_id": null,
+        "task_id": null,
+        "parent_session_id": null,
+        "directory": "/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/lazers-trajectory-z4sBgD",
+        "busy": true,
+        "pending_input": false,
+        "pending_permissions": 0,
+        "pending_forms": 0,
+        "outcome": null,
+        "archived": false,
+        "route_provider": "openai",
+        "route_model": "gpt-6-sol",
+        "route_variant": "high",
+        "tokens_in": null,
+        "tokens_out": null,
+        "created_at": 1800000000000,
+        "updated_at": 1800000004000,
+        "host_updated_at": 1800000004000
+      }
+    ],
+    "steps": {
+      "ses-arch": [
+        {
+          "id": 2,
+          "session_id": "ses-arch",
+          "message_id": "a2",
+          "ordinal": 2,
+          "provider_id": "openai",
+          "model_id": "gpt-6-sol",
+          "variant": "high",
+          "created_at": 1800000003000,
+          "streamed_at": 1800000003300,
+          "completed_at": 1800000003800,
+          "input_tokens": null,
+          "output_tokens": null,
+          "error_type": "ProviderError"
+        },
+        {
+          "id": 1,
+          "session_id": "ses-arch",
+          "message_id": "a1",
+          "ordinal": 1,
+          "provider_id": "openai",
+          "model_id": "gpt-6-sol",
+          "variant": "high",
+          "created_at": 1800000001000,
+          "streamed_at": 1800000001300,
+          "completed_at": 1800000001800,
+          "input_tokens": 3000,
+          "output_tokens": 90,
+          "error_type": null
+        }
+      ],
+      "ses-human": [
+        {
+          "id": 3,
+          "session_id": "ses-human",
+          "message_id": "h1",
+          "ordinal": 1,
+          "provider_id": "openai",
+          "model_id": "kimi-k3",
+          "variant": "high",
+          "created_at": 1800000002000,
+          "streamed_at": 1800000002300,
+          "completed_at": 1800000002800,
+          "input_tokens": 800,
+          "output_tokens": 20,
+          "error_type": null
+        }
+      ],
+      "ses-reading": [
+        {
+          "id": 4,
+          "session_id": "ses-reading",
+          "message_id": "r1",
+          "ordinal": 0,
+          "provider_id": "openai",
+          "model_id": "kimi-k3",
+          "variant": "high",
+          "created_at": 1800000001500,
+          "streamed_at": 1800000001800,
+          "completed_at": 1800000002300,
+          "input_tokens": 500,
+          "output_tokens": 10,
+          "error_type": null
+        }
+      ]
+    },
+    "transcripts": [
+      {
+        "id": 1,
+        "session_id": "ses-arch",
+        "read_state": "available",
+        "message_count": 3
+      },
+      {
+        "id": 2,
+        "session_id": "ses-human",
+        "read_state": "available",
+        "message_count": 2
+      },
+      {
+        "id": 3,
+        "session_id": "ses-reading",
+        "read_state": "not-read",
+        "message_count": 1
+      }
+    ]
   }
 }

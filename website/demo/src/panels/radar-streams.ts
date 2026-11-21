@@ -26,8 +26,8 @@ import type { DemoCall, DemoWorker, RadarData } from "./radar-answers.ts"
 /**
  * The demo's answer to `lazers.streams` for the Radar, as real frames over the demo's mock world:
  * the Monitor's sessions (`radar.sessions`), active attempts (`radar.assignments`), scheduler,
- * each session's canonical calls (`radar.nativeCalls`) and each worker's model steps
- * (`radar.steps`, `radar.transcripts`: every worker read in full); the worker pane's attempt
+ * each session's canonical calls (`radar.nativeCalls`) and each session's model steps
+ * (`radar.steps`, `radar.transcripts`: every session read in full); the worker pane's attempt
  * (`radar.attempt`) and calls (`observability.liveHistory`: the lane, the newest row and the
  * older-calls list); a Map group's tasks with the workload (`radar.group`, `radar.workload`).
  */
@@ -143,21 +143,26 @@ function nativeCallRows(sessionID: string, calls: DemoCall[], ids: RadarIds): De
 }
 
 /**
- * A worker's model steps, newest first: one request before each call, answered just before the
+ * A session's model steps, newest first: one request before each call, answered just before the
  * call starts, with measured tokens. A running call's step has finished; the model is not asked
- * again until the call returns.
+ * again until the call returns. `n` keys the rows: a worker's number, 0 for the Architect.
  */
-function stepRows(worker: DemoWorker, ids: RadarIds): DemoRow[] {
-  const sessionID = ids.workerSession(worker.n)
-  return worker.calls
+function stepRows(
+  sessionID: string,
+  n: number,
+  model: DemoWorker["model"],
+  calls: DemoCall[],
+  ids: RadarIds,
+): DemoRow[] {
+  return calls
     .map((call, index) => ({
-      id: worker.n * 1_000 + index + 1,
+      id: n * 1_000 + index + 1,
       session_id: sessionID,
-      message_id: `msg-${worker.n}-${index}`,
+      message_id: `msg-${n}-${index}`,
       ordinal: index * 2 + 1,
-      provider_id: worker.model.providerID,
-      model_id: worker.model.id,
-      variant: worker.model.variant ?? null,
+      provider_id: model.providerID,
+      model_id: model.id,
+      variant: model.variant ?? null,
       created_at: ids.abs(call.at - 1_400),
       streamed_at: ids.abs(call.at - 900),
       completed_at: ids.abs(call.at - 100),
@@ -272,18 +277,24 @@ function rowsOf(data: RadarData, open: Open, ids: RadarIds): DemoRow[] {
     const found = worker(filter.sessionID)
     return found ? nativeCallRows(ids.workerSession(found.n), found.calls, ids) : []
   }
-  if (open.source === RADAR_FLOW_SOURCES.steps) {
-    const found = worker(filter.sessionID)
-    return found ? stepRows(found, ids) : []
+  /** Every shown session's model steps are stored: the Architect's and each worker's. */
+  const sessionSteps = (sessionID: unknown) => {
+    if (sessionID === ids.architect)
+      return stepRows(ids.architect, 0, data.architect.model, data.architect.calls, ids)
+    const found = worker(sessionID)
+    return found
+      ? stepRows(ids.workerSession(found.n), found.n, found.model, found.calls, ids)
+      : undefined
   }
+  if (open.source === RADAR_FLOW_SOURCES.steps) return sessionSteps(filter.sessionID) ?? []
   if (open.source === RADAR_FLOW_SOURCES.transcripts)
     return (Array.isArray(filter.sessionIDs) ? filter.sessionIDs : [])
-      .filter((id) => worker(id))
+      .filter((id) => sessionSteps(id) !== undefined)
       .map((id, index) => ({
         id: index + 1,
         session_id: id,
         read_state: "available",
-        message_count: (worker(id)!.calls.length + 1) * 2,
+        message_count: (sessionSteps(id)!.length + 1) * 2,
       }))
   const tasks = (group: unknown) =>
     group === "needs-you" ? data.needsYou : group === "failed" ? data.failed : data.queued
