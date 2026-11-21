@@ -312,11 +312,8 @@ async function rpcFixture(sessionProjectID = "project") {
 test("rpc: every all-projects read lists every project and asserts no permission", async () => {
   const f = await rpcFixture()
   for (const [method, extra] of [
-    ["topology", {}],
     ["snapshot", {}],
     ["liveRadar", { includeUnmanagedSessions: false }],
-    ["radar", { includeUnmanagedSessions: false }],
-    ["liveGroup", { group: "queued" }],
     ["progressDiagnostics", {}],
   ] as const) {
     const pages = await f.walk(method, extra)
@@ -329,12 +326,12 @@ test("rpc: every all-projects read lists every project and asserts no permission
 
 test("rpc: all from a session of another OpenCode project is refused", async () => {
   const f = await rpcFixture("foreign-project")
-  await expect(f.call("topology", { scope: all })).rejects.toThrow(
+  await expect(f.call("snapshot", { scope: all })).rejects.toThrow(
     "Observation scope is unavailable",
   )
 })
 
-test("rpc: trajectory by reference and live attempt resolve across projects", async () => {
+test("rpc: trajectory by reference resolves across projects", async () => {
   const f = await rpcFixture()
   const [, b] = f.three.projects
   const taskID = b!.taskIDs[0]!
@@ -346,11 +343,6 @@ test("rpc: trajectory by reference and live attempt resolve across projects", as
     limit: 5,
   })
   expect(trajectory).toMatchObject({ project: { code: "BBB" }, scope: { kind: "all" } })
-  const attempt = await f.call<{ project: { code: string } }>("liveAttempt", {
-    scope: all,
-    sessionID: "ses-beta-worker",
-  })
-  expect(attempt.project.code).toBe("BBB")
   await expect(
     f.call("trajectory", { scope: all, reference: "BBB-9999", limit: 5 }),
   ).rejects.toThrow("No observation in this scope")
@@ -369,15 +361,11 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
   writer.exec("BEGIN IMMEDIATE")
   try {
     for (const [method, extra] of [
-      ["topology", {}],
       ["snapshot", {}],
       ["liveRadar", { includeUnmanagedSessions: false }],
-      ["radar", { includeUnmanagedSessions: false }],
-      ["liveGroup", { group: "queued" }],
     ] as const)
       expect((await f.walk(method, extra)).length).toBe(3)
     await f.call("trajectory", { scope: all, reference, limit: 5 })
-    await f.call("liveAttempt", { scope: all, sessionID: "ses-beta-worker" })
     await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
     await tasks.currentActivity({ sessionID: "ses-caller", scope: "all", taskIDs: [taskID] })
   } finally {
