@@ -69,8 +69,8 @@ retention of settled history.
 1. Trace readers and writers for every table above. **Done** (see "Traced facts" and
    "Corrections to the trace").
 2. Dimension tables and integer keys, with migrations that keep old rows readable.
-   **In progress (branch `fix/integer-keys`): steps 1 and 2 done, step 3 started; see
-   "Integer identity: built".**
+   **Done for `runner_transitions` and `runner_progress` (branch `feat/integer-keys`); see
+   "Integer identity: landed".**
 3. Per-table compaction. **Done:** `task_changes` (counter rows), `recovery_progress_facts`
    (bounded window), `runner_conflict_scans` (dropped), outbox receipts (child rows), the four
    unused indexes. **Left:** `native_tool_calls` / `runner_progress` payloads, check receipts,
@@ -217,7 +217,45 @@ Fastest safe wins, in order: delete `runner_conflict_scans` rows; collapse
 `task_changes`; stop or window `recovery_progress_facts`; drop unused indexes. Together
 about 1 GB of the 2.58 GB, with no reader affected.
 
-## Integer identity: measured, not merged (2026-11-20)
+## Integer identity: landed (2026-11-21)
+
+The owner chose to finish the work above. What changed from the plan:
+
+- **Step 4 is online and drops indexes only.** Each history table moves through the
+  `identityKeys` lifecycle (`src/runner/lifecycle-machines.ts`):
+  `backfilling -> indexing -> keyed -> text-retired`. The retention idle step
+  (`advanceIdentityKeys`, `src/runner/identity-migration.ts`) keys a page of 1,000 rows per
+  transaction, builds the integer indexes at a quiet point (a worker on a large table), then drops
+  one text-id index per transaction and returns the pages with the existing incremental vacuum.
+  The stored state is the resume point. While attempts run it only keys pages.
+- **The text columns stay.** Dropping them is a table rewrite (about 15 s, offline) for the row
+  bytes alone; the measurement below shows the index drop holds nearly all of the saving. The
+  columns keep result columns, joins driven from the history row and the key triggers working.
+- **Every predicate moved.** All plan and attempt predicates on the two tables go through
+  `planIs`, `planIn`, `planJoin`, `samePlan`, `attemptIs`, `attemptIn`
+  (`src/runner/identity-read.ts`): the text form until the table is `keyed`, the integer form after.
+  `src/runner/identity-predicates.test.ts` fails on a new text-id predicate.
+- **A new database never builds a text-id index:** install settles its empty tables straight to
+  `text-retired`, so the test suite runs the integer path.
+
+Measured with `bun scripts/measure-integer-keys.ts --transitions 420000 --progress 80000` (the
+live row counts on 2026-11-21 are 418,298 and 78,764), `auto_vacuum=INCREMENTAL`, 4 KiB pages,
+while other test runs shared the machine:
+
+| Bytes                        | Before   | Migrated (pages free) | Pages returned | Full `VACUUM` |
+| ---------------------------- | -------- | --------------------- | -------------- | ------------- |
+| `runner_transitions` rows    | 246.4 MB | 246.4 MB              | 246.4 MB       | 246.4 MB      |
+| `runner_transitions` indexes | 119.7 MB | 61.5 MB               | 61.5 MB        | 61.5 MB       |
+| `runner_progress` rows       | 328.5 MB | 328.5 MB              | 328.5 MB       | 328.5 MB      |
+| `runner_progress` indexes    | 20.3 MB  | 14.8 MB               | 14.8 MB        | 14.8 MB       |
+| File                         | 717.9 MB | 780.1 MB              | 654.8 MB       | 654.8 MB      |
+
+The saving is 63.1 MB of the file (8.8 %), all indexes. The file peaks 62 MB larger while both
+index sets exist; the incremental vacuum returns the text indexes' pages, and a full `VACUUM`
+adds nothing. A page of 1,000 rows commits in 6 ms (p50, transitions) and 35 ms (progress); the
+whole migration took 7 slices of 800 ms (6.3 s of work), the integer index builds included.
+
+## Integer identity: measured, not merged (2026-11-20; superseded by "landed" above)
 
 Branch `fix/integer-keys` (not merged) built steps 1 and 2 (key tables for plans and attempts;
 nullable integer columns on `runner_transitions` and `runner_progress`, backfilled in pages of
