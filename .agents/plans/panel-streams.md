@@ -824,3 +824,19 @@ Every bump is a full service restart; four restarts total (one per wave 1–4).
   over the old read's scope checks"); no new permission requirement in this release.
 - **Question 4, driver's call:** one service process per database is the only supported
   deployment (the OpenCode service owns the plugin data directory).
+
+## Owner decision, final, on transcripts (2026-11-21, later the same day)
+
+This replaces the "transcripts: not stored" entry above. In the owner's words: store, at a
+minimum, all the metadata from the transcript that we require; skip the line-by-line text.
+
+- **OpenCode owns message text.** It is read on demand, by cursor, for display. It is never
+  written to `tasks.sqlite`.
+- **LAZERS owns the facts it derives from messages** (data-handling principle 4) and stores them
+  once: per message or step, the ids, ordering key and times, role, provider, model, effort, the
+  five token categories, finish or error name, and tool call ids, names, status and duration
+  where a consumer reads them. A column with no consumer is not stored; no free-text column
+  exists.
+- Effort and route coverage are computed from those stored rows alone, with whole-object parity
+  against the history capture. A session OpenCode has pruned keeps the rows already folded.
+- The rows follow the finished-plan retention age.
