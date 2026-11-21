@@ -87,7 +87,6 @@ type Props = {
   onDetailsChange: (change: Partial<DetailsState>) => void
   onScopeChange: (choice: MonitorScopeChoice) => void
   onSelectSession: (sessionID: string) => void
-  onRefresh: () => void
   /**
    * The project's streams: the selected worker's attempt and older calls, and a Map group's tasks.
    * Absent when there is no stream service.
@@ -909,7 +908,6 @@ export function RadarMonitorView(props: Props) {
         scope={scopeChoice()}
         onScope={props.onScopeChange}
         connection={connection()}
-        onRefresh={props.onRefresh}
         actions={menuActions()}
       />
       <DetailsPane
@@ -929,7 +927,7 @@ export function RadarMonitorView(props: Props) {
         top={
           <div class="lazers-radar-pane-top">
             <div class="lazers-radar-top">
-              <PanelStatus ui={Ui} status={status} onRetry={props.onRefresh} skeleton="rows" />
+              <PanelStatus ui={Ui} status={status} skeleton="rows" />
               <Show
                 when={
                   props.view !== "map" &&

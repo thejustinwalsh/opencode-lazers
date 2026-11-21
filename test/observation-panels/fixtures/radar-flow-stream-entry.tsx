@@ -76,7 +76,6 @@ export function mountStream(container: HTMLElement, intervalMs = 400) {
         onDetailsChange: () => {},
         onScopeChange: () => {},
         onSelectSession: () => {},
-        onRefresh: () => {},
         onLoadMoreHistory: () => {},
         onView: () => {},
         showIdle: true,

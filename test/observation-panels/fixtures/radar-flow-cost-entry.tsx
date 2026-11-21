@@ -47,7 +47,6 @@ export function mountRadar(view: "monitor" | "map" | "flow", container: HTMLElem
         onDetailsChange: () => {},
         onScopeChange: () => {},
         onSelectSession: () => {},
-        onRefresh: () => {},
         onLoadMoreHistory: () => {},
         onView: () => {},
         showIdle: true,

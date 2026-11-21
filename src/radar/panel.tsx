@@ -977,7 +977,6 @@ function RadarLiveMonitorPanel(
             scope={prefs().scope === "session" ? "session" : "project"}
             onScope={changeScope}
             connection={connectionChip(location.error ? "offline" : "reconnecting")}
-            onRefresh={() => {}}
           />
           <div class="lazers-radar-top">
             <PanelStatus ui={ctx.ui} status={locationStatus} skeleton="rows" />
@@ -1000,8 +999,6 @@ function RadarLiveMonitorPanel(
           setChosen(sessionID)
           save({ monitorSessionID: sessionID })
         }}
-        // Streams push every change of their rows: there is nothing to re-read.
-        onRefresh={() => {}}
         history={historySource()}
         showIdle={prefs().showIdle === true}
         onShowIdleChange={(showIdle) => save({ showIdle })}

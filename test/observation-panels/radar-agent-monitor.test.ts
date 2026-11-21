@@ -791,7 +791,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const menuLabels = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map(
       (button) => button.textContent,
     )
-    expect(menuLabels).toEqual(["Refresh", "Open worker", "Show idle sessions"])
+    expect(menuLabels).toEqual(["Open worker", "Show idle sessions"])
     ;[...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
       .find((button) => button.textContent === "Open worker")!
       .click()
