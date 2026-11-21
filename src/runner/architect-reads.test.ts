@@ -59,7 +59,7 @@ test("fingerprintStrings equals fingerprint of the same list", () => {
     expect(fingerprintStrings(list)).toEqual({ count: list.length, fingerprint: fingerprint(list) })
 })
 
-test("a checkpoint and a renewal cover every input, and a renewal reads a count, not the ids", () => {
+test("a checkpoint and a renewal cover every input; a renewal pages the checkpoint ids once and lists no inputs", () => {
   const f = seeded()
   const now = 10_000_000
   const sorted = f.ids.toSorted()
@@ -119,8 +119,14 @@ test("a checkpoint and a renewal cover every input, and a renewal reads a count,
     ).all()
   })
   old.stop()
+  // The renewal reads the checkpoint's ids once, a page per statement, to verify its fingerprint;
+  // the session's inputs are tested in SQL and none is listed.
   const begin = meter.of(/runner_architect_(continuity_inputs|inputs)/)
-  expect(begin.rows).toBeLessThanOrEqual(2)
+  expect(meter.of(/message_id>\? ORDER BY message_id LIMIT/).rows).toBe(INPUTS)
+  expect(begin.rows).toBeLessThanOrEqual(INPUTS + 1)
+  expect(
+    meter.statements.filter((sql) => /message_id>\? ORDER BY message_id LIMIT/.test(sql)).length,
+  ).toBeGreaterThan(1)
   show("beginArchitectRenewal ids", old.of(/runner_architect/), begin)
 
   // Evidence: before listed the renewal's ids; now the stored columns answer.
@@ -191,4 +197,112 @@ test("a user input the checkpoint does not cover blocks the renewal", () => {
       handoffMessageID: "handoff",
     }),
   ).toBeNull()
+})
+
+/**
+ * The checkpoint's stored count and fingerprint summarize its rows. When they disagree, the rows
+ * are the truth: beginning a renewal rebuilds the summary from them a page at a time, records that
+ * it did, and the renewal goes on carrying the rebuilt summary.
+ */
+function beginRenewal(f: ReturnType<typeof seeded>, now: number) {
+  const fence = f.store.claim("scheduler", now)!
+  return f.store.beginArchitectRenewal({
+    schedulerOwner: "scheduler",
+    fence,
+    anchorPlanID: "plan-1",
+    previousSessionID: "owner",
+    directory: f.root,
+    model: "model",
+    idleAt: 1_000_000,
+    now,
+    handoffMessageID: "handoff",
+  })
+}
+const storedCheckpoint = (f: ReturnType<typeof seeded>) =>
+  f.repository.read((db) =>
+    db
+      .query<{ input_count: number; input_fingerprint: string }, []>(
+        "SELECT input_count,input_fingerprint FROM runner_architect_continuity_coverage",
+      )
+      .get(),
+  )
+
+test("checkpoint ids altered with the same count are detected, repaired and the renewal continues", () => {
+  const f = seeded()
+  const now = 10_000_000
+  f.store.saveArchitectContinuity({
+    sessionID: "owner",
+    decisions: [],
+    unresolvedQuestions: [],
+    coverageInputs: [{ id: "ctx_1", type: "user" }],
+    now,
+  })
+  const stale = storedCheckpoint(f)!
+  f.repository.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_architect_continuity_inputs SET message_id='ctx_2' WHERE message_id='ctx_1'",
+      )
+      .run(),
+  )
+  const rows = [...f.ids, "ctx_2"].toSorted()
+  const renewal = beginRenewal(f, now)
+  expect(renewal).toBeTruthy()
+  expect(renewal!.coverage_count).toBe(rows.length)
+  expect(renewal!.coverage_fingerprint).toBe(fingerprint(rows))
+  expect(storedCheckpoint(f)).toEqual({
+    input_count: rows.length,
+    input_fingerprint: fingerprint(rows),
+  })
+  expect(
+    f.store.latestTransition("plan-1", null, "ARCHITECT_CONTINUITY_COVERAGE_REPAIRED"),
+  ).toEqual({
+    sessionID: "owner",
+    continuityRevision: 1,
+    stored: { count: stale.input_count, fingerprint: stale.input_fingerprint },
+    rebuilt: { count: rows.length, fingerprint: fingerprint(rows) },
+  })
+})
+
+test("a checkpoint whose stored count disagrees with its rows is repaired instead of stopping renewal", () => {
+  const f = seeded()
+  const now = 10_000_000
+  f.store.saveArchitectContinuity({
+    sessionID: "owner",
+    decisions: [],
+    unresolvedQuestions: [],
+    coverageInputs: [],
+    now,
+  })
+  f.repository.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_architect_continuity_inputs(
+          project_directory,session_id,continuity_revision,message_id
+        ) VALUES(?,'owner',1,'ctx_extra')`,
+      )
+      .run(f.root),
+  )
+  const rows = [...f.ids, "ctx_extra"].toSorted()
+  const renewal = beginRenewal(f, now)
+  expect(renewal).toBeTruthy()
+  expect(renewal!.coverage_count).toBe(rows.length)
+  expect(renewal!.coverage_fingerprint).toBe(fingerprint(rows))
+  expect(storedCheckpoint(f)?.input_count).toBe(rows.length)
+})
+
+test("a checkpoint whose summary matches its rows records no repair", () => {
+  const f = seeded()
+  const now = 10_000_000
+  f.store.saveArchitectContinuity({
+    sessionID: "owner",
+    decisions: [],
+    unresolvedQuestions: [],
+    coverageInputs: [],
+    now,
+  })
+  expect(beginRenewal(f, now)).toBeTruthy()
+  expect(
+    f.store.latestTransition("plan-1", null, "ARCHITECT_CONTINUITY_COVERAGE_REPAIRED"),
+  ).toBeUndefined()
 })
