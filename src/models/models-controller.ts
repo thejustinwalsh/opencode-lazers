@@ -18,13 +18,18 @@ import {
   benchmarkChartPoints,
   benchmarkSourceName,
   comparisonChartKeyboardOrder,
-  comparisonChartMarks,
   observedChartPoints,
   projectedChartPoints,
-  referenceAmount,
 } from "./chart-data.ts"
-import { buildCatalog, tokenProfile } from "./catalog-projection.ts"
-import type { CatalogEntry, ObservedFacts } from "./catalog-projection.ts"
+import { buildCatalog } from "./catalog-projection.ts"
+import type { CatalogEntry } from "./catalog-projection.ts"
+import {
+  chartPoints as chartPointsOf,
+  chartReferences as chartReferencesOf,
+  observedFactsByRoute as observedFactsOf,
+  referenceTokenProfile,
+  routedModels,
+} from "./catalog-inputs.ts"
 import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
 import { MODEL_PRICE_SOURCES } from "./price-source-settings.ts"
@@ -54,7 +59,6 @@ import {
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
-  agentRoutedModels,
   marketSummarySource,
   mayPageCatalog,
   modelPersonaLabels,
@@ -584,26 +588,11 @@ export function createModelsController(props: ModelsProps) {
     )
       return chartReferences
 
-    const points = new Map(graph.points.map((point) => [point.configurationID, point] as const))
-    const catalog = catalogOptions ?? []
-    const routes = (graph.referenceEstimates ?? []).map((item) => item.estimate.route)
     chartReferencePoints = graph.points
     chartReferenceEstimates = graph.referenceEstimates
     chartReferenceCandidates = candidates
     chartReferenceCatalog = catalogOptions
-    chartReferences = (graph.referenceEstimates ?? []).map((item) => {
-      const point = points.get(item.configurationID)
-      return {
-        configurationID: item.configurationID,
-        estimate: item.estimate,
-        // An explicit null is authoritative: never replace unknown global data
-        // with a number or label discovered on a loaded page or inspection.
-        tokensPerAcceptedTask: Object.hasOwn(item, "tokensPerAcceptedTask")
-          ? (item.tokensPerAcceptedTask ?? null)
-          : (point?.tokensPerAcceptedTask ?? null),
-        label: modelDisplayLabel(item.estimate.route, routes, candidates, catalog),
-      }
-    })
+    chartReferences = chartReferencesOf(graph, candidates, catalogOptions ?? [])
     return chartReferences
   })
   let chartPointSource: DecisionChartGraph["points"] | undefined
@@ -631,29 +620,12 @@ export function createModelsController(props: ModelsProps) {
     )
       return chartPoints
 
-    const routeByConfiguration = new Map(
-      references.map((reference) => [reference.configurationID, reference.estimate.route] as const),
-    )
-    const routes = references.map((reference) => reference.estimate.route)
-    const catalog = catalogOptions ?? []
     chartPointSource = overview.graph.points
     chartPointReferences = references
     chartPointCandidates = candidates
     chartPointCatalog = catalogOptions
     chartPointMarketSource = marketSource
-    chartPoints = overview.graph.points.map((point) => {
-      const route = routeByConfiguration.get(point.configurationID)
-      return {
-        ...point,
-        ...(route
-          ? {
-              label: modelDisplayLabel(route, routes, candidates, catalog),
-              route,
-            }
-          : {}),
-        marketSource,
-      }
-    })
+    chartPoints = chartPointsOf(overview, references, candidates, catalogOptions ?? [])
     return chartPoints
   })
   const availableConfigurations = (): ModelDecisionConfiguration[] => {
@@ -751,74 +723,12 @@ export function createModelsController(props: ModelsProps) {
   /** Routes named by the model router: every persona's resolved route and each layer's route. */
   /** The LAZERS agents with the model native OpenCode resolves for each (read-only). */
   const agentRoutes = createMemo(() => visible()?.settings?.agents ?? [])
-  const routedRoutes = createMemo(() => [
-    ...agentRoutedModels(agentRoutes()),
-    ...(visible()?.settings?.personas ?? []).flatMap((persona) =>
-      [
-        persona.resolution.route,
-        persona.layers.task?.route,
-        persona.layers.project?.route,
-        persona.layers.shared?.route,
-      ].flatMap((route) => (route ? [{ providerID: route.providerID, modelID: route.id }] : [])),
-    ),
-  ])
-  const observedFactsByRoute = createMemo(() => {
-    const facts = new Map<string, ObservedFacts>()
-    for (const mark of comparisonChartMarks({
-      points: decisionChartPoints(),
-      references: decisionChartReferences(),
-      frontierConfigurationIDs: [],
-    })) {
-      if (!mark.route) continue
-      const key = routeKey({ providerID: mark.route.providerID, modelID: mark.route.modelID })
-      // Efforts are one model here; the best-sampled effort speaks for it.
-      if ((facts.get(key)?.accepted ?? -1) >= (mark.accepted ?? 0)) continue
-      facts.set(key, {
-        configurationID: mark.configurationID,
-        usd: mark.amount,
-        ...(mark.range ? { range: mark.range } : {}),
-        tokens: mark.tokens,
-        accepted: mark.accepted ?? 0,
-        terminal: mark.terminal ?? null,
-      })
-    }
-    // A model with a price but no token measurement is listed in the table, not plotted.
-    for (const reference of decisionChartReferences()) {
-      const amount = referenceAmount(reference.estimate)
-      const route = reference.estimate.route
-      const key = routeKey({ providerID: route.providerID, modelID: route.modelID })
-      if (!amount || facts.has(key)) continue
-      facts.set(key, {
-        configurationID: reference.configurationID,
-        usd: amount.kind === "scalar" || amount.kind === "subtotal" ? amount.value : amount.minimum,
-        ...(amount.kind === "range" || amount.kind === "subtotal-range"
-          ? { range: { minimum: amount.minimum, maximum: amount.maximum } }
-          : {}),
-        tokens: null,
-        accepted: reference.estimate.acceptedTaskCount,
-        terminal: null,
-      })
-    }
-    return facts
-  })
-  /** Median tokens per accepted task by category across our observed configurations. */
-  const profile = createMemo(() =>
-    tokenProfile(
-      (visible()?.decisionOverview?.graph.referenceEstimates ?? []).map((item) => {
-        const categories = item.estimate.coverage.categories
-        return {
-          accepted: item.estimate.acceptedTaskCount,
-          tokens: {
-            uncachedInput: categories.uncachedInput.tokens,
-            cacheRead: categories.cacheRead.tokens,
-            cacheWrite: categories.cacheWrite.tokens,
-            output: categories.output.tokens,
-            reasoning: categories.reasoning.tokens,
-          },
-        }
-      }),
-    ),
+  const routedRoutes = createMemo(() => routedModels(visible()?.settings))
+  const observedFactsByRoute = createMemo(() =>
+    observedFactsOf(decisionChartPoints(), decisionChartReferences()),
   )
+  /** Median tokens per accepted task by category across our observed configurations. */
+  const profile = createMemo(() => referenceTokenProfile(visible()?.decisionOverview?.graph))
   const catalog = createMemo(() => {
     const panel = visible()
     if (!panel) return { entries: [], summary: undefined }
