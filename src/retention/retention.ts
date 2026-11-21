@@ -204,6 +204,28 @@ function outsideFactWindow(db: Database): Array<[string, number]> {
 const inPlans = "(SELECT value FROM json_each(?))"
 const PLAN_LIST = "SELECT value FROM json_each(?)"
 
+/**
+ * Transcript metadata (`src/transcript-meta/`): read by the trajectory effort (attempt sessions)
+ * and the Radar Monitor (every shown session). An attempt session's rows go with its retired
+ * plan. A session no plan holds (Architect, unmanaged) is dead when the host archived it and its
+ * last host update is older than the age, or when the host no longer has it (no
+ * `host_session_state` row) and its newest step is older than the age. Binds: the retired plans,
+ * then the cutoff twice.
+ */
+function transcriptMetaWhere(table: string, hostSessions: boolean) {
+  const same = (alias: string) =>
+    `${alias}.project_directory=${table}.project_directory AND ${alias}.session_id=${table}.session_id`
+  const newestStep = `COALESCE((SELECT s.created_at FROM transcript_steps s WHERE ${same("s")} ORDER BY s.ordinal DESC LIMIT 1),0)`
+  const archived = hostSessions
+    ? `EXISTS (SELECT 1 FROM host_session_state h WHERE ${same("h")} AND h.archived=1 AND h.host_updated_at < ?)`
+    : "(0 AND ?)"
+  const gone = hostSessions
+    ? `(NOT EXISTS (SELECT 1 FROM host_session_state h WHERE ${same("h")}) AND ${newestStep} < ?)`
+    : `${newestStep} < ?`
+  return `(session_id IN (SELECT a.session_id FROM runner_attempts a WHERE a.plan_id IN ${inPlans})
+    OR (session_id NOT IN (SELECT a.session_id FROM runner_attempts a) AND (${archived} OR ${gone})))`
+}
+
 const KINDS: Kind[] = [
   {
     id: "progress",
@@ -262,13 +284,14 @@ const KINDS: Kind[] = [
   {
     id: "transcript-meta",
     label: "Transcript metadata",
-    detail: "routes, times and counts of finished attempts' worker transcripts (no text)",
+    detail:
+      "routes, times and counts of worker transcripts of finished work, and of other sessions archived or gone past the age (no text)",
     ageIndependent: false,
-    specs: (ctx) =>
+    specs: (ctx, db) =>
       (["transcript_steps", "transcript_sessions"] as const).map((table) => ({
         table,
-        where: `session_id IN (SELECT a.session_id FROM runner_attempts a WHERE a.plan_id IN ${inPlans})`,
-        bind: [ctx.retiredJSON],
+        where: transcriptMetaWhere(table, tableExists(db, "host_session_state")),
+        bind: [ctx.retiredJSON, ctx.cutoff, ctx.cutoff],
         bytes:
           table === "transcript_steps"
             ? "length(session_id)+length(message_id)+length(project_directory)+length(COALESCE(provider_id,''))+length(COALESCE(model_id,''))+length(COALESCE(variant,''))+length(COALESCE(error_type,''))+length(COALESCE(retry_error_type,''))+104"

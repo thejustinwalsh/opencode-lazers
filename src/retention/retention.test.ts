@@ -696,12 +696,21 @@ test("an abandoned plan older than the age is retirable; a recent one is not", a
   expect(revisions(db, "fresh")).toEqual([1, 2, 3, 4, 5])
 })
 
-test("transcript metadata follows the finished-plan age: a retired plan's sessions go, others stay", async () => {
+test("transcript metadata follows the finished-plan age; sessions no plan holds go when archived or gone past it", async () => {
   const fixture = setup()
   ensureTranscriptMetaSchema(fixture.repository)
-  const sessions = ["ses-failed", "ses-accepted", "ses-elsewhere"]
+  const old = NOW - 40 * DAY
+  const recent = NOW - DAY
+  // Sessions no plan holds, by host state: [id, host row (archived, last host update), newest step]
+  const others: Array<[string, [number, number] | null, number]> = [
+    ["ses-architect-live", [0, old], old], // unarchived: the Monitor shows it
+    ["ses-architect-archived-old", [1, old], old], // archived past the age: dead
+    ["ses-architect-archived-recent", [1, recent], old], // archived within the age: kept
+    ["ses-gone-old", null, old], // the host no longer has it, past the age: dead
+    ["ses-gone-recent", null, recent], // gone, but within the age: kept
+  ]
   fixture.repository.atomic((db) => {
-    for (const session of sessions)
+    const write = (session: string, created: number) =>
       writeTranscriptPage(
         db,
         fixture.directory,
@@ -713,20 +722,36 @@ test("transcript metadata follows the finished-plan age: a retired plan's sessio
             id: `m-${session}`,
             type: "assistant",
             model: { providerID: "openai", id: "gpt-6-luna" },
-            time: { created: 1_000 },
+            time: { created },
           },
         ],
         undefined,
       )
+    // The retired plan's two attempt sessions.
+    write("ses-failed", 1_000)
+    write("ses-accepted", 1_000)
+    for (const [session, host, created] of others) {
+      write(session, created)
+      if (host)
+        db.query(
+          `INSERT INTO host_session_state(project_directory,session_id,role,busy,pending_input,
+             pending_permissions,pending_forms,archived,updated_at,host_updated_at)
+           VALUES(?,?,'architect',0,0,0,0,?,?,?)`,
+        ).run(fixture.directory, session, host[0], host[1], host[1])
+    }
   })
   const db = handle(fixture)
   const preview = await previewRetention(db, { now: NOW, days: 30 })
-  // The retired plan's two attempt sessions: a step row and a session row each.
-  expect(preview.kinds.find((kind) => kind.id === "transcript-meta")?.rows).toBe(4)
+  // Four dead sessions (two attempt sessions, two others): a step row and a session row each.
+  expect(preview.kinds.find((kind) => kind.id === "transcript-meta")?.rows).toBe(8)
   const removed = await purge(fixture, 30)
-  expect(removed["transcript-meta"]?.rows).toBe(4)
+  expect(removed["transcript-meta"]?.rows).toBe(8)
   const left = (table: string) =>
-    db.query<{ session_id: string }, []>(`SELECT session_id FROM ${table}`).all()
-  expect(left("transcript_steps")).toEqual([{ session_id: "ses-elsewhere" }])
-  expect(left("transcript_sessions")).toEqual([{ session_id: "ses-elsewhere" }])
+    db
+      .query<{ session_id: string }, []>(`SELECT session_id FROM ${table} ORDER BY session_id`)
+      .all()
+      .map((row) => row.session_id)
+  const kept = ["ses-architect-archived-recent", "ses-architect-live", "ses-gone-recent"]
+  expect(left("transcript_steps")).toEqual(kept)
+  expect(left("transcript_sessions")).toEqual(kept)
 })
