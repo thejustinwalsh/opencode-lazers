@@ -7,6 +7,7 @@ import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.t
 
 import type { RuntimeCore } from "./runtime-core.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
+import { planIs } from "./identity-read.ts"
 
 /** What worker observation reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type WorkerObservationDeps = {
@@ -114,7 +115,7 @@ export class WorkerObservation {
       const aliases = db
         .query<{ id: number; payload: string }, [string, string]>(
           `SELECT id,payload FROM runner_transitions
-           WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
+           WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
            ORDER BY id DESC`,
         )
         .iterate(attempt.plan_id, attempt.task_id)
@@ -232,7 +233,7 @@ export class WorkerObservation {
         db
           .query<{ id: number }, [string]>(
             `SELECT COALESCE(MAX(id),0) AS id FROM runner_transitions
-             WHERE plan_id=? AND task_id IS NULL AND event='RECONCILE_REQUESTED'`,
+             WHERE ${planIs(db, "runner_transitions")} AND task_id IS NULL AND event='RECONCILE_REQUESTED'`,
           )
           .get(planID)!.id,
     )

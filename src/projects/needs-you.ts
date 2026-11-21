@@ -5,6 +5,7 @@ import { storedOwnerHolds } from "../tasks/schedule/stored.ts"
 import { canonicalPath, pickUnit } from "./scope.ts"
 import { projectSettingsIn } from "./settings.ts"
 import type { ProjectRef, ProjectUnit } from "./scope.ts"
+import { planJoin } from "../runner/identity-read.ts"
 
 /** One thing that waits on the owner, without its project (the page names that). */
 export type NeedsYouEntry = {
@@ -49,7 +50,7 @@ export function ownerHolds(db: Database, directory: string): NeedsYouEntry[] | u
 export function openRecoveryBundle(db: Database, directory: string): NeedsYouEntry | undefined {
   const raised = db
     .query<{ payload: string }, [string, string]>(
-      `SELECT t.payload FROM runner_transitions t JOIN runner_plans p ON p.id=t.plan_id
+      `SELECT t.payload FROM runner_transitions t JOIN runner_plans p ON ${planJoin(db, "runner_transitions", "t", "p.id")}
         WHERE p.project_directory=? AND t.event=? ORDER BY t.id DESC LIMIT 1`,
     )
     .get(directory, RECOVERY_BUNDLE_EVENT)

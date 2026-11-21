@@ -25,6 +25,7 @@ import { unavailableTaskValuation } from "../models/task-valuation.ts"
 import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import type { TrajectoryMarketEquivalentCost } from "../models/task-valuation-schema.ts"
 import type { ProjectTaskValuationRequest } from "../models/valuation.ts"
+import { planIs } from "../runner/identity-read.ts"
 
 type TransitionRow = {
   id: number
@@ -786,7 +787,7 @@ function snapshots(store: RunnerStore, task: TaskSpec): PlanSnapshot[] {
         .all(row.id, task.id)
       const transitions = db
         .query<TransitionRow, [string, string]>(
-          "SELECT id,plan_id,task_id,version,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id",
+          `SELECT id,plan_id,task_id,version,event,payload,created_at FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ORDER BY id`,
         )
         .all(row.id, task.id)
       output.push({ row, node, input: rawPlanInput(row), attempts, effects, transitions })

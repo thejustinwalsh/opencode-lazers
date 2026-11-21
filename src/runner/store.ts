@@ -7,7 +7,7 @@ import {
   installOwnerKeys,
   planKey,
 } from "./identity-keys.ts"
-import { planIs } from "./identity-read.ts"
+import { planIs, attemptIs, attemptIn } from "./identity-read.ts"
 import { installIdentityState } from "./identity-migration.ts"
 import { ensureTransitionIndexes, installTextKeyIndexes } from "./transition-indexes.ts"
 import {
@@ -3872,7 +3872,7 @@ export class RunnerStore {
                AND a.state IN ('pending','task-checks','combined-checks')
            ) OR NOT EXISTS(
              SELECT 1 FROM runner_transitions ti
-             WHERE ti.plan_id=d.plan_id AND ti.task_id=d.prerequisite
+             WHERE ${planIs(db, "runner_transitions", "ti", "d.plan_id")} AND ti.task_id=d.prerequisite
                AND ti.event='TASK_INTEGRATION_RECORDED' AND json_valid(ti.payload)
                AND json_extract(ti.payload,'$.artifact')=n.artifact
            ))`,
@@ -4599,10 +4599,10 @@ export class RunnerStore {
               `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
                  n.artifact,
                  (SELECT tr.id FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_id,
                  (SELECT tr.payload FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_payload
                FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
                WHERE p.project_directory=? AND n.plan_id=?
@@ -4677,7 +4677,7 @@ export class RunnerStore {
            )
            SELECT n.*,p.sequence,p.priority,t.body AS task_body,r.reference,
              (SELECT tr.payload FROM runner_transitions tr
-              WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id AND tr.event='SCOPE_AMENDED'
+              WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id AND tr.event='SCOPE_AMENDED'
               ORDER BY tr.id DESC LIMIT 1) AS scope_payload
            FROM runner_nodes n JOIN selected_plans p ON p.id=n.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=n.task_id
@@ -4743,10 +4743,10 @@ export class RunnerStore {
               `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
                  n.artifact,
                  (SELECT tr.id FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_id,
                  (SELECT tr.payload FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_payload
                FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
                WHERE p.project_directory=? AND n.task_id IN (${batch.map(() => "?").join(",")})`,
@@ -4783,17 +4783,17 @@ export class RunnerStore {
                  integration.id AS integration_id,integration.version AS integration_version,
                  integration.payload AS integration_payload,
                  (SELECT tr.id FROM runner_transitions tr
-                  WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='CANCEL_REQUESTED'
+                  WHERE ${planIs(db, "runner_transitions", "tr", "p.id")} AND tr.task_id IS NULL AND tr.event='CANCEL_REQUESTED'
                   ORDER BY tr.id DESC LIMIT 1) AS invalidation_id
                FROM runner_plans p
                LEFT JOIN runner_transitions accepted ON accepted.id=(
                  SELECT tr.id FROM runner_transitions tr
-                 WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='PLAN_ACCEPTED'
+                 WHERE ${planIs(db, "runner_transitions", "tr", "p.id")} AND tr.task_id IS NULL AND tr.event='PLAN_ACCEPTED'
                  ORDER BY tr.id DESC LIMIT 1
                )
                LEFT JOIN runner_transitions integration ON integration.id=(
                  SELECT tr.id FROM runner_transitions tr
-                 WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='INTEGRATION_RECORDED'
+                 WHERE ${planIs(db, "runner_transitions", "tr", "p.id")} AND tr.task_id IS NULL AND tr.event='INTEGRATION_RECORDED'
                  ORDER BY tr.id DESC LIMIT 1
                )
                WHERE p.project_directory=? AND p.id IN (${batch.map(() => "?").join(",")})
@@ -4835,7 +4835,7 @@ export class RunnerStore {
         .query<ProgressRow, [string, ...string[], number]>(
           `SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM (
              SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM runner_progress WHERE project_directory=?
-               AND attempt_id IN (${placeholders}) ORDER BY seq DESC LIMIT ?
+               AND ${attemptIn(db, placeholders)} ORDER BY seq DESC LIMIT ?
            ) ORDER BY seq`,
         )
         .all(this.repository.projectDirectory, ...attemptIDs, bounded),
@@ -4860,7 +4860,7 @@ export class RunnerStore {
       (db) =>
         db
           .query<{ seq: number }, (string | number)[]>(
-            `SELECT seq FROM runner_progress WHERE project_directory=? AND attempt_id IN (${placeholders})
+            `SELECT seq FROM runner_progress WHERE project_directory=? AND ${attemptIn(db, placeholders)}
              ORDER BY seq DESC LIMIT 1 OFFSET ${Math.trunc(visible)}`,
           )
           .get(directory, ...attemptIDs)?.seq,
@@ -4870,7 +4870,7 @@ export class RunnerStore {
         db
           .query<ProgressReportRow, (string | number)[]>(
             `SELECT ${progressColumns(db, PROGRESS_REPORT_COLUMNS)} FROM runner_progress
-             WHERE project_directory=? AND attempt_id IN (${placeholders}) AND seq>?
+             WHERE project_directory=? AND ${attemptIn(db, placeholders)} AND seq>?
              ORDER BY seq LIMIT ${Math.trunc(pageSize)}`,
           )
           .all(directory, ...attemptIDs, after),
@@ -4899,7 +4899,7 @@ export class RunnerStore {
         db
           .query<{ one: number }, [string, string]>(
             `SELECT 1 AS one FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND NOT (${gapShape}) LIMIT 1`,
+              WHERE project_directory=? AND ${attemptIs(db)} AND NOT (${gapShape}) LIMIT 1`,
           )
           .get(directory, attemptID)
       )
@@ -4911,7 +4911,7 @@ export class RunnerStore {
         const rows = db
           .query<ProgressRow, [string, string, number, number]>(
             `SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND seq>? AND ${gapShape}
+              WHERE project_directory=? AND ${attemptIs(db)} AND seq>? AND ${gapShape}
               ORDER BY seq LIMIT ?`,
           )
           .all(directory, attemptID, after, page)

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { firstAttemptID, makeFixture, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { meterReads } from "./read-meter.fixture.ts"
 import { isUnavailableSessionRecoveryGap } from "./startup-settlement.ts"
+import { keysReady } from "./identity-read.ts"
 
 type Fixture = ReturnType<typeof makeFixture>
 
@@ -119,6 +120,8 @@ test("the meaningful-progress check reads one row where the full read returned e
         payload: { tool: "read", content: "x".repeat(1_000) },
       })
     const meter = meterReads(fixture.store)
+    // The connection learns once that the table is keyed (one small row), then reads none for it.
+    fixture.store.read((db) => keysReady(db, "runner_progress"))
     legacy(fixture, firstAttemptID)
     const before = { rows: meter.rows, bytes: meter.bytes }
     const mark = { rows: meter.rows, bytes: meter.bytes }

@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { RetentionService } from "../retention/service.ts"
 import { TaskRepository } from "../storage.ts"
 import { backfillPage } from "./identity-backfill.ts"
-import { forgetKeysReady } from "./identity-read.ts"
+import { attemptIs, forgetKeysReady, planIn, planIs, planJoin, samePlan } from "./identity-read.ts"
 import { asLegacyHistory } from "./identity.fixture.ts"
 import { RunnerStore } from "./store.ts"
 
@@ -151,4 +151,42 @@ test("recordSourceScanFailure records a changed condition once, on text and on i
   forgetKeysReady(repository.read((db) => db))
   expect(store.recordSourceScanFailure("plan-1", failure)).toBe(false)
   expect(store.recordSourceScanFailure("plan-1", { ...failure, error: "other" })).toBe(true)
+})
+
+test("keyed joins and correlated reads drive from the plan into an integer index", async () => {
+  const { repository } = seeded()
+  await new RetentionService({ repository, host: {} as never }).backfillKeys(30_000)
+  forgetKeysReady(repository.read((db) => db))
+  const plan = (sql: string) =>
+    repository.read((db) =>
+      db
+        .query<{ detail: string }, string[]>(`EXPLAIN QUERY PLAN ${sql}`)
+        .all(...(sql.match(/\?/g) ?? []).map(() => "x"))
+        .map((row) => row.detail)
+        .join(" | "),
+    )
+  const statements = repository.read((db) => [
+    // planJoin: a project's newest transition of one event.
+    `SELECT t.payload FROM runner_transitions t JOIN runner_plans p ON ${planJoin(db, "runner_transitions", "t", "p.id")}
+      WHERE p.project_directory=? AND t.event=? ORDER BY t.id DESC LIMIT 1`,
+    // planIs with a correlated value: the newest plan-level transition of each plan.
+    `SELECT p.id,(SELECT tr.id FROM runner_transitions tr WHERE ${planIs(db, "runner_transitions", "tr", "p.id")}
+      AND tr.task_id IS NULL AND tr.event='PLAN_ACCEPTED' ORDER BY tr.id DESC LIMIT 1) FROM runner_plans p
+      WHERE p.project_directory=?`,
+    // samePlan: retention's newest row of the same plan.
+    `SELECT id FROM runner_transitions WHERE id < (SELECT MAX(l.id) FROM runner_transitions l
+      WHERE ${samePlan(db, "runner_transitions", "l", "runner_transitions")}) AND rowid>? AND rowid<=?`,
+    // A plan's progress by recency and an attempt's progress by sequence.
+    `SELECT seq FROM runner_progress WHERE ${planIn(db, "runner_progress", "?,?")}
+      ORDER BY latest_observed_at DESC,seq DESC LIMIT 5`,
+    `SELECT seq FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} ORDER BY seq DESC LIMIT 1`,
+  ])
+  for (const sql of statements) {
+    const detail = plan(sql)
+    if (process.env.EXPLAIN_VERBOSE) console.log(sql.replace(/\s+/g, " "), "=>", detail)
+    expect(detail).toMatch(
+      /INDEX runner_(transitions|progress)_\w+ \((plan_n|project_directory=\? AND attempt_n)/,
+    )
+    expect(detail).not.toMatch(/SCAN (l|tr)\b(?! USING)/)
+  }
 })

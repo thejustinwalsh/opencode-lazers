@@ -72,6 +72,8 @@ export const missingKeyIndexes = (db: Database, table?: string) => missing(db, K
 
 /** Create the missing indexes, one write transaction each so the lock is released between builds. */
 export function createTransitionIndexes(db: Database) {
+  // A table keyed since the build was planned no longer needs them.
+  if (keysTaken(db, "runner_transitions")) return
   for (const [name, target] of missingTransitionIndexes(db))
     db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${target}`)
 }

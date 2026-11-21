@@ -75,3 +75,21 @@ export function attemptIn(db: Database, list: string, alias?: string) {
     ? `${qualified(alias, "attempt_n")} IN (SELECT n FROM ${ATTEMPT_KEYS} WHERE attempt_id IN (${list}))`
     : `${qualified(alias, "attempt_id")} IN (${list})`
 }
+
+/**
+ * A join of a history table to the row that names its plan (`other` is that row's plan id, such
+ * as `p.id`). Keyed, it states the join both ways: the integer key lets the planner drive from the
+ * plan into the history table's integer index, and the text equality still lets it drive from the
+ * history row into the plan's primary key. Both are true of every row, so the result is the same.
+ */
+export function planJoin(db: Database, table: BackfillTable, alias: string, other: string) {
+  const text = `${other}=${alias}.plan_id`
+  return keysReady(db, table) ? `${planIs(db, table, alias, other)} AND ${text}` : text
+}
+
+/** Two rows of one history table on the same plan: the integer keys once keyed, else the text. */
+export function samePlan(db: Database, table: BackfillTable, alias: string, other: string) {
+  return keysReady(db, table)
+    ? `${alias}.plan_n=${other}.plan_n`
+    : `${alias}.plan_id=${other}.plan_id`
+}

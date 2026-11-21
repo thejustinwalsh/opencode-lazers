@@ -4,6 +4,7 @@ import { TaskStateFilter } from "../state-filter.ts"
 import { backfillPage } from "./backfill.ts"
 import { bucketsFor } from "./key.ts"
 import { SUPPORT_SQL, TABLES_SQL } from "./schema.ts"
+import { planIs } from "../../runner/identity-read.ts"
 
 // The old read's SQL, kept here only so the audit can compare a live database with the stored list.
 // It is not exported: product code reads the stored list.
@@ -37,7 +38,7 @@ END`
  *
  * `position` pages over the whole key, so cursors stay stable and gap-free.
  */
-function scheduledTaskPageSQL(alias: "t" | "tasks", where: string, before: boolean) {
+function scheduledTaskPageSQL(db: Database, alias: "t" | "tasks", where: string, before: boolean) {
   return `WITH ranked AS (
     SELECT ${alias}.body AS body,r.reference AS reference,${alias}.rowid AS task_rowid,
       schedule_plan.id AS plan_id,schedule_plan.rowid AS plan_rowid,
@@ -54,9 +55,9 @@ function scheduledTaskPageSQL(alias: "t" | "tasks", where: string, before: boole
   ), timed AS (
     SELECT *,CASE WHEN rank>=2 THEN COALESCE(
         (SELECT MAX(tr.created_at) FROM runner_transitions tr
-          WHERE tr.plan_id=node_plan AND tr.task_id=node_task
+          WHERE ${planIs(db, "runner_transitions", "tr", "node_plan")} AND tr.task_id=node_task
             AND json_extract(tr.payload,'$.to')=node_state),
-        (SELECT MAX(tr.created_at) FROM runner_transitions tr WHERE tr.plan_id=node_plan),0)
+        (SELECT MAX(tr.created_at) FROM runner_transitions tr WHERE ${planIs(db, "runner_transitions", "tr", "node_plan")}),0)
       ELSE 0 END AS finished
     FROM ranked
   ), scheduled AS (
@@ -169,7 +170,7 @@ export function auditLive(path: string): LiveAudit[] {
         "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)"
       const where = `tasks.project_directory = ? AND ${retiredOnly}`
       const oldOrder = db
-        .query<{ body: string }, [string, number]>(scheduledTaskPageSQL("tasks", where, false))
+        .query<{ body: string }, [string, number]>(scheduledTaskPageSQL(db, "tasks", where, false))
         .all(project, 1_000_000)
         .map((row) => (JSON.parse(row.body) as { id: string }).id)
       const newOrder = db

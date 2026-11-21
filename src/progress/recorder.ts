@@ -25,6 +25,7 @@ import {
   writeSessionStamp,
   type SessionStamp,
 } from "./session-stamps.ts"
+import { attemptIs } from "../runner/identity-read.ts"
 
 type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -1599,7 +1600,7 @@ export class ProgressRecorder {
       // These rows are captured from OpenCode messages, never from worker reports.
       const capturedInput = db
         .query<{ seq: number }, [string, string, string, string, string]>(
-          `SELECT seq FROM runner_progress WHERE project_directory=? AND attempt_id=?
+          `SELECT seq FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)}
            AND session_id=? AND message_id=? AND dedupe_key=?
            AND source='recovery' AND kind='visible-text'
            AND json_extract(payload,'$.messageType') IN ('user','synthetic') LIMIT 1`,
@@ -3271,7 +3272,7 @@ export class ProgressRecorder {
         return false
       const row = db
         .query<{ seq: number; payload: string }, [string, string, string, string]>(
-          "SELECT seq,payload FROM runner_progress WHERE project_directory=? AND attempt_id=? AND dedupe_key=? AND message_id=?",
+          `SELECT seq,payload FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} AND dedupe_key=? AND message_id=?`,
         )
         .get(
           this.store.repository.projectDirectory,
@@ -3355,7 +3356,7 @@ export class ProgressRecorder {
     const nextStatus = claim.status === "admitted" && status === "unknown" ? "admitted" : status
     const existingProgress = db
       .query<{ seq: number; payload: string }, [string, string, string, string]>(
-        "SELECT seq,payload FROM runner_progress WHERE project_directory=? AND attempt_id=? AND dedupe_key=? AND message_id=?",
+        `SELECT seq,payload FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} AND dedupe_key=? AND message_id=?`,
       )
       .get(this.store.repository.projectDirectory, attemptID, `reminder:${attemptID}`, messageID)
     if (!existingProgress) return undefined

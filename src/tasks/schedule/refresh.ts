@@ -13,6 +13,7 @@ import { bucketOf, encodeSortKey, ownerHoldOf, priorityKeyOf, rankOf } from "./k
 import { effectiveStatus, reservationFingerprint } from "./status.ts"
 import type { PlanWait, Reservation } from "./status.ts"
 import type { DirtyKind } from "./schema.ts"
+import { planIs } from "../../runner/identity-read.ts"
 
 /**
  * Re-derive stored rows from the source tables. Every function runs inside the caller's write
@@ -148,8 +149,8 @@ export function reservationScope(db: Database, taskID: string): string[] {
   const create: { path: string }[] = row?.create_scope ? JSON.parse(row.create_scope) : []
   const amendment = db
     .query<{ payload: string }, [string]>(
-      `SELECT t.payload FROM runner_transitions t JOIN runner_nodes n
-         ON n.plan_id=t.plan_id AND n.task_id=t.task_id
+      `SELECT t.payload FROM runner_nodes n JOIN runner_transitions t
+         ON ${planIs(db, "runner_transitions", "t", "n.plan_id")} AND n.task_id=t.task_id
        WHERE n.task_id=? AND t.event='SCOPE_AMENDED' ORDER BY t.id DESC LIMIT 1`,
     )
     .get(taskID)
@@ -276,7 +277,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
                AND a.state IN ('pending','task-checks','combined-checks')
            ) OR NOT EXISTS(
              SELECT 1 FROM runner_transitions ti
-             WHERE ti.plan_id=d.plan_id AND ti.task_id=d.prerequisite
+             WHERE ${planIs(db, "runner_transitions", "ti", "d.plan_id")} AND ti.task_id=d.prerequisite
                AND ti.event='TASK_INTEGRATION_RECORDED' AND json_valid(ti.payload)
                AND json_extract(ti.payload,'$.artifact')=n.artifact
            ))`,
@@ -352,7 +353,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   const mark = placement
     ? (db
         .query<{ id: number | null }, [string, string]>(
-          "SELECT MAX(id) AS id FROM runner_transitions WHERE plan_id=? AND task_id=?",
+          `SELECT MAX(id) AS id FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=?`,
         )
         .get(placement.plan_id, taskID)?.id ?? 0)
     : 0
@@ -368,7 +369,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     const found = db
       .query<{ at: number | null }, [string, string, number, string]>(
         `SELECT MAX(created_at) AS at FROM runner_transitions
-         WHERE plan_id=? AND task_id=? AND id>? AND json_extract(payload,'$.to')=?`,
+         WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND id>? AND json_extract(payload,'$.to')=?`,
       )
       .get(
         placement.plan_id,
@@ -383,7 +384,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
       finishedAt =
         db
           .query<{ at: number }, [string]>(
-            "SELECT created_at AS at FROM runner_transitions WHERE plan_id=? ORDER BY id DESC LIMIT 1",
+            `SELECT created_at AS at FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} ORDER BY id DESC LIMIT 1`,
           )
           .get(placement.plan_id)?.at ?? 0
       basis = "plan"
@@ -564,7 +565,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   const observation = placement
     ? db
         .query<{ payload: string }, [string, string]>(
-          `SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id=?
+          `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=?
            AND event='PREREQUISITE_OBSERVED' ORDER BY id DESC LIMIT 1`,
         )
         .get(placement.plan_id, taskID)

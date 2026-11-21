@@ -73,7 +73,14 @@ function newMeter(stop: () => void) {
     meter.bytes += bytes
     meter.statements.push(sql)
   }
-  const wrap = (db: Database) =>
+  // One proxy per connection, so per-connection caches (such as `keysReady`) behave as unmetered.
+  const proxies = new WeakMap<Database, Database>()
+  const wrap = (db: Database) => {
+    let proxy = proxies.get(db)
+    if (!proxy) proxies.set(db, (proxy = proxyOf(db)))
+    return proxy
+  }
+  const proxyOf = (db: Database) =>
     new Proxy(db, {
       get(target, key) {
         if (key !== "query")
