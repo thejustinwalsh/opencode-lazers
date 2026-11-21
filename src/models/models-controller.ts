@@ -71,7 +71,7 @@ import type {
 } from "./comparison-state.ts"
 import type { DecisionInspectionFacts } from "./decision-read.ts"
 import type { DecisionViewBenchmark, DecisionViewSource } from "./decision-view-build.ts"
-import { Tasks } from "../tasks/contract.ts"
+import { readTaskDetail } from "../tasks/detail-read.ts"
 import type { TaskTrajectoryOpener, TaskTrajectoryRequest } from "../tasks/panel.tsx"
 import {
   boundedModelLabel,
@@ -311,7 +311,6 @@ export function createModelsController(props: ModelsProps) {
         period: { from: null, to: null },
       }
       const models = value.client.rpc(Models)
-      const tasks = value.client.rpc(Tasks)
       const location = { location: { directory: value.directory } }
       const abort = new AbortController()
       onCleanup(() => abort.abort())
@@ -371,7 +370,26 @@ export function createModelsController(props: ModelsProps) {
             )
             return { projectDirectory: value.project, tasks: rows.map((row) => summaryOf(row)) }
           }),
-        getTask: (taskID, signal) => tasks.get({ taskID }, { ...location, signal }),
+        // The selected task's detail: the `tasks.detail` window and its whole child streams.
+        getTask: (taskID, signal) =>
+          readTaskDetail(
+            (source, options) =>
+              readWindow(
+                rpcStreamsTransport(
+                  () => value.client.rpc(Streams) as unknown as StreamsRpc,
+                  signal,
+                  { location: { directory: value.directory } },
+                ),
+                source,
+                options,
+              ),
+            {
+              project: value.project,
+              scope: { kind: "project", sessionID: value.session },
+              taskID,
+            },
+            { payloads: "all" },
+          ),
         // The composed effort of the task: the `trajectory.effort` row at window 1.
         trajectoryStatus: async (taskID, signal) => {
           const [row] = await readWindow(

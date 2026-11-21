@@ -806,8 +806,7 @@ export function reads(data: ModelsData): Read[] {
     },
   ]
   const taskOut = tasksReads(tasksOf(data)).filter(
-    (read) =>
-      read.label.startsWith("lazers.tasks.query") || read.label.startsWith("lazers.tasks.get"),
+    (read) => read.label.startsWith("lazers.tasks.query") || read.label.startsWith("tasks.detail"),
   )
   out.push(...taskOut)
   return out

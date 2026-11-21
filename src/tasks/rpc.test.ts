@@ -16,6 +16,7 @@ import { TaskRepository } from "../storage.ts"
 import { Tasks } from "./contract.ts"
 import type { StartTaskInput, StartTaskResult } from "./contract.ts"
 import { registerTaskReads } from "./rpc.ts"
+import { getTaskDetail } from "./stream-query.ts"
 import { taskInstructions } from "./instructions.ts"
 import { registerTaskTools } from "../tools.ts"
 import { SchedulingOutput, TasksScheduling } from "./scheduling-contract.ts"
@@ -679,14 +680,9 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
   const registeredTools = new Map<string, RegisteredTool>()
   const permissionActions: string[] = []
   let permitted = true
-  let rpcGet: ((input: unknown) => Effect.Effect<unknown, never>) | undefined
   const ctx = {
     rpc: {
-      register: (
-        contract: unknown,
-        methods: { get: (input: unknown) => Effect.Effect<unknown, never> },
-      ) => {
-        if ((contract as { id?: string }).id === Tasks.id) rpcGet = methods.get
+      register: () => {
         return Effect.succeed({
           dispose: Effect.void,
           events: { emit: () => Effect.void },
@@ -810,7 +806,7 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
       status: "recorded",
       advice: { revision: 2, specRevision: 1 },
     })
-    const detail = await Effect.runPromise(rpcGet!({ taskID: task.id }))
+    const detail = await getTaskDetail(repository, { taskID: task.id })
     expect(detail).toMatchObject({
       status: "found",
       task: { id: task.id, revision: 1 },

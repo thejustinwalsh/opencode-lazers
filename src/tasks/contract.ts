@@ -36,8 +36,6 @@ const GetFields = {
 }
 /** The get an agent tool offers: a task of this project. Never another project. */
 export const AgentGetInput = z.strictObject(GetFields)
-/** The Tasks RPC get: a task of this project; `sessionID` reads only a task linked to it. */
-export const GetInput = z.strictObject(GetFields)
 export const GetInstructionsOutput = z.string()
 /** A task that keeps consuming effort without landing; see `assessConcern`. */
 const TaskConcern = z.strictObject({
@@ -209,7 +207,6 @@ export const Changed = z.strictObject({
 export const Tasks = Rpc.define({
   id: "lazers.tasks",
   methods: {
-    get: { input: GetInput, output: GetOutput },
     start: { input: StartInput, output: StartOutput },
   },
   events: { changed: { schema: Changed } },

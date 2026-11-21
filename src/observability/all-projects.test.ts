@@ -275,10 +275,4 @@ test("agent tools never offer all projects: their schemas have no such field and
       .success,
   ).toBe(false)
   expect(AgentQueryInput.safeParse({ limit: 5 }).success).toBe(true)
-  // The Tasks RPC reads this project only: its input has no all-projects field either.
-  const { GetInput } = await import("../tasks/contract.ts")
-  expect(
-    GetInput.safeParse({ allProjects: true, sessionID: "ses-x", taskID: crypto.randomUUID() })
-      .success,
-  ).toBe(false)
 })

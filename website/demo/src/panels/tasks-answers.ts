@@ -1,4 +1,4 @@
-import { CurrentActivityOutput, Tasks } from "../../../../src/tasks/contract.ts"
+import { CurrentActivityOutput, GetOutput, Tasks } from "../../../../src/tasks/contract.ts"
 import type {
   TaskPage,
   TaskDetail,
@@ -303,16 +303,14 @@ function currentActivity(data: TasksData, ids: string[]) {
 }
 
 export function rpc(data: () => TasksData) {
-  // The detail and the rows' current activity read as streams; Models still reads `get`.
+  // The detail and the rows' current activity read as streams.
   const streams = taskStreams(data, PROJECT.canonical, {
     detail: (id) => detail(data(), id),
     currentActivity: (ids) => currentActivity(data(), ids),
   })
   return {
     [Streams.id]: streams,
-    [Tasks.id]: {
-      get: (input: { taskID: string }) => detail(data(), input.taskID),
-    },
+    [Tasks.id]: {},
     [TasksScheduling.id]: { read: (input: { scope: Scope }) => scheduling(data(), input.scope) },
   } as Record<string, Record<string, (input: never) => unknown>>
 }
@@ -322,8 +320,8 @@ export function reads(data: TasksData): Read[] {
   const out: Read[] = []
   for (const task of data.tasks)
     out.push({
-      label: `lazers.tasks.get ${ref(task.n)}`,
-      schema: Tasks.methods.get.output,
+      label: `tasks.detail ${ref(task.n)} (stream composition)`,
+      schema: GetOutput,
       value: detail(data, ref(task.n)),
     })
   out.push({

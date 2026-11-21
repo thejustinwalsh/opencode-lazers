@@ -5,8 +5,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import { Tool } from "@opencode/schema/tool"
-import { GetInput, Tasks } from "./contract.ts"
-import { getTaskDetail } from "./stream-query.ts"
+import { Tasks } from "./contract.ts"
 import type { TaskRepository } from "../storage.ts"
 import { SchedulingInput, SchedulingOutput, TasksScheduling } from "./scheduling-contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
@@ -16,10 +15,8 @@ import { tolerantJsonSchema } from "../legacy-fields.ts"
 import { guardedWrite } from "./observed-revisions.ts"
 
 /**
- * The Tasks RPC. `get` composes the stored detail on the reader pool (`getTaskDetail`); a
- * `sessionID` reads only a task linked to that session (creator, plan owner, attempt session).
- * Its only caller is the Models panel's task detail (`models-controller.ts`); the Tasks panel
- * reads the `tasks.detail` family of streams directly.
+ * The Tasks RPC: `start` (a write). Task detail is read through the `tasks.detail` family of
+ * streams (`readTaskDetail`), by the Tasks and Models panels alike.
  */
 export function registerTaskReads(
   ctx: Pick<Plugin.Context, "rpc" | "permission"> &
@@ -30,17 +27,6 @@ export function registerTaskReads(
   const reads = { repository }
   return Effect.gen(function* () {
     const rpc = yield* timedRpc(ctx.rpc).register(Tasks, {
-      get: (input) =>
-        Effect.tryPromise({
-          try: () => {
-            const { sessionID, ...query } = GetInput.parse(input)
-            return getTaskDetail(repository, {
-              ...query,
-              ...(sessionID ? { session: sessionID } : {}),
-            })
-          },
-          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-        }).pipe(Effect.orDie),
       start: (input) =>
         Effect.tryPromise({
           try: async () => {
