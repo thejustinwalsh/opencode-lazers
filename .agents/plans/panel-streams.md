@@ -190,14 +190,27 @@ is ignored, so redelivery is harmless. Backfill: on owner start, one `host.get` 
 backfill re-stamps every tracked session once (live set ≤ the 252 attempt sessions plus
 architects).
 
-`native_tool_call_display` (Task 4): `id INTEGER PRIMARY KEY, project_directory, session_id,
-identity_kind, invocation_id, tool, status, agent, first_observed_at, last_observed_at,
-detail_available, UNIQUE(project_directory, session_id, identity_kind, invocation_id)`, index
-`(project_directory, session_id, first_observed_at DESC, id)`. Written beside the upsert at
-`src/progress/recorder.ts:1930` from the same pure function the live read uses today, like
-`refreshProgressDisplay` (`recorder.ts:1740,1815,1835`). Order key `first_observed_at` never
-changes, so windows do not re-anchor on update. Backfill: 82,327 rows, pages of 500 by rowid
-(165 transactions), newest first, watermark `below_rowid`.
+`native_tool_call_display` (Task 4, built in `src/progress/native-call-display.ts`; ★ own
+module `native-call-display` generation 1, not a runner bump, so `src/runner/store.ts` only gains
+an install call): `id INTEGER PRIMARY KEY` (★ the call's own `native_tool_calls` rowid, which an
+identity promotion keeps, so no natural-key UNIQUE is needed), `project_directory, session_id,
+identity_kind, invocation_id, call_id, detail_call_id, message_id, agent, tool, attempt_id,
+status, detail, error, first_observed_at, last_observed_at`, index `(project_directory,
+session_id, first_observed_at DESC, id)`. ★ Kept by triggers on `native_tool_calls` (INSERT,
+UPDATE OF the displayed columns, DELETE) running the live read's own SQL expressions
+(`json_extract` of status, 200-character detail, 240-character error): every writer (the
+recorder's insert, merge and identity promotion, project-key backfill, retention) is covered
+with no recorder change. Order key `first_observed_at` never changes, so windows do not re-anchor
+on update; ★ the old read ordered by `last_observed_at`, so a long call that updates late no
+longer jumps to the top. Backfill measured on the live-sized copy (82,525 calls): 166 pages of
+500 by rowid, newest first, median 5.6 ms, slowest 38 ms, 1.3 s in all; 29 MB table + 12 MB index.
+
+`scheduler_project_status` (Task 4, `src/runner/scheduler-status.ts`, ★ module
+`scheduler-status` generation 1): `id INTEGER PRIMARY KEY, project_directory UNIQUE, status,
+participants, updated_at`. ★ The coordinator gained `watch(key, listener)`, called on register,
+drain start, drain end and dispose; the core mirrors the latest status with serialized,
+coalesced `atomicAsync` writes (only a changed status writes). An observation of in-memory state,
+not a workflow state: nothing decides from it.
 
 ### 1.3 Sources
 
@@ -212,7 +225,7 @@ changes, so windows do not re-anchor on update. Backfill: 82,327 rows, pages of 
 | `radar.journal`          | `recovery_progress_facts`                                                            | project                                                                                            | `change_id desc`                | 16 + 16 = 32                                                 | more                                                                                        |
 | `radar.scheduler`        | `scheduler_project_status`                                                           | project                                                                                            | key                             | 1                                                            | exact: scan                                                                                 |
 | `radar.attempt` (detail) | `runner_attempts` join `task_schedule`                                               | project, `session_id = ?`; session scope requires `sessionID === scope.sessionID`                  | key                             | 1                                                            | —                                                                                           |
-| `radar.planEvents`       | `task_events`                                                                        | project, `plan_id = ?`, `kind = 'transition'`                                                      | `id` ★                          | 40 in view + 20 + 20 = 80                                    | more                                                                                        |
+| `radar.planEvents`       | ★ latest row per edge of one node, grouped over `task_events`                        | project, `plan_id = ?`, `task_id = ?`, kind transition with from/to                                | `id`                            | the node's edges (exact scan)                                | exact: scan                                                                                 |
 | `radar.plans`            | reuse `tasks.plans` (`src/streams/sources/tasks.ts`)                                 |                                                                                                    |                                 |                                                              |                                                                                             |
 | `radar.planNodes`        | `task_schedule`                                                                      | `plan_id = ?`                                                                                      | `ordinal, task_id`              | node count; slide                                            | more                                                                                        |
 
@@ -358,7 +371,9 @@ phase, after)`), measured on a copy of the live source tables (2026-11-21: 418,7
   About 2.6 s of writer time in total, spread by the owner's pacing (40 ms slices with 25 ms
   waits when quiet, 6 ms slices with 500 ms waits while an attempt runs). Effects pages started
   at 500 and measured 107 ms (check receipts are sanitized at write), then 100 (up to 58 ms).
-  Stored size on the copy: table 56 MB, three indexes 31 MB; progress `detail` is 19.6 MB of it.
+  Stored size on the copy: table 56 MB, three indexes 31 MB, of which progress `detail` was
+  19.6 MB; ★ that detail duplicated the display row and is no longer copied (progress rows keep
+  `detail` NULL; `pg:<seq>` names the display row): table 35 MB, indexes 33 MB.
   Writer cost: 1,000 plan-level transition inserts 1.3 to 2.5 ms with zero queued; 1,000
   task-scoped inserts plus their drain 15 ms; the hook's probe with nothing due 2.3 µs.
   Host transcripts (Task 7): 252 attempt sessions, one session per page, then its message pages.
@@ -739,10 +754,31 @@ lands). Tests in 1.5. Commit `feat(events): fold host session state into the dat
 
 ### Task 4: Native call display and scheduler status (M)
 
-`native_tool_call_display` (runner module generation 21 → 22), `scheduler_project_status`.
-Commit `feat(radar): store native call display and scheduler status`.
+Built (see 1.2). `native_tool_call_display` (module `native-call-display` 1) and
+`scheduler_project_status` (module `scheduler-status` 1). Commit `feat(radar): store native call
+display and scheduler status`.
 
 ### Task 5: Radar sources (M) — `src/streams/sources/radar.ts`, `radar-ref.ts`; tests 1.5.
+
+Built: `radar.assignments`, `radar.attempt` (detail adds workspace, base commit, artifact),
+`radar.nativeCalls`, `radar.group`, `radar.workload`, `radar.journal`, `radar.scheduler`,
+`radar.planEvents`. ★ Reused instead of new sources: `radar.calls` is `observability.liveHistory`
+(`toolsOnly` for the tool lane), `radar.plans` is `tasks.plans`, `radar.planNodes` is
+`tasks.schedule` with `planID` and order `plan`. ★ `radar.sessions` waits for Task 3
+(`host_session_state` does not exist yet); it lands with or after Task 3. ★ In a session view,
+`radar.nativeCalls` reads the scope's own session only; reading a child session's calls needs
+`host_session_state.parent_session_id` (Task 3). ★ The `all` scope reads this service's project,
+as `observability.liveHistory` does; a cross-project view opens one stream per project (Task 6).
+
+★ `radar.planEvents`, decided from the GUI: the lifecycle view never renders a plan-level
+transition. `planTransitions` feeds only `observedTransition` (`src/radar/projection.ts:34-52`),
+which keeps `kind === "machine"` rows of the selected node (`task_id` set, valid from/to) and
+takes the latest per (from, event, to) edge; a transition is selectable only through such an edge
+(`src/radar/panel.tsx:600-640`), and the details pane shows that row's from, to, time, kind,
+reason and ids. So the source is the latest row per edge of one node, grouped at read time over
+`task_events` (pushed down to `task_events_plan`; 0.08 ms on the largest live node, 379 rows) with
+`detail` (reason, version) at `window: 1`. No new table, no copy of the 409,170 plan-level rows;
+Task 6 deletes that part of the old read.
 
 ### Task 6: Radar GUI on streams and deletions (L) — 1.4; demo `radar-streams.ts`.
 
@@ -830,7 +866,8 @@ registration edits are one line per task and merged in wave order.
 | `projects`                  | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows)                        | none                                                                                                                                                      |
 | `project-overview`          | new, 1     | T11    | create                                                                  | 1 transaction (3 rows)                                                                                                                                    |
 | `model-sources`             | 2 → 3      | T8     | create `model_candidates`                                               | 1 build per project: 5 body parses (≈0.93 MB each), ≈1,400 rows                                                                                           |
-| `runner`                    | 21 → 22    | T4     | create display table and index                                          | 165 pages of 500 over 82,327 native calls (reads `payload`, the costliest page: measure, keep each page under 50 ms)                                      |
+| ★ `native-call-display`     | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
+| ★ `scheduler-status`        | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
 | `host-sessions`             | new, 1     | T3     | create                                                                  | ≈260 host `get` calls, 20 per page                                                                                                                        |
 | `model-decision-projection` | 3 → 4      | T9     | create view tables                                                      | none (materialized on open)                                                                                                                               |
 | `trajectory-projection`     | new, 1     | T7     | create effort table                                                     | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
