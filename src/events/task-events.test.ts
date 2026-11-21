@@ -200,7 +200,7 @@ test("backfill: paged, resumable after a kill, and a generation bump rewrites ev
     pacing: slow,
   })
   await lease.owner.settle()
-  expect(lease.owner.status()).toMatchObject({ state: "ready", phase: 1 })
+  expect(lease.owner.status()).toMatchObject({ state: "ready", phase: 2 })
   const ready = stored(made.repository)
   expect(ready.length).toBe(10)
   lease.release()

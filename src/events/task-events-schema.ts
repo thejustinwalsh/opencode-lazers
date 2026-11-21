@@ -14,15 +14,16 @@ import { drainTaskEvents, TASK_EVENTS } from "./task-events-refresh.ts"
  * ```
  * runner_transitions INSERT (task_id NOT NULL) ─┐
  * runner_effects INSERT/UPDATE/DELETE ──────────┤ triggers ─► task_events_dirty(ref)
+ * runner_progress_display INSERT/UPDATE ───────┤
  * runner_attempts, runner_nodes (dependencies) ─┘                    │ drain (same transaction)
  *                                                                    ▼
  *                             task_events  ◄── refresh(ref): the trajectory read's own derivation
- * runner_transitions DELETE ── trigger ──► its row deleted directly
+ * runner_transitions, runner_progress_display DELETE ── trigger ──► its row deleted directly
  * ```
  *
  * `origin` names the source row: `tr:<transition id>`, `ef:<effect id>` (a task's effect or check)
  * or `ef:<effect id>@<task id>` (a plan-level effect, shown in every task of its plan, as the
- * trajectory read shows it). A queue `ref` is the origin without the `@<task>` part. `at` is the
+ * trajectory read shows it) or `pg:<seq>` (a progress row of one of the task's attempts). A queue `ref` is the origin without the `@<task>` part. `at` is the
  * event time the trajectory read sorts by; NULL when the source has none (an effect with no
  * attempt and no check timing), which that read sorts last. `detail` is the trajectory event (and,
  * for a check, its check view) as JSON: cold, read only at `window: 1`.
@@ -137,6 +138,25 @@ export const TASK_EVENTS_TRIGGERS: readonly TriggerSpec[] = [
       `SELECT ${REF_OF_ORIGIN} FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
          AND attempt_id=OLD.id`,
     ),
+  },
+  // Progress rows mirror the stored display, which the recorder writes with the progress row.
+  {
+    name: "task_events_q_progress_insert",
+    on: "runner_progress_display",
+    event: "INSERT",
+    body: queue("'pg:'||NEW.seq"),
+  },
+  {
+    name: "task_events_q_progress_update",
+    on: "runner_progress_display",
+    event: "UPDATE",
+    body: queue("'pg:'||NEW.seq"),
+  },
+  {
+    name: "task_events_progress_delete",
+    on: "runner_progress_display",
+    event: "DELETE",
+    body: "DELETE FROM task_events WHERE origin='pg:'||OLD.seq;",
   },
   // A plan's events show in a task only while the plan holds its node; plan-level effects fan out
   // to the plan's nodes.

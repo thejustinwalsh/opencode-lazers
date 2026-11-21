@@ -24,7 +24,8 @@ const QUEUE = "task_events_dirty"
 
 /**
  * Entries refreshed per drain call. A unit of work, not a cap: the rest stay queued for the owner.
- * Measured with the backfill: a refresh costs well under 0.1 ms (see the measurement in the plan).
+ * Measured on the live-sized copy: 1,000 task-scoped transition inserts plus their drain took
+ * 15 ms; a check refresh costs about 0.2 ms, so a full budget stays near 100 ms at worst.
  */
 export const DRAIN_BUDGET = 500
 
@@ -49,17 +50,31 @@ type Row = {
   detail: string | null
 }
 
-const UPSERT = `INSERT INTO task_events(project_directory,task_id,plan_id,attempt_id,session_id,at,kind,origin,
-    event,from_state,to_state,status,tool,title,route_provider,route_model,route_variant,detail)
-  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  ON CONFLICT(origin) DO UPDATE SET project_directory=excluded.project_directory,task_id=excluded.task_id,
-    plan_id=excluded.plan_id,attempt_id=excluded.attempt_id,session_id=excluded.session_id,at=excluded.at,
-    kind=excluded.kind,event=excluded.event,from_state=excluded.from_state,to_state=excluded.to_state,
-    status=excluded.status,tool=excluded.tool,title=excluded.title,route_provider=excluded.route_provider,
-    route_model=excluded.route_model,route_variant=excluded.route_variant,detail=excluded.detail
-  WHERE task_events.detail IS NOT excluded.detail OR task_events.at IS NOT excluded.at
-    OR task_events.attempt_id IS NOT excluded.attempt_id OR task_events.task_id IS NOT excluded.task_id
-    OR task_events.project_directory IS NOT excluded.project_directory`
+const COLUMNS = [
+  "project_directory",
+  "task_id",
+  "plan_id",
+  "attempt_id",
+  "session_id",
+  "at",
+  "kind",
+  "origin",
+  "event",
+  "from_state",
+  "to_state",
+  "status",
+  "tool",
+  "title",
+  "route_provider",
+  "route_model",
+  "route_variant",
+  "detail",
+] as const
+const UPDATED = COLUMNS.filter((column) => column !== "origin")
+/** Writes only a row that differs: a refresh that changes nothing changes no page and wakes no stream. */
+const UPSERT = `INSERT INTO task_events(${COLUMNS.join(",")}) VALUES(${COLUMNS.map(() => "?").join(",")})
+  ON CONFLICT(origin) DO UPDATE SET ${UPDATED.map((column) => `${column}=excluded.${column}`).join(",")}
+  WHERE ${UPDATED.map((column) => `task_events.${column} IS NOT excluded.${column}`).join(" OR ")}`
 
 /** Upsert by origin: the row keeps its id (a stream updates it in place); unchanged rows are not written. */
 function write(db: Database, row: Row) {
@@ -233,10 +248,83 @@ export function refreshEffect(db: Database, id: string) {
   ).run(`ef:${id}`, `ef:${id}@`, `ef:${id}A`, JSON.stringify(written))
 }
 
+type DisplayColumns = {
+  project_directory: string
+  attempt_id: string
+  session_id: string
+  at: number
+  kind: string
+  source: string
+  message_id: string | null
+  call_id: string | null
+  tool: string | null
+  status: string | null
+  agent: string | null
+  result: string | null
+  error: string | null
+  route_provider: string | null
+  route_model: string | null
+  route_variant: string | null
+}
+
+/**
+ * A progress row of a task's attempt, mirrored from its stored display (`runner_progress_display`,
+ * already sanitized and truncated by `progressDisplay`): no payload is read or parsed. The file
+ * targets and observations stay in the display row, which the `pg:<seq>` origin names.
+ */
+export function refreshProgress(db: Database, seq: number) {
+  const origin = `pg:${seq}`
+  const display = db
+    .query<DisplayColumns, [number]>(
+      `SELECT project_directory,attempt_id,session_id,at,kind,source,message_id,call_id,tool,status,agent,
+         result,error,route_provider,route_model,route_variant FROM runner_progress_display WHERE seq=?`,
+    )
+    .get(seq)
+  const attempt = display
+    ? db
+        .query<{ task_id: string; plan_id: string }, [string]>(
+          "SELECT task_id,plan_id FROM runner_attempts WHERE id=?",
+        )
+        .get(display.attempt_id)
+    : null
+  if (!display || !attempt) {
+    db.query("DELETE FROM task_events WHERE origin=?").run(origin)
+    return
+  }
+  write(db, {
+    project_directory: display.project_directory,
+    task_id: attempt.task_id,
+    plan_id: attempt.plan_id,
+    attempt_id: display.attempt_id,
+    session_id: display.session_id,
+    at: display.at,
+    kind: "progress",
+    origin,
+    event: display.kind,
+    from_state: null,
+    to_state: null,
+    status: display.status,
+    tool: display.tool,
+    title: null,
+    route_provider: display.route_provider,
+    route_model: display.route_model,
+    route_variant: display.route_variant,
+    detail: JSON.stringify({
+      source: display.source,
+      messageID: display.message_id,
+      callID: display.call_id,
+      agent: display.agent,
+      result: display.result,
+      error: display.error,
+    }),
+  })
+}
+
 /** Refresh the rows of one queued source key. Unknown refs (a newer copy's kind) are dropped. */
 export function refreshTaskEvent(db: Database, ref: string) {
   if (ref.startsWith("tr:")) refreshTransition(db, Number(ref.slice(3)))
   else if (ref.startsWith("ef:")) refreshEffect(db, ref.slice(3))
+  else if (ref.startsWith("pg:")) refreshProgress(db, Number(ref.slice(3)))
 }
 
 export function drainTaskEvents(db: Database, budget = DRAIN_BUDGET): QueueDrain {
@@ -246,11 +334,17 @@ export function drainTaskEvents(db: Database, budget = DRAIN_BUDGET): QueueDrain
 /**
  * Transition ids read per backfill page. A unit of work: the page walks an id range (no plan
  * filter, so no history index is needed) and refreshes the task-scoped rows in it (about 2% of
- * ids). Measured on the live-sized copy; see the plan's migration table.
+ * ids). Measured on the live-sized copy (418,709 ids, 9,510 task-scoped): 222 pages, median
+ * 1.9 ms, slowest 32 ms.
  */
 export const TRANSITION_PAGE_IDS = 2_000
-/** Effects per backfill page; each may fan out to its plan's tasks. */
-export const EFFECT_PAGE_ROWS = 500
+/**
+ * Effects per backfill page; each may fan out to its plan's tasks. A check's receipt (stdout,
+ * stderr) is sanitized at write: measured 0.21 ms per effect on the live-sized copy (2,628
+ * effects); pages of 100 measured median 13 ms, slowest 34 to 58 ms (receipts vary in size), so a
+ * page holds 50.
+ */
+export const EFFECT_PAGE_ROWS = 50
 
 const transitions: BackfillPhase = {
   name: "transitions",
@@ -282,9 +376,29 @@ const effects: BackfillPhase = {
   },
 }
 
+/**
+ * Display rows per backfill page. Measured on the live-sized copy (79,423 rows) at 500 per page:
+ * 159 pages, median 6 ms, slowest 26 to 47 ms over two runs; 250 keeps the slowest page well under
+ * 50 ms.
+ */
+export const PROGRESS_PAGE_ROWS = 250
+
+const progress: BackfillPhase = {
+  name: "progress",
+  page(db, _scope, after) {
+    const rows = db
+      .query<{ seq: number }, [number, number]>(
+        "SELECT seq FROM runner_progress_display WHERE seq>? ORDER BY seq LIMIT ?",
+      )
+      .all(after, PROGRESS_PAGE_ROWS)
+    for (const { seq } of rows) refreshProgress(db, seq)
+    return { next: rows.at(-1)?.seq ?? after, done: rows.length < PROGRESS_PAGE_ROWS }
+  },
+}
+
 export const taskEventsProjection: ProjectionSpec = {
   name: TASK_EVENTS,
   generation: TASK_EVENTS_GENERATION,
-  backfill: [transitions, effects],
+  backfill: [transitions, effects, progress],
   queue: { table: QUEUE, drain: (db) => drainTaskEvents(db) },
 }
