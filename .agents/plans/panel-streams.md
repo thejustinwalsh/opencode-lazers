@@ -876,3 +876,23 @@ Every bump is a full service restart; four restarts total (one per wave 1–4).
    which retention rule?
 4. `project_presence` assumes one service process per database (rows of another instance are
    cleared at start). Is that true for every deployment you run?
+
+## Owner decisions (2026-11-21)
+
+- **Scope:** all four panels ship in v0.2.0.
+- **Question 3, transcripts: not stored.** OpenCode already holds attempt transcripts; LAZERS
+  does not duplicate them. Task 7 loses the host transcript fold
+  (`src/events/host-transcript-fold.ts` is not built, no message text enters `tasks.sqlite`).
+  Trajectory text is read from the host on demand, by cursor, a page at a time
+  (`src/core/host-page.ts`, data-handling principle 4): the host call is asynchronous, so it does
+  not block the main thread, and the window is the consumer's item count. Task 7 keeps only what
+  LAZERS derives and cannot ask the host for cheaply: `trajectory_task_effort` (usage numbers,
+  repriced from stored pieces) and the event rows already in `task_events`. Task 13's transcript
+  source becomes a host-backed stream with the same contract (`open`, `slide`, `seek`, `close`),
+  not a database source.
+- **Question 1, driver's call:** decision views are materialized per filter when a stream opens
+  them and dropped by the existing 7-day idle sweep.
+- **Question 2, driver's call:** carry over today's checks unchanged (migration recipe: "carry
+  over the old read's scope checks"); no new permission requirement in this release.
+- **Question 4, driver's call:** one service process per database is the only supported
+  deployment (the OpenCode service owns the plugin data directory).
