@@ -5,6 +5,7 @@ import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { startHostSessionFold } from "../host-sessions/fold.ts"
 import { startTaskEffortFold } from "../trajectory/effort-store.ts"
+import { startTranscriptMetaFold } from "../transcript-meta/fold.ts"
 import { workerTaskEffort } from "../trajectory/effort-worker-client.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
 import {
@@ -289,6 +290,20 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
+  // Worker transcripts' metadata (routes, times, counts; never text), folded by host cursor.
+  const transcriptMeta = startTranscriptMetaFold(
+    repository.path,
+    info.projectDirectory,
+    nativeRunnerHost.messages,
+    {
+      events: host,
+      location: info.directory,
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS transcript metadata fold failed", { error: String(error) }),
+        ),
+    },
+  )
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
   // Each task's effort and market valuation, recomputed off the main thread (the effort worker)
   // when its facts or the prices change; only the price-source settings are read here.
@@ -413,6 +428,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     taskEventsLease.release()
     nativeCallLease.release()
     hostSessions.release()
+    transcriptMeta.release()
     taskEffort.release()
     effortCompute.release()
     overviewLease.release()

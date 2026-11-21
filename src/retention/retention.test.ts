@@ -13,6 +13,7 @@ import {
   firstAttemptID,
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
+import { ensureTranscriptMetaSchema, writeTranscriptPage } from "../transcript-meta/schema.ts"
 import {
   AUDIT_RECEIPTS_KEPT,
   classifyPlans,
@@ -693,4 +694,39 @@ test("an abandoned plan older than the age is retirable; a recent one is not", a
   await purge(fixture, 30)
   expect(revisions(db, "dropped")).toEqual([1, 2, 4, 5])
   expect(revisions(db, "fresh")).toEqual([1, 2, 3, 4, 5])
+})
+
+test("transcript metadata follows the finished-plan age: a retired plan's sessions go, others stay", async () => {
+  const fixture = setup()
+  ensureTranscriptMetaSchema(fixture.repository)
+  const sessions = ["ses-failed", "ses-accepted", "ses-elsewhere"]
+  fixture.repository.atomic((db) => {
+    for (const session of sessions)
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        session,
+        { cursor: null, base: 0, messageCount: 0, state: "not-read" },
+        [
+          { id: `u-${session}`, type: "user", text: "hello" },
+          {
+            id: `m-${session}`,
+            type: "assistant",
+            model: { providerID: "openai", id: "gpt-6-luna" },
+            time: { created: 1_000 },
+          },
+        ],
+        undefined,
+      )
+  })
+  const db = handle(fixture)
+  const preview = await previewRetention(db, { now: NOW, days: 30 })
+  // The retired plan's two attempt sessions: a step row and a session row each.
+  expect(preview.kinds.find((kind) => kind.id === "transcript-meta")?.rows).toBe(4)
+  const removed = await purge(fixture, 30)
+  expect(removed["transcript-meta"]?.rows).toBe(4)
+  const left = (table: string) =>
+    db.query<{ session_id: string }, []>(`SELECT session_id FROM ${table}`).all()
+  expect(left("transcript_steps")).toEqual([{ session_id: "ses-elsewhere" }])
+  expect(left("transcript_sessions")).toEqual([{ session_id: "ses-elsewhere" }])
 })

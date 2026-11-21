@@ -267,6 +267,11 @@ export const schemaModules = {
     source: "src/host-sessions/state.ts",
     tables: ["host_session_state", "host_session_dirty"],
   },
+  "transcript-meta": {
+    generation: 1,
+    source: "src/transcript-meta/schema.ts",
+    tables: ["transcript_steps", "transcript_sessions", "transcript_meta_dirty"],
+  },
   "trajectory-effort": {
     generation: 1,
     source: "src/trajectory/effort-store.ts",

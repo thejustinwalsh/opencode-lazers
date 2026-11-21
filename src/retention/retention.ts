@@ -68,6 +68,7 @@ export type RetentionKindID =
   | "recovery-facts"
   | "recovery-fact-window"
   | "tool-calls"
+  | "transcript-meta"
   | "transitions"
   | "notices"
   | "audit-receipts"
@@ -257,6 +258,23 @@ const KINDS: Kind[] = [
         optional: true,
       },
     ],
+  },
+  {
+    id: "transcript-meta",
+    label: "Transcript metadata",
+    detail: "routes, times and counts of finished attempts' worker transcripts (no text)",
+    ageIndependent: false,
+    specs: (ctx) =>
+      (["transcript_steps", "transcript_sessions"] as const).map((table) => ({
+        table,
+        where: `session_id IN (SELECT a.session_id FROM runner_attempts a WHERE a.plan_id IN ${inPlans})`,
+        bind: [ctx.retiredJSON],
+        bytes:
+          table === "transcript_steps"
+            ? "length(session_id)+length(message_id)+length(project_directory)+length(COALESCE(provider_id,''))+length(COALESCE(model_id,''))+length(COALESCE(variant,''))+length(COALESCE(error_type,''))+length(COALESCE(retry_error_type,''))+104"
+            : "length(session_id)+length(project_directory)+length(COALESCE(cursor,''))+length(read_state)+48",
+        optional: true,
+      })),
   },
   {
     id: "transitions",
