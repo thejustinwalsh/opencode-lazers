@@ -1,94 +1,13 @@
-import type {
-  ObservationScope,
-  SnapshotResponse,
-  TrajectoryHistoryResponse,
-  TrajectoryResponse,
-} from "../observability/contract.ts"
 import { buildAxis } from "./axis.ts"
 import type { Axis } from "./axis.ts"
-import { trajectoryChanges } from "./events.ts"
-import type { TrajectoryChange, TrajectoryEventSource } from "./events.ts"
 import { z } from "zod"
 import { TrajectoryMarketEquivalentCostSchema } from "../models/task-valuation-schema.ts"
 
-export type ObservationRpc = {
-  snapshot(
-    input: { scope: ObservationScope },
-    options: { location: { directory: string }; signal: AbortSignal },
-  ): Promise<SnapshotResponse>
-  trajectory(
-    input: { scope: ObservationScope; taskID: string; limit: number; cursor?: string },
-    options: { location: { directory: string }; signal: AbortSignal },
-  ): Promise<TrajectoryResponse>
-  trajectoryHistory(
-    input: { scope: ObservationScope; taskID: string; limit: number; cursor?: string },
-    options: { location: { directory: string }; signal: AbortSignal },
-  ): Promise<TrajectoryHistoryResponse>
-  trajectoryStatus(
-    input: { scope: ObservationScope; taskID: string; live?: { cursor?: string } },
-    options: { location: { directory: string }; signal: AbortSignal },
-  ): Promise<TrajectoryResponse>
-}
-
-export type TrajectoryTransport = {
-  snapshot(scope: ObservationScope, signal: AbortSignal): Promise<SnapshotResponse>
-  trajectory(
-    scope: ObservationScope,
-    taskID: string,
-    signal: AbortSignal,
-    cursor?: string,
-  ): Promise<TrajectoryResponse>
-  history(
-    scope: ObservationScope,
-    taskID: string,
-    signal: AbortSignal,
-    cursor?: string,
-    limit?: number,
-  ): Promise<TrajectoryHistoryResponse>
-  status(
-    scope: ObservationScope,
-    taskID: string,
-    signal: AbortSignal,
-    cursor?: string,
-  ): Promise<TrajectoryResponse>
-  changes(signal: AbortSignal): AsyncIterable<TrajectoryChange>
-  online(): boolean
-}
-
-export function createTrajectoryTransport(
-  rpc: ObservationRpc,
-  directory: string,
-  online: () => boolean,
-  events: TrajectoryEventSource,
-  projectID: string,
-): TrajectoryTransport {
-  return {
-    snapshot: (scope, signal) => rpc.snapshot({ scope }, { location: { directory }, signal }),
-    trajectory: (scope, taskID, signal, cursor) =>
-      rpc.trajectory(
-        { scope, taskID, limit: 50, ...(cursor ? { cursor } : {}) },
-        { location: { directory }, signal },
-      ),
-    history: (scope, taskID, signal, cursor, limit = 50) =>
-      rpc.trajectoryHistory(
-        { scope, taskID, limit, ...(cursor ? { cursor } : {}) },
-        { location: { directory }, signal },
-      ),
-    status: (scope, taskID, signal, cursor) =>
-      rpc.trajectoryStatus(
-        { scope, taskID, live: cursor ? { cursor } : {} },
-        { location: { directory }, signal },
-      ),
-    changes: (signal) => trajectoryChanges(events, projectID, directory, signal),
-    online,
-  }
-}
-
 const NullableTime = z.number().finite().nullable()
-const Model = z
+export const Model = z
   .object({ providerID: z.string(), id: z.string(), variant: z.string().optional() })
   .strip()
-const Check = z
+export const Check = z
   .object({
     id: z.string(),
     scope: z.enum(["attempt", "plan"]),
@@ -128,7 +47,7 @@ const FileTargets = z
     paths: z.array(z.string()).max(8),
   })
   .strip()
-const Event = z
+export const Event = z
   .object({
     id: z.string(),
     at: NullableTime.optional(),
@@ -186,7 +105,6 @@ const Event = z
   .strip()
 const Report = z
   .object({
-    schemaVersion: z.literal(1),
     task: z.object({
       id: z.string(),
       /** Task reference such as LZ-137; absent from older servers and for unreferenced tasks. */
@@ -269,46 +187,9 @@ const Report = z
       }),
       marketEquivalentCost: TrajectoryMarketEquivalentCostSchema.optional(),
     }),
-    coverage: z.object({
-      availableSessionContexts: z.number().int().nonnegative(),
-      unavailableSessionContexts: z.number().int().nonnegative(),
-      fullSessionHistory: z.string(),
-      compacted: z.boolean(),
-      ongoing: z.boolean(),
-      attemptsWithoutRecordedSessions: z.number().int().nonnegative(),
-      workerProgress: z
-        .object({
-          facts: z.number().int().nonnegative(),
-          truncated: z.boolean(),
-          commentary: z.number().int().nonnegative(),
-          automaticFacts: z.number().int().nonnegative(),
-          recoveryGaps: z.number().int().nonnegative(),
-          additiveStepMeasurements: z.number().int().nonnegative(),
-          cumulativeUsageSnapshots: z.number().int().nonnegative(),
-        })
-        .optional(),
-    }),
-    trajectory: z.object({
-      page: z.number().int().positive().optional(),
-      limit: z.number().int().positive().optional(),
-      totalEvents: z.number().int().nonnegative(),
-      events: z.array(Event),
-      nextCursor: z.string().nullable(),
-      hasMore: z.boolean(),
-    }),
   })
   .strip()
 
-const SnapshotNode = z
-  .object({
-    taskID: z.string(),
-    reference: z.string().optional(),
-    revision: z.number().int().positive().optional(),
-    objective: z.string().optional(),
-    ordinal: z.number().int().nonnegative(),
-    state: z.string(),
-  })
-  .strip()
 const RecordedExecution = z
   .object({
     startedAt: NullableTime,
@@ -318,7 +199,7 @@ const RecordedExecution = z
     timingBasis: z.string(),
   })
   .strip()
-const RecordedAttempt = z
+const RecordedAttemptSchema = z
   .object({
     id: z.string(),
     planID: z.string(),
@@ -331,7 +212,7 @@ const RecordedAttempt = z
     executions: z.array(RecordedExecution),
   })
   .strip()
-const RecordedCheck = z
+const RecordedCheckSchema = z
   .object({
     id: z.string(),
     planID: z.string().nullable().optional(),
@@ -346,51 +227,11 @@ const RecordedCheck = z
     timingBasis: z.string(),
   })
   .strip()
-const ProjectedSnapshot = z
-  .object({
-    projectID: z.string(),
-    scope: z.union([
-      z.object({ kind: z.literal("session"), sessionID: z.string() }),
-      z.object({ kind: z.literal("project") }),
-    ]),
-    boundary: z.object({
-      repositoryVersion: z.number().int().nonnegative(),
-      sourceRevision: z.number().int().nonnegative(),
-      sourceFingerprint: z.string(),
-      nativeRevision: z.number().int().nonnegative(),
-      eventSequence: z.number().int().nonnegative(),
-      transitionSequence: z.number().int().nonnegative(),
-    }),
-    plans: z.array(
-      z.object({
-        id: z.string(),
-        title: z.string().nullable(),
-        nodes: z.array(SnapshotNode),
-      }),
-    ),
-    unplannedTasks: z.array(
-      z.object({
-        taskID: z.string(),
-        revision: z.number().int().positive(),
-        status: z.string(),
-        title: z.string(),
-      }),
-    ),
-    attempts: z.array(RecordedAttempt).optional().default([]),
-    checks: z.array(RecordedCheck).optional().default([]),
-  })
-  .strip()
+export type RecordedAttempt = z.infer<typeof RecordedAttemptSchema>
+export type RecordedCheck = z.infer<typeof RecordedCheckSchema>
 
-export type ProjectedSnapshot = z.infer<typeof ProjectedSnapshot>
-export type RecordedAttempt = z.infer<typeof RecordedAttempt>
-export type RecordedCheck = z.infer<typeof RecordedCheck>
-
-export function parseProjectedSnapshot(snapshot: SnapshotResponse): ProjectedSnapshot {
-  const parsed = ProjectedSnapshot.safeParse(snapshot)
-  if (!parsed.success) throw new Error("Observation snapshot has an unsupported shape")
-  return parsed.data
-}
-
+/** The effort the stream's detail carries, parsed so the view reads only what it knows. */
+export const reportEffortSchema = Report.shape.effort
 export type TrajectoryReport = z.infer<typeof Report>
 export type TrajectoryAttempt = TrajectoryReport["attempts"][number]
 export type TrajectoryCheck = z.infer<typeof Check>
@@ -414,47 +255,12 @@ export function eventTitle(event: TrajectoryEvent) {
   return event.kind
 }
 
-export function parseTrajectoryReport(response: TrajectoryResponse): TrajectoryReport {
-  const parsed = Report.safeParse(response.report)
-  if (!parsed.success)
-    throw new Error(
-      `Trajectory projection has an unsupported shape at ${parsed.error.issues
-        .slice(0, 3)
-        .map((issue) => issue.path.join("."))
-        .join(", ")}`,
-    )
-  return parsed.data
-}
-
 export type TaskChoice = {
   taskID: string
   reference?: string
   revision?: number
   title: string | null
   status: string
-}
-
-export function taskChoices(snapshot: ProjectedSnapshot): TaskChoice[] {
-  const tasks = new Map<string, TaskChoice>()
-  for (const plan of snapshot.plans)
-    for (const node of plan.nodes)
-      if (!tasks.has(node.taskID))
-        tasks.set(node.taskID, {
-          taskID: node.taskID,
-          ...(node.reference ? { reference: node.reference } : {}),
-          ...(node.revision === undefined ? {} : { revision: node.revision }),
-          title: node.objective ?? plan.title,
-          status: node.state,
-        })
-  for (const task of snapshot.unplannedTasks)
-    if (!tasks.has(task.taskID))
-      tasks.set(task.taskID, {
-        taskID: task.taskID,
-        revision: task.revision,
-        title: task.title,
-        status: task.status,
-      })
-  return [...tasks.values()]
 }
 
 export type TimelineTick = { elapsedMs: number; label: string }
@@ -499,79 +305,6 @@ export type Timeline = {
   checks: CheckTimeline[]
   /** Capture time that bounds open bars, or null when no attempt is open. */
   openEnd?: number | null
-}
-
-function timelineAttempts(
-  snapshot: ProjectedSnapshot | undefined,
-  taskID: string,
-  report?: TrajectoryReport,
-) {
-  const attempts = snapshot?.attempts.filter((attempt) => attempt.taskID === taskID) ?? []
-  if (attempts.length || !report) return attempts
-  return report.attempts.map((attempt): RecordedAttempt => {
-    const modelActivity = attempt.intervals.modelActivity
-    const executions =
-      modelActivity.startedAt !== null || modelActivity.endedAt !== null
-        ? [
-            {
-              startedAt: modelActivity.startedAt,
-              endedAt: modelActivity.endedAt,
-              startSequence: null,
-              endSequence: null,
-              timingBasis: `Report model-activity interval: ${modelActivity.basis}`,
-            },
-          ]
-        : []
-    return {
-      id: attempt.id,
-      planID: attempt.planID,
-      taskID,
-      number: attempt.number,
-      state: attempt.state,
-      startedAt: attempt.intervals.attempt.startedAt ?? attempt.startedAt,
-      endedAt: attempt.intervals.attempt.endedAt,
-      timingBasis: `Report attempt interval: ${attempt.intervals.attempt.basis}`,
-      executions,
-    }
-  })
-}
-
-function timelineChecks(
-  snapshot: ProjectedSnapshot | undefined,
-  taskID: string,
-  report?: TrajectoryReport,
-) {
-  const allowedPlanIDs = new Set(
-    (snapshot?.plans ?? [])
-      .filter((plan) => plan.nodes.some((node) => node.taskID === taskID))
-      .map((plan) => plan.id),
-  )
-  const checks = (snapshot?.checks ?? []).filter(
-    (check) =>
-      check.taskID === taskID ||
-      (check.taskID === null &&
-        typeof check.planID === "string" &&
-        allowedPlanIDs.has(check.planID)),
-  )
-  if (checks.length || !report) return checks
-  const fromReport = report.plans.flatMap((plan) =>
-    plan.checks.map((check) => ({ check, planID: plan.id })),
-  )
-  for (const attempt of report.attempts)
-    for (const check of attempt.checks) fromReport.push({ check, planID: attempt.planID })
-  return fromReport.map(({ check, planID }): RecordedCheck => ({
-    id: `${planID}:${check.attemptID ?? "plan"}:${check.id}`,
-    planID,
-    taskID,
-    attemptID: check.attemptID,
-    checkID: check.id,
-    scope: check.scope,
-    state: check.state,
-    startedAt: check.startedAt,
-    endedAt: check.endedAt,
-    exitCode: check.exitCode,
-    timingBasis: check.timingBasis,
-  }))
 }
 
 function timestampValues(attempts: RecordedAttempt[], checks: RecordedCheck[]) {
@@ -637,80 +370,24 @@ export function isActiveAttemptState(state: string) {
 }
 
 /**
- * Plan states the runtime treats as terminal (src/runner/plan-control.ts
- * `terminalPlanStates`). Mirrored here so the GUI bundle does not import runner code;
- * a test keeps both sets equal.
- */
-export const SETTLED_PLAN_STATES: ReadonlySet<string> = new Set([
-  "accepted",
-  "failed",
-  "cancelled",
-  "exhausted",
-  "incorporated",
-  "integrated",
-  "cleanup-blocked",
-])
-
-/**
- * A settled history has no busy worker, no active attempt and only terminal plans. It is a
- * polling policy for this view, not a workflow state: a resumed plan changes the recorded
- * snapshot, and reconnect or explicit refresh always reads status again.
- */
-export function settledHistory(report: TrajectoryReport | undefined) {
-  return Boolean(
-    report &&
-    !report.coverage.ongoing &&
-    report.plans.length > 0 &&
-    report.plans.every((plan) => plan.state !== undefined && SETTLED_PLAN_STATES.has(plan.state)) &&
-    report.attempts.every((attempt) => !isActiveAttemptState(attempt.state)),
-  )
-}
-
-/** Recorded facts whose change means a settled task may have resumed. */
-export function taskSnapshotFingerprint(snapshot: ProjectedSnapshot | undefined, taskID: string) {
-  if (!snapshot) return null
-  const planIDs = new Set(
-    snapshot.plans
-      .filter((plan) => plan.nodes.some((node) => node.taskID === taskID))
-      .map((plan) => plan.id),
-  )
-  return JSON.stringify([
-    snapshot.plans.flatMap((plan) =>
-      plan.nodes
-        .filter((node) => node.taskID === taskID)
-        .map((node) => [plan.id, node.state, node.revision ?? null]),
-    ),
-    snapshot.attempts
-      .filter((attempt) => attempt.taskID === taskID)
-      .map((attempt) => [attempt.id, attempt.state, attempt.endedAt, attempt.executions.length]),
-    snapshot.checks
-      .filter(
-        (check) =>
-          check.taskID === taskID ||
-          (check.taskID === null && typeof check.planID === "string" && planIDs.has(check.planID)),
-      )
-      .map((check) => [check.id, check.state, check.startedAt, check.endedAt, check.exitCode]),
-  ])
-}
-
-/**
  * Projects recorded attempt and check intervals onto one elapsed axis whose origin is the
  * earliest recorded attempt start. `asOf` (history capture time) only extends the axis and
  * the open bar of an attempt still in an active state; it never becomes a recorded end.
  */
 export function buildTimeline(
-  snapshot: ProjectedSnapshot | undefined,
-  taskID: string,
-  report?: TrajectoryReport,
+  recorded: {
+    attempts: RecordedAttempt[]
+    checks: RecordedCheck[]
+    firstAttemptAt?: number | null
+  },
   asOf?: number | null,
   extraTimes: readonly number[] = [],
-  /** Compress known idle stretches; only once every captured page is loaded. */
+  /** Compress known idle stretches; only once the whole timeline is loaded. */
   compressIdle = false,
 ): Timeline {
-  const attempts = timelineAttempts(snapshot, taskID, report)
-  const checks = timelineChecks(snapshot, taskID, report)
+  const { attempts, checks } = recorded
   const starts = attempts.map((attempt) => attempt.startedAt).filter(Number.isFinite)
-  const origin = starts.length ? Math.min(...starts) : (report?.effort.firstAttemptAt ?? null)
+  const origin = starts.length ? Math.min(...starts) : (recorded.firstAttemptAt ?? null)
   if (origin === null) return { origin: null, durationMs: 0, ticks: [], attempts: [], checks: [] }
   const openAttempt = attempts.some(
     (attempt) => attempt.endedAt === null && isActiveAttemptState(attempt.state),
