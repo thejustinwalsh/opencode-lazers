@@ -46,6 +46,8 @@ export type HostSession = {
   agent?: string
   metadata?: Record<string, unknown>
   archived: boolean
+  /** Native `time.updated` of the session, when the host reports it. Moves with any change to it. */
+  updatedAt?: number
   /** Current native foreground execution; absence is not a background-quiescence claim. */
   busy: boolean
   /**

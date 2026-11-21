@@ -15,7 +15,7 @@ import type { EffectRow, PlanRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
 
-test("completed retained verification cleanup probes on fallback and after runtime restart", async () => {
+test("a retained verification with recorded complete cleanup is never probed again", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-retained-cleanup-probe-project-")))
   const dataDirectory = realpathSync(
     mkdtempSync(join(tmpdir(), "lazers-retained-cleanup-probe-data-")),
@@ -126,23 +126,14 @@ test("completed retained verification cleanup probes on fallback and after runti
     })
     process.env.GIT_TRACE = tracePath
 
+    // A terminal operation whose cleanup is recorded complete is not read by the tick at all:
+    // no inventory, no git, whatever the clock or a restart.
     await reconcile(runtime)
-    expect(inventoryReads).toBe(1)
-    const firstGitCalls = gitCalls()
-    expect(firstGitCalls).toBeGreaterThan(0)
-
+    expect(inventoryReads).toBe(0)
+    expect(gitCalls()).toBe(0)
+    clock += 60_000
     await reconcile(runtime)
-    expect(inventoryReads).toBe(1)
-    expect(gitCalls()).toBe(firstGitCalls)
-    clock += 59_999
-    await reconcile(runtime)
-    expect(inventoryReads).toBe(1)
-    expect(gitCalls()).toBe(firstGitCalls)
-
-    clock += 1
-    await reconcile(runtime)
-    expect(inventoryReads).toBe(2)
-    expect(gitCalls()).toBeGreaterThan(firstGitCalls)
+    expect(inventoryReads).toBe(0)
 
     await runtime.stop()
     runtime = undefined
@@ -153,10 +144,9 @@ test("completed retained verification cleanup probes on fallback and after runti
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })
-    const beforeRestartProbe = gitCalls()
     await reconcile(runtime)
-    expect(inventoryReads).toBe(3)
-    expect(gitCalls()).toBeGreaterThan(beforeRestartProbe)
+    expect(inventoryReads).toBe(0)
+    expect(gitCalls()).toBe(0)
   } finally {
     await runtime?.stop()
     repository?.close()

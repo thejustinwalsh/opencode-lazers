@@ -104,6 +104,52 @@ export type RetainedVerificationInspection = {
   latest: RetainedVerificationProjection[]
 }
 
+/**
+ * True while a terminal operation still has cleanup to do or to record: the tick reads these by
+ * index instead of the project's whole history. Maintained wherever the payload is written.
+ */
+export function retainedCleanupPending(operation: RetainedVerification): boolean {
+  const settled = (workspace: string | null, state: string | null) =>
+    workspace === null ? state === null : state === "removed"
+  return !(
+    operation.cleanupState === "complete" &&
+    settled(operation.taskWorkspace, operation.taskWorkspaceState) &&
+    settled(operation.combinedWorkspace ?? null, operation.combinedWorkspaceState ?? null)
+  )
+}
+
+const cleanupColumnPresent = new WeakSet<Database>()
+
+function ensureCleanupColumn(db: Database) {
+  if (cleanupColumnPresent.has(db)) return
+  const has = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM pragma_table_info('runner_retained_verifications') WHERE name='cleanup_pending'",
+    )
+    .get()
+  if (!has) {
+    db.exec(
+      "ALTER TABLE runner_retained_verifications ADD COLUMN cleanup_pending INTEGER NOT NULL DEFAULT 1",
+    )
+    const settled = (workspace: string, state: string) =>
+      `(CASE WHEN json_extract(payload,'$.${workspace}') IS NULL
+         THEN json_extract(payload,'$.${state}') IS NULL
+         ELSE json_extract(payload,'$.${state}')='removed' END)`
+    db.exec(`
+      UPDATE runner_retained_verifications SET cleanup_pending=CASE WHEN
+        json_extract(payload,'$.cleanupState')='complete'
+        AND ${settled("taskWorkspace", "taskWorkspaceState")}
+        AND ${settled("combinedWorkspace", "combinedWorkspaceState")}
+      THEN 0 ELSE 1 END
+    `)
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS runner_retained_verifications_cleanup
+      ON runner_retained_verifications(project_directory,state) WHERE cleanup_pending=1
+  `)
+  cleanupColumnPresent.add(db)
+}
+
 export function ensureRetainedVerificationTables(db: Database): void {
   registerLifecycleTransitions(db)
   db.exec(`
@@ -178,6 +224,7 @@ export function ensureRetainedVerificationTables(db: Database): void {
     CREATE INDEX IF NOT EXISTS runner_retained_verification_resources_active
       ON runner_retained_verification_resources(project_directory,state,canonical_path);
   `)
+  ensureCleanupColumn(db)
   db.exec(`
     INSERT OR IGNORE INTO runner_retained_verification_check_receipts(
       operation_id,phase,check_id,receipt_path,check_json,workspace,artifact,input_fingerprint,
@@ -229,6 +276,22 @@ export function retainedVerificationsForProject(
     .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
 }
 
+/** Terminal operations whose cleanup is not recorded complete: the only ones a tick reads. */
+export function terminalPendingRetainedVerifications(
+  db: Database,
+  projectDirectory: string,
+): RetainedVerification[] {
+  ensureRetainedVerificationTables(db)
+  return db
+    .query<{ payload: string }, [string]>(
+      `SELECT payload FROM runner_retained_verifications
+       WHERE project_directory=? AND state IN ('accepted','failed','cancelled') AND cleanup_pending=1
+       ORDER BY plan_id,task_id,rowid`,
+    )
+    .all(projectDirectory)
+    .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
+}
+
 const liveStates = ["pending", "task-checks"] as const
 
 export function activeRetainedVerifications(
@@ -271,7 +334,7 @@ export function createRetainedVerification(
   if (active) throw new Error("A conflicting retained verification operation is active")
   db.query(
     `INSERT INTO runner_retained_verifications
-     (id,project_directory,plan_id,task_id,state,payload) VALUES(?,?,?,?,?,?)`,
+     (id,project_directory,plan_id,task_id,state,payload,cleanup_pending) VALUES(?,?,?,?,?,?,?)`,
   ).run(
     operation.id,
     projectDirectory,
@@ -279,6 +342,7 @@ export function createRetainedVerification(
     operation.taskID,
     operation.state,
     JSON.stringify(operation),
+    retainedCleanupPending(operation) ? 1 : 0,
   )
   return operation
 }
@@ -668,10 +732,15 @@ export function saveRetainedVerification(db: Database, operation: RetainedVerifi
   validateRetainedLifecycles(previous, parsed)
   const changed = db
     .query(
-      `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?
+      `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?,cleanup_pending=?
        WHERE id=?`,
     )
-    .run(parsed.state, JSON.stringify(parsed), parsed.id).changes
+    .run(
+      parsed.state,
+      JSON.stringify(parsed),
+      retainedCleanupPending(parsed) ? 1 : 0,
+      parsed.id,
+    ).changes
   if (changed !== 1) throw new Error("Retained verification no longer exists")
 }
 
