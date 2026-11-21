@@ -46,6 +46,13 @@ export type SourceDefinition<F, C extends Columns> = {
    * trusted code and do not pass through it.
    */
   authorize?(filter: F, context: StreamContext): F | Promise<F>
+  /**
+   * Runs on the main thread once a stream that `authorize` admitted is no longer held: closed,
+   * expired (its lease was not renewed) or disposed with its registration. It receives the filter
+   * `authorize` returned. A source whose rows are kept current only while someone reads them
+   * (a stored view) counts holders with `authorize` and this.
+   */
+  release?(filter: F): void
 }
 
 /** What `authorize` may ask of the service that registered the Streams RPC. */

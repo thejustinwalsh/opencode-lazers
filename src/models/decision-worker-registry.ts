@@ -52,6 +52,8 @@ export type DecisionWorkerLease = {
   claimPrewarm(projectDirectory: string): boolean
   /** The stored view of `request` in `projectDirectory`, created when missing; it builds now. */
   openView(projectDirectory: string, request: DecisionViewRequest): number
+  /** A stream that opened a view no longer holds it. */
+  releaseView(viewID: number): void
   /** This location answers a project's routed models for its views until release. */
   provideRouted(projectDirectory: string, provider: RoutedProvider): void
   /** Drops this location's reference; the last release closes the worker. Idempotent. */
@@ -144,6 +146,9 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
     openView(projectDirectory, request) {
       current.owner.touch(projectDirectory)
       return current.views.open(projectDirectory, request)
+    },
+    releaseView(viewID) {
+      current.views.release(viewID)
     },
     provideRouted(projectDirectory, provider) {
       const list = current.routed.get(projectDirectory) ?? []

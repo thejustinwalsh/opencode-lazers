@@ -1,5 +1,5 @@
 import { defineSource, type StreamContext } from "../source.ts"
-import { openDecisionViewFor } from "../../models/decision-view-registry.ts"
+import { openDecisionViewFor, releaseDecisionViewFor } from "../../models/decision-view-registry.ts"
 import {
   MODELS_SOURCES,
   modelCandidateColumns,
@@ -86,6 +86,11 @@ async function viewScoped<F extends ModelViewFilter>(
   return { ...checked, viewID }
 }
 
+/** The stream that held the view closed or expired: the view may stop refreshing. */
+const viewReleased = (input: ModelViewFilter) => {
+  if (input.viewID !== undefined) releaseDecisionViewFor(input.projectDirectory, input.viewID)
+}
+
 const viewID = (input: { viewID?: number }) => {
   if (input.viewID === undefined) throw new Error("Models scope is unavailable")
   return input.viewID
@@ -100,6 +105,7 @@ export const modelViewSource = defineSource({
   authorize(input: ModelViewFilter, context) {
     return viewScoped(input, context, "lz-read-model-decision")
   },
+  release: viewReleased,
   filter(input: ModelViewFilter) {
     return { where: "model_decision_views.id = ?", params: [viewID(input)] }
   },
@@ -122,6 +128,7 @@ export const modelCatalogSource = defineSource({
   authorize(input: ModelCatalogFilter, context) {
     return viewScoped(input, context, "lz-read-model-comparison")
   },
+  release: viewReleased,
   filter(input: ModelCatalogFilter) {
     return { where: "model_catalog_entries.view_id = ?", params: [viewID(input)] }
   },
@@ -143,6 +150,7 @@ export const modelPointsSource = defineSource({
   authorize(input: ModelPointsFilter, context) {
     return viewScoped(input, context, "lz-read-model-decision")
   },
+  release: viewReleased,
   filter(input: ModelPointsFilter) {
     return { where: "model_decision_points.view_id = ?", params: [viewID(input)] }
   },
@@ -163,6 +171,7 @@ export const modelContributorsSource = defineSource({
   authorize(input: ModelContributorsFilter, context) {
     return viewScoped(input, context, "lz-read-model-decision")
   },
+  release: viewReleased,
   filter(input: ModelContributorsFilter) {
     return {
       where:

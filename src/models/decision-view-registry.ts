@@ -4,7 +4,7 @@
  * sources (`src/streams/sources/models.ts`, also loaded in reader workers) call it. It holds
  * closures only, on globalThis because every plugin copy has its own module scope.
  */
-type Opener = (request: unknown) => number
+type Opener = { open(request: unknown): number; release(viewID: number): void }
 const key = Symbol.for("lazers.models.decisionViewOpeners.v1")
 const host = globalThis as typeof globalThis & { [key]?: Map<string, Opener[]> }
 const openers = () => (host[key] ??= new Map())
@@ -26,7 +26,12 @@ export function registerDecisionViewOpener(projectDirectory: string, open: Opene
  * point write on the main thread. The opener validates the request and starts its build.
  */
 export function openDecisionViewFor(projectDirectory: string, request: unknown): number {
-  const open = openers().get(projectDirectory)?.at(-1)
-  if (!open) throw new Error("Models scope is unavailable")
-  return open(request)
+  const opener = openers().get(projectDirectory)?.at(-1)
+  if (!opener) throw new Error("Models scope is unavailable")
+  return opener.open(request)
+}
+
+/** A stream that `openDecisionViewFor` admitted no longer holds the view. */
+export function releaseDecisionViewFor(projectDirectory: string, viewID: number) {
+  openers().get(projectDirectory)?.at(-1)?.release(viewID)
 }

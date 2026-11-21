@@ -358,9 +358,10 @@ export function registerModelsServer(
     lease.provideRouted(projectDirectory, async (taskID, signal) =>
       routedModels(await readSettings(taskID ?? undefined, signal ?? new AbortController().signal)),
     )
-    const releaseOpener = registerDecisionViewOpener(projectDirectory, (request) =>
-      lease.openView(projectDirectory, DecisionViewRequestSchema.parse(request)),
-    )
+    const releaseOpener = registerDecisionViewOpener(projectDirectory, {
+      open: (request) => lease.openView(projectDirectory, DecisionViewRequestSchema.parse(request)),
+      release: (viewID) => lease.releaseView(viewID),
+    })
     yield* Effect.addFinalizer(() => Effect.sync(releaseOpener))
     const decisionReader = lease.reader(projectDirectory)
     const readerFor = (unit: ProjectUnit) => {

@@ -20,8 +20,9 @@ import type { DecisionViewCall, DecisionViewRequest, DecisionViewResult } from "
  *
  * ```
  * stream open ─► authorize ─► open(): view row (point write) ─► build now
- * table change (revision, candidates, evidence, mappings) ─► views opened in the last 10 min
- *     ─► build, at most once per 15 s each (the worker's warm cadence)
+ * table change (revision, candidates, evidence, mappings) ─► views a stream holds, or let go of
+ *     in the last 10 min ─► build, at most once per 15 s each (the worker's warm cadence)
+ * stream closed or lease expired ─► release(): one holder fewer
  * build: routes (host settings) ─► worker.view(identity stored) ─┬─ unchanged ─► nothing written
  *                                                                └─ rows ─► writeDecisionView (paged)
  * hourly, on open: views nobody opened for 7 days are dropped
@@ -57,7 +58,10 @@ type RoutedReader = (
 type Active = {
   project: string
   request: DecisionViewRequest
+  /** When the last holder let go (or, while held, the last open). */
   openedAt: number
+  /** Streams that hold the view now (`open` without its `release`). */
+  held: number
   builtAt: number
   running?: Promise<void>
   again: boolean
@@ -108,12 +112,15 @@ export class DecisionViews {
       .transaction(() => openDecisionView(db, projectDirectory, request, now))
       .immediate()
     const entry = this.active.get(view.id)
-    if (entry) entry.openedAt = now
-    else
+    if (entry) {
+      entry.openedAt = now
+      entry.held++
+    } else
       this.active.set(view.id, {
         project: projectDirectory,
         request,
         openedAt: now,
+        held: 1,
         builtAt: 0,
         again: false,
       })
@@ -124,6 +131,11 @@ export class DecisionViews {
     if (now - this.lastSweep > SWEEP_INTERVAL_MS) {
       this.lastSweep = now
       try {
+        // A held view is being read, however long ago it was opened.
+        const held = [...this.active].filter(([, item]) => item.held > 0).map(([id]) => id)
+        db.query(
+          "UPDATE model_decision_views SET last_read_at=? WHERE id IN (SELECT value FROM json_each(?))",
+        ).run(now, JSON.stringify(held))
         dropIdleDecisionViews(db, { now, idleMs: PROJECTION_IDLE_DROP_MS })
       } catch (error) {
         this.lastError = error instanceof Error ? error : new Error(String(error))
@@ -132,11 +144,27 @@ export class DecisionViews {
     return view.id
   }
 
-  /** A watched table changed: rebuild the views opened recently, each at its cadence. */
+  /**
+   * A stream that held the view closed or expired (`release` of the Models sources). The view
+   * stays current for VIEW_ACTIVE_MS more, so a panel that reopens it finds it current.
+   */
+  release(viewID: number) {
+    const entry = this.active.get(viewID)
+    if (!entry || entry.held === 0) return
+    entry.held--
+    if (entry.held === 0) entry.openedAt = this.now()
+  }
+
+  /** Streams holding a view now; for tests and diagnostics. */
+  holders(viewID: number) {
+    return this.active.get(viewID)?.held ?? 0
+  }
+
+  /** A watched table changed: rebuild the views held or let go of recently, each at its cadence. */
   private changed() {
     const now = this.now()
     for (const [viewID, entry] of this.active) {
-      if (now - entry.openedAt > VIEW_ACTIVE_MS) {
+      if (entry.held === 0 && now - entry.openedAt > VIEW_ACTIVE_MS) {
         clearTimeout(entry.timer)
         this.active.delete(viewID)
         continue

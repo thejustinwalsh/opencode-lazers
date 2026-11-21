@@ -26,6 +26,7 @@ import {
 } from "./decision-store.ts"
 import {
   buildDecisionView,
+  DecisionViewRequestSchema,
   decisionViewIdentity,
   readCandidateSet,
   readSourceDates,
@@ -33,6 +34,8 @@ import {
   type DecisionViewResult,
 } from "./decision-view.ts"
 import { DecisionViews } from "./decision-views.ts"
+import { registerDecisionViewOpener } from "./decision-view-registry.ts"
+import { createStreamsService } from "../streams/rpc.ts"
 import { createThreadedDecisionWorker } from "./decision-worker-client.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { readDecisionPriceState, readPriceIdentity } from "./price-state.ts"
@@ -492,6 +495,82 @@ test("idle: an open view with no revision or evidence change asks the worker not
     expect(calls.length).toBe(opened + 1)
   } finally {
     shared.release()
+    views.close()
+  }
+})
+
+test("a view stays current while a stream holds it, however long; once let go it stops after the active period", async () => {
+  const calls: DecisionViewCall[] = []
+  let clock = Date.now()
+  const views = new DecisionViews(
+    fixture.path,
+    {
+      async view(_project, call) {
+        calls.push(call)
+        return computedView(call)
+      },
+    },
+    async () => routed,
+    { debounceMs: 5, refreshMs: 0, now: () => clock },
+  )
+  const off = registerDecisionViewOpener(fixture.projectDirectory, {
+    open: (request) =>
+      views.open(fixture.projectDirectory, DecisionViewRequestSchema.parse(request)),
+    release: (viewID) => views.release(viewID),
+  })
+  const service = createStreamsService({
+    pool,
+    changed: () => {},
+    context: {
+      projectID: "p",
+      projectDirectory: fixture.projectDirectory,
+      projectIds: (id) => [id],
+      assertRead: async () => {},
+      assertAction: async () => {},
+    },
+  })
+  const shared = acquireSharedConnection(fixture.path)
+  const bump = async () => {
+    shared.db
+      .query("UPDATE observation_revisions SET revision=revision+1 WHERE project_directory=?")
+      .run(fixture.projectDirectory)
+    await Bun.sleep(50)
+    await views.settle()
+  }
+  try {
+    const view = { filters: filtersOf("systems", "testing"), basis: "aider-polyglot" }
+    await service.open({
+      stream: "catalog",
+      source: "models.catalog",
+      filter: { projectDirectory: "/x", sessionID: "ses", view },
+      order: "rank",
+      window: 10,
+    })
+    await views.settle()
+    const viewID = shared.db
+      .query<{ id: number }, [string]>(
+        "SELECT id FROM model_decision_views WHERE request LIKE ? ORDER BY id DESC LIMIT 1",
+      )
+      .get("%aider-polyglot%")!.id
+    expect(views.holders(viewID)).toBe(1)
+    // An hour later, still open: a revision change still rebuilds it.
+    clock += 60 * 60_000
+    const before = calls.length
+    await bump()
+    expect(calls.length).toBe(before + 1)
+    // Closed: it stays current for the active period after, then stops.
+    service.close({ stream: "catalog" })
+    expect(views.holders(viewID)).toBe(0)
+    clock += 60_000
+    await bump()
+    expect(calls.length).toBe(before + 2)
+    clock += 11 * 60_000
+    await bump()
+    expect(calls.length).toBe(before + 2)
+  } finally {
+    service.dispose()
+    shared.release()
+    off()
     views.close()
   }
 })
