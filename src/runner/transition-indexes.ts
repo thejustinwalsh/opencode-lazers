@@ -86,7 +86,7 @@ export function createKeyIndexes(db: Database, table?: string) {
 /**
  * The cheap text index of a table not yet keyed, at schema install: `runner_transitions_lookup`
  * and the two progress indexes, as the schema always created them. The three plan-history indexes
- * in `TRANSITION_INDEXES` stay with `ensureTransitionIndexes`, which builds them off the main
+ * in the TRANSITION_INDEXES list stay with `ensureTransitionIndexes`, which builds them off the main
  * thread on a large table.
  */
 export function installTextKeyIndexes(db: Database) {
