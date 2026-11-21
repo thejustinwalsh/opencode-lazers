@@ -1,6 +1,8 @@
 import { acquireScheduleOwner } from "../tasks/schedule/owner.ts"
 import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { startProjection } from "../projections/owner.ts"
+import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
+import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -179,6 +181,20 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
+  // Display rows for tool calls recorded before their table; triggers keep new ones current.
+  const nativeCallLease = startProjection(
+    repository.path,
+    info.projectDirectory,
+    nativeCallDisplayProjection,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS native call display backfill failed", {
+            error: String(error),
+          }),
+        ),
+    },
+  )
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
@@ -283,6 +299,18 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     },
   )
   built("schedulerParticipant")
+  // The Radar reads the scheduler's status for this project from its row.
+  const schedulerStatus = mirrorSchedulerStatus(
+    sharedScheduler,
+    schedulerProjectKey(repository.path, repository.projectDirectory, projectID),
+    repository,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS scheduler status write failed", { error: String(error) }),
+        ),
+    },
+  )
   // Joining a live group must not wait an interval: the next drain turn picks up handoff work.
   scheduler.request()
   const registration = scheduler
@@ -310,8 +338,10 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     scheduler = undefined
     displayBackfill.stop()
     taskEventsLease.release()
+    nativeCallLease.release()
     scheduleLease.release()
     await registration.dispose()
+    await schedulerStatus.stop()
     await runtime.stop()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.
     try {

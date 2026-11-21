@@ -247,6 +247,16 @@ export const schemaModules = {
     source: "src/events/task-events-schema.ts",
     tables: ["task_events", "task_events_dirty"],
   },
+  "native-call-display": {
+    generation: 1,
+    source: "src/progress/native-call-display.ts",
+    tables: ["native_tool_call_display"],
+  },
+  "scheduler-status": {
+    generation: 1,
+    source: "src/runner/scheduler-status.ts",
+    tables: ["scheduler_project_status"],
+  },
   observability: {
     generation: 1,
     source: "src/observability/source-revision.ts",
