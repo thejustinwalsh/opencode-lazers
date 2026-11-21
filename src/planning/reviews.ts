@@ -528,6 +528,8 @@ export class PlanningReviews {
   /** Advances open reviews no live caller holds, and reports each settled one once. */
   async tick(): Promise<void> {
     const { store, now, notify } = this.deps
+    // Nothing open and nothing to report: one probe and stop.
+    if (!store.hasOpenReviewWork()) return
     for (const review of store.unsettledReviews())
       if (!this.live.has(review.id)) await this.advance(review.id).catch(() => undefined)
     for (const review of store.reviewsToNotify()) {

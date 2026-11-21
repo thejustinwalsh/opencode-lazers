@@ -124,6 +124,15 @@ export function bundledFast(repo: TaskRepository) {
   for (let i = 0; i < 3200; i++) repo.read((db) => db.query("SELECT 1").get())
   return 1
 }
+function section(name: string, run: () => unknown) {
+  // Not a tail call, like the stall probe's own wrapper, so its frame stays on the stack.
+  const result = run()
+  return name ? result : undefined
+}
+export function bundledSection(repo: TaskRepository) {
+  section("tick:x", repo.atomic.bind(repo, () => { const end = performance.now() + 5; while (performance.now() < end); }))
+  return 1
+}
 export function bundledWriter(repo: TaskRepository) {
   repo.atomic(() => { const end = performance.now() + 5; while (performance.now() < end); })
   return 1
@@ -144,6 +153,7 @@ export function bundledWriter(repo: TaskRepository) {
     openRepository(path: string, project: string): TaskRepository
     bundledCaller(repo: TaskRepository): number
     bundledWriter(repo: TaskRepository): number
+    bundledSection(repo: TaskRepository): number
     bundledFast(repo: TaskRepository): number
     bundledSample(): number
   }
@@ -156,6 +166,7 @@ export function bundledWriter(repo: TaskRepository) {
     setStorageTiming(true)
     built.bundledCaller(bundled)
     built.bundledWriter(bundled)
+    built.bundledSection(bundled)
     built.bundledFast(bundled)
   } finally {
     bundled.close()
@@ -172,6 +183,10 @@ export function bundledWriter(repo: TaskRepository) {
     expect(site).not.toMatch(/^(callSite|sample|timeStorage|record)\d* /)
   expect(sites.some((site) => /^bundledCaller \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
   expect(sites.some((site) => /^bundledWriter \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
+  // A stall-probe section wrapper is not a call site: the caller one frame up is.
+  expect(sites.some((site) => /^bundledSection \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
+  for (const site of sites)
+    expect(site).not.toMatch(/^(section|sectionAsync|sectionEffect|timed)\d* /)
 })
 
 function fastCaller(repo: TaskRepository, n: number) {

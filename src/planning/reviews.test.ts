@@ -358,12 +358,40 @@ test("an idle tick with settled history reads no review rows and makes no host c
     console.log(
       `[read-sweep] idle planning tick x2 rows=${meter.rows} bytes=${meter.bytes} statements=${meter.statements.length}`,
     )
-  // Two queries per tick, both returning only open or unannounced reviews: none.
+  // One probe per tick for open or unannounced reviews: none.
   expect(meter.rows).toBe(0)
-  expect(meter.statements.length).toBe(4)
+  expect(meter.statements.length).toBe(2)
   expect([f.created.length, f.interrupts.length, f.notices.length]).toEqual([
     created,
     interrupts,
     notices,
   ])
 })
+
+test("idle review ticks read one stamp each and write nothing", async () => {
+  const f = fixture()
+  const reviews = f.make()
+  const review = await f.start(reviews, "comprehension")
+  await reviews.run(review.id)
+  await reviews.tick()
+  let reads = 0
+  let writes = 0
+  const read = f.repository.read.bind(f.repository)
+  const atomic = f.repository.atomic.bind(f.repository)
+  f.repository.read = ((run: never) => {
+    reads++
+    return read(run)
+  }) as typeof f.repository.read
+  f.repository.atomic = ((run: never) => {
+    writes++
+    return atomic(run)
+  }) as typeof f.repository.atomic
+  for (let i = 0; i < 60; i++) await reviews.tick()
+  f.repository.read = read
+  f.repository.atomic = atomic
+  if (process.env.READ_SWEEP_NUMBERS)
+    console.log(`[planning-tick] 60 idle ticks reads=${reads} writes=${writes}`)
+  expect(writes).toBe(0)
+  // One probe per tick, however many reviews are settled behind it.
+  expect(reads).toBe(60)
+}, 120_000)
