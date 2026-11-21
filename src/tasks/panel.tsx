@@ -958,6 +958,7 @@ function TaskPanel(
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
         ...(taskRow().concern ? [`concern: ${taskRow().concern!.line}`] : []),
+        ...(taskRow().concern?.recommendation ? [taskRow().concern!.recommendation!] : []),
         ...(taskRow().takeover ? ["takeover"] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
@@ -1035,7 +1036,10 @@ function TaskPanel(
             </Show>
             <Show when={taskRow().concern}>
               {(concern) => (
-                <Label tone="warning" title={`Concern: ${concern().line}`}>
+                <Label
+                  tone="warning"
+                  title={`Concern: ${concern().line}${concern().recommendation ? `\n${concern().recommendation}` : ""}`}
+                >
                   Concern
                 </Label>
               )}
