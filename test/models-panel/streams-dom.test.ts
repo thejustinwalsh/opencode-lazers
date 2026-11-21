@@ -552,3 +552,140 @@ test("assignments: sources read from the stream, a saved route is confirmed by t
   ).toBe(true)
   await until(() => text(root).includes("Saved"), "the confirmation")
 })
+
+/** The Sources disclosure of the pane over the selected model, opened. */
+async function sourcesDisclosure(root: HTMLElement) {
+  await until(() => pointIDs(root).length === 4, "the plotted models")
+  click(root.querySelector('[data-point-id="configuration:openai/gpt-6.2-sol::none"]')!)
+  await until(() => root.querySelector("h2[title*='gpt-6.2-sol']") !== null, "the pane")
+  await until(
+    () =>
+      root.querySelector(".lazers-models-pane-disclosures .lazers-kit-disclosure-toggle") !== null,
+    "the disclosures",
+  )
+  return openDisclosures(root)
+}
+function openDisclosures(root: HTMLElement) {
+  for (const toggle of root.querySelectorAll<HTMLElement>(".lazers-kit-disclosure-toggle"))
+    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click()
+  return () => text(root.querySelector(".lazers-models-pane-disclosures")!)
+}
+const refreshButton = (root: ParentNode) =>
+  root.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!
+
+test("source refresh: asked on open, forced by the Refresh button, the disclosure shows each source's state", async () => {
+  // models.dev has no snapshot and its latest refresh failed, as the comparison stream reports it.
+  const failing = (output: Candidates): Candidates => ({
+    ...output,
+    sources: output.sources.map((source) =>
+      source.source === "models-dev"
+        ? ({
+            ...source,
+            snapshotState: "none",
+            snapshot: null,
+            selectedSnapshotID: null,
+            refresh: {
+              state: "failed",
+              generation: 1,
+              startedAt: "2026-11-19T17:00:00.000Z",
+              completedAt: "2026-11-19T17:00:05.000Z",
+              latestSnapshotID: null,
+              errorCode: "fetch_failed",
+              httpStatus: 503,
+            },
+          } as never)
+        : source,
+    ),
+  })
+  let failForced = false
+  const { host, root } = mount({
+    comparison: failing,
+    preferences: { open: true },
+    refreshSources: (input) => {
+      if (failForced && input.force === true) throw new Error("source fetch denied")
+    },
+  })
+  const refreshes = () => host.sourceCalls.filter((call) => call.method === "refreshSources")
+  // Opening the panel asks once, without the force flag: the service answers from stored snapshots.
+  await until(() => refreshes().length === 1, "the open-time refresh")
+  expect(refreshes()[0]!.input).toEqual({ sessionID: "ses-demo" })
+
+  const sources = await sourcesDisclosure(root)
+  await until(() => sources().includes("refresh failed"), "the failed source's state")
+  expect(sources()).toContain("models.dev prices and model inforefresh failed")
+  expect(sources()).toContain("A price source couldn't refresh; showing saved data.")
+  expect(sources()).toContain("Native OpenCode catalog")
+  expect(sources()).toContain("5 records")
+  await until(() => !refreshButton(root).disabled, "the open-time refresh settles")
+  expect(text(root)).not.toContain("Source refresh error")
+
+  // The button forces every source to be fetched now.
+  click(refreshButton(root))
+  await until(() => refreshes().length === 2, "the forced refresh")
+  expect(refreshes()[1]!.input).toEqual({ sessionID: "ses-demo", force: true })
+  await until(() => !refreshButton(root).disabled, "the forced refresh settles")
+  expect(text(root)).not.toContain("Source refresh error")
+
+  // A failed request is shown as the panel's own error, and the button offers another try.
+  failForced = true
+  // The panel's other reads of the first refresh may still be settling: a click then is dropped.
+  await until(() => {
+    if (refreshes().length < 3 && !refreshButton(root).disabled) click(refreshButton(root))
+    return refreshes().length === 3
+  }, "the failing refresh")
+  expect(refreshes()[2]!.input).toEqual({ sessionID: "ses-demo", force: true })
+  await until(() => text(root).includes("source fetch denied"), "the error")
+  expect(text(root)).toMatch(/source refresh error/i)
+})
+
+test("price sources: the configured order is read and shown, and a Refresh reads it again", async () => {
+  let order = ["openrouter", "opencode"]
+  let revision = 0
+  const policy = () => ({
+    policy: { schemaVersion: 1, revision, sources: order, fallback: "whole-model" },
+    access: { openrouter: "configured", opencode: "configured" },
+  })
+  const { host, root } = mount({
+    comparison: scored,
+    priceSources: policy,
+    preferences: { compareMode: "benchmark", open: true },
+  })
+  const reads = () => host.sourceCalls.filter((call) => call.method === "priceSources")
+  await until(() => reads().length >= 1, "the open-time read")
+  expect(reads()[0]!.input).toEqual({ sessionID: "ses-demo" })
+  await until(() => pointIDs(root).length > 0, "the benchmark points")
+  click(root.querySelector(".lazers-chart-point")!)
+  await until(
+    () => root.querySelector(".lazers-models-pane-disclosures") !== null,
+    "the benchmark pane",
+  )
+  const pane = openDisclosures(root)
+  await until(() => pane().includes("Price orderOpenRouter, then OpenCode"), "the read order")
+
+  // The service reorders its sources: the Refresh button reads the order again.
+  order = ["opencode", "openrouter"]
+  revision = 1
+  const before = reads().length
+  click(refreshButton(root))
+  await until(() => reads().length > before, "the order is read again")
+  await until(() => pane().includes("Price orderOpenCode, then OpenRouter"), "the new order")
+})
+
+test("contributors: a run's Trajectory button hands the opener its task, project and directory", async () => {
+  const { host, root } = mount({ preferences: { open: true } })
+  await sourcesDisclosure(root)
+  const open = () =>
+    root.querySelector<HTMLButtonElement>('[aria-label="Open trajectory for LZ-216"]')
+  await until(() => open() !== null, "the contributor's button")
+  expect(host.trajectories).toEqual([])
+  click(open()!)
+  expect(host.trajectories).toHaveLength(1)
+  const [request] = host.trajectories
+  expect(request!.target).toMatchObject({
+    reference: "LZ-216",
+    projectDirectory: bundle.PROJECT.canonical,
+  })
+  expect(request!.target.taskID).toEqual(expect.any(String))
+  expect(request!.target.projectID).toEqual(expect.any(String))
+  expect(request!.session).toMatchObject({ id: "ses-demo" })
+})

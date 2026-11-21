@@ -199,6 +199,10 @@ export function harness(
     /** Starts with views answered as backfilling when this matches the selection. */
     hold?: (view: ViewSelection) => boolean
     data?: ModelsData
+    /** Hooks `lazers.models` `refreshSources`: throw to fail the call, return nothing for the demo's answer. */
+    refreshSources?: (input: Record<string, unknown>) => unknown
+    /** The price source order `lazers.models` `priceSources` reads. */
+    priceSources?: () => unknown
     /** What the panel's store held when it opened (a returning user's choices). */
     preferences?: Partial<ModelsPreference>
   } = {},
@@ -207,6 +211,10 @@ export function harness(
   let holding = options.hold ?? null
   const opens: OpenRecord[] = []
   const calls: { method: string; input: Record<string, unknown> }[] = []
+  /** Every `lazers.models` read of the sources and their order, in call order. */
+  const sourceCalls: { method: string; input: Record<string, unknown> }[] = []
+  /** What the panel handed its trajectory opener. */
+  const trajectories: { session: unknown; target: Record<string, unknown> }[] = []
   const known = new Map<string, OpenRecord>()
   let emit: ((type: string, data: unknown) => void) | undefined
   let heldFrames = 0
@@ -255,6 +263,18 @@ export function harness(
   table[Streams.id] = streams as never
   table[Models.id] = {
     ...modelsMethods,
+    refreshSources: ((input: Record<string, unknown>) => {
+      sourceCalls.push({ method: "refreshSources", input: structuredClone(input) })
+      // A hook that answers nothing leaves the demo's answer; it may throw to fail the call.
+      const custom = options.refreshSources?.(input)
+      return custom !== undefined ? custom : modelsMethods.refreshSources!(input as never)
+    }) as never,
+    priceSources: ((input: Record<string, unknown>) => {
+      sourceCalls.push({ method: "priceSources", input: structuredClone(input) })
+      return options.priceSources
+        ? options.priceSources()
+        : modelsMethods.priceSources!(input as never)
+    }) as never,
     configure: ((input: Record<string, unknown>) => {
       calls.push({ method: "configure", input: structuredClone(input) })
       const result = modelsMethods.configure!(input as never)
@@ -272,7 +292,11 @@ export function harness(
     panelID: "models",
     tabTitle: "Models",
     project: PROJECT,
-    setup: (ctx, host) => setupModelsPanel(ctx as never, () => host.openPanel("trajectory")),
+    setup: (ctx, host) =>
+      setupModelsPanel(ctx as never, (session, target) => {
+        trajectories.push({ session, target: structuredClone(target) as never })
+        host.openPanel("trajectory")
+      }),
     rpc: () => table,
     changed: (_data, send) => {
       emit = send
@@ -293,6 +317,8 @@ export function harness(
   return {
     opens,
     calls,
+    sourceCalls,
+    trajectories,
     /** How many frames were answered as backfilling. */
     heldFrames: () => heldFrames,
     /** The newest open of a source whose filter matches. */
