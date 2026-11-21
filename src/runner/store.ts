@@ -1018,6 +1018,9 @@ export type DetailPage = {
   deliveryBefore?: number
 }
 
+/** How long a scheduler lease lasts without a renewal. */
+const LEASE_TERM_MS = 30_000
+
 export class RunnerStore {
   /** Settles once the plan-scoped transition indexes exist (or the background build gave up). */
   readonly transitionIndexes: Promise<void>
@@ -3958,7 +3961,7 @@ export class RunnerStore {
           .query(
             "UPDATE runner_leases SET expires_at=? WHERE project_directory=? AND owner=? AND fence=?",
           )
-          .run(now + 30000, this.repository.projectDirectory, owner, fence).changes === 1,
+          .run(now + LEASE_TERM_MS, this.repository.projectDirectory, owner, fence).changes === 1,
     )
   }
   submit(
@@ -4208,6 +4211,16 @@ export class RunnerStore {
     )
   }
   claim(owner: string, now = Date.now()) {
+    // A lease this owner already holds with most of its term left needs no write: the heartbeat
+    // renews it, and an idle tick must not pay a write transaction to say nothing changed.
+    const held = this.read((db) =>
+      db
+        .query<{ owner: string; fence: number; expires_at: number }, [string]>(
+          "SELECT owner,fence,expires_at FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory),
+    )
+    if (held?.owner === owner && held.expires_at - now > LEASE_TERM_MS / 2) return held.fence
     return this.atomic((db) => {
       const old = db
         .query<{ owner: string; fence: number; expires_at: number }, [string]>(
@@ -4218,7 +4231,7 @@ export class RunnerStore {
       const fence = old?.owner === owner ? old.fence : (old?.fence ?? 0) + 1
       db.query(
         "INSERT INTO runner_leases VALUES(?,?,?,?) ON CONFLICT(project_directory) DO UPDATE SET owner=excluded.owner,fence=excluded.fence,expires_at=excluded.expires_at",
-      ).run(this.repository.projectDirectory, owner, fence, now + 30000)
+      ).run(this.repository.projectDirectory, owner, fence, now + LEASE_TERM_MS)
       return fence
     })
   }
