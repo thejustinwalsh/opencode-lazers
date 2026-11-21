@@ -2,6 +2,7 @@ import type { WorkerObservationFence } from "./runtime-helpers.ts"
 import { isTakeoverAttempt } from "../recovery/detector.ts"
 import type { HostSession } from "./host.ts"
 import { attemptIs } from "./identity-read.ts"
+import { errorText } from "./runtime-helpers.ts"
 import type { PlanRow, AttemptRow } from "./store.ts"
 import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
 
@@ -482,7 +483,7 @@ export class AttemptAdvance {
     this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, "interrupted", session.turn?.inputID)
     const reason = backgroundReason
       ? `Worker execution was interrupted; ${backgroundReason}`
-      : "Worker execution was interrupted; the runtime could not resume it"
+      : this.interruptedHoldReason(plan.id, attempt)
     if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
     this.hold(
       plan,
@@ -491,7 +492,8 @@ export class AttemptAdvance {
       this.terminalWorkerObservation(attempt, session),
       observation,
     )
-    if (!backgroundReason) await this.autoResumeInterruptedWorker(plan.id, attempt.id)
+    if (!backgroundReason)
+      await this.autoResumeInterruptedWorker(plan.id, attempt.id, session, observation)
   }
 
   /** A worker that ended (or is idle) while background work it started is still running. */
@@ -542,12 +544,12 @@ export class AttemptAdvance {
       if (session.outcome === "interrupted") {
         this.hold(
           plan,
-          "Worker execution was interrupted; the runtime could not resume it",
+          this.interruptedHoldReason(plan.id, attempt),
           ["audit", "reconcile", "resume", "cancel"],
           this.terminalWorkerObservation(attempt, session),
           observation,
         )
-        await this.autoResumeInterruptedWorker(plan.id, attempt.id)
+        await this.autoResumeInterruptedWorker(plan.id, attempt.id, session, observation)
         return
       }
       this.failAttempt(
@@ -607,27 +609,58 @@ export class AttemptAdvance {
   }
 
   /**
-   * An interrupted worker resumes from its live state; nobody has to command it.
-   * Bounded per attempt so a worker that keeps being interrupted surfaces in the hold.
+   * The hold reason of an interrupted worker: the host's refusal of the latest automatic resume
+   * of this stop, when there was one, so the Architect and the Tasks panel see the real cause.
    */
-  private async autoResumeInterruptedWorker(planID: string, attemptID: string) {
+  private interruptedHoldReason(planID: string, attempt: AttemptRow) {
+    const refused = this.store.latestTransition<{
+      attemptID?: string
+      stoppedAt?: number
+      error?: string
+    }>(planID, attempt.task_id, "WORKER_AUTO_RESUME_REFUSED")
+    return refused?.attemptID === attempt.id &&
+      refused.error &&
+      refused.stoppedAt === this.latestStopAt(planID, attempt)
+      ? `Worker execution was interrupted; automatic resume was refused: ${refused.error}`
+      : "Worker execution was interrupted; the runtime could not resume it"
+  }
+
+  private latestStopAt(planID: string, attempt: AttemptRow) {
+    const stop = this.store.latestTransition<{ attemptID?: string; observedAt?: number }>(
+      planID,
+      attempt.task_id,
+      "WORKER_STOPPED",
+    )
+    return stop?.attemptID === attempt.id ? (stop.observedAt ?? null) : null
+  }
+
+  /**
+   * An interrupted worker resumes from its live state; nobody has to command it.
+   * Bounded per attempt so a worker that keeps being interrupted surfaces in the hold. Each try
+   * is recorded as attempted, then as resumed (admitted) or refused with the host's reason.
+   */
+  private async autoResumeInterruptedWorker(
+    planID: string,
+    attemptID: string,
+    session: HostSession,
+    observation: WorkerObservationFence,
+  ) {
     if (!this.autoResumeInterrupted) return
     const plan = this.store.plan(planID)
     const attempt = this.store.attempts(planID).find((candidate) => candidate.id === attemptID)
     if (!plan || plan.state !== "blocked" || !attempt) return
     const prior = this.store.activityCount(planID, attempt.task_id, {
-      events: ["WORKER_AUTO_RESUMED"],
+      events: ["WORKER_AUTO_RESUME_ATTEMPTED"],
       payload: { attemptID: attempt.id },
     })
     if (prior >= 3 || !this.validArchitect(await this.host.session(plan.owner))) return
-    this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUMED", {
-      attemptID: attempt.id,
-      messageID: attempt.message_id,
-    })
+    const tried = { attemptID: attempt.id, messageID: attempt.message_id }
+    this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUME_ATTEMPTED", tried)
+    let result: unknown
     try {
-      await this.command(
+      result = await this.command(
         {
-          requestID: `auto-resume:${attempt.id}:${attempt.message_id}`,
+          requestID: `auto-resume:${attempt.id}:${attempt.message_id}:${prior + 1}`,
           planID,
           action: "resume",
           taskID: attempt.task_id,
@@ -636,8 +669,28 @@ export class AttemptAdvance {
         },
         plan.owner,
       )
-    } catch {
-      // The hold stays and advertises resume; the next observation tries again within the bound.
+    } catch (error) {
+      // The host or the continuation checks refused: say so, with the reason, on the hold.
+      const text = errorText(error).slice(0, 500) || "Resume was refused without a reason"
+      this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUME_REFUSED", {
+        ...tried,
+        stoppedAt: this.latestStopAt(planID, attempt),
+        error: text,
+      })
+      const current = this.store.plan(planID)
+      if (current?.state === "blocked")
+        this.hold(
+          current,
+          this.interruptedHoldReason(planID, attempt),
+          ["audit", "reconcile", "resume", "cancel"],
+          this.terminalWorkerObservation(attempt, session),
+          observation,
+        )
+      return
     }
+    this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUMED", {
+      ...tried,
+      status: (result as { status?: unknown } | null)?.status ?? null,
+    })
   }
 }
