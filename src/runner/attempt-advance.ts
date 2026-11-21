@@ -247,7 +247,7 @@ export class AttemptAdvance {
    * not progress by itself: a hung command keeps a shell running forever.
    */
   private lastWorkerProgressAt(attempt: AttemptRow, session: HostSession) {
-    const row = this.store.atomic((db) =>
+    const row = this.store.read((db) =>
       db
         .query<{ at: number | null }, [string, string]>(
           `SELECT max(at,coalesce(latest_observed_at,at)) AS at FROM runner_progress
