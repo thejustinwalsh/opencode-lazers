@@ -4,7 +4,7 @@ import type { ModelEvidenceSnapshot } from "./source-schema.ts"
 import { createModelIndex, parseModelName, vendorSlug } from "./name-identity.ts"
 import type { ModelIndex } from "./name-identity.ts"
 
-export const MODEL_IDENTITY_RULE_VERSION = 1
+const MODEL_IDENTITY_RULE_VERSION = 1
 
 const ModelIdentityEvidenceReferenceSchema = z.strictObject({
   source: z.enum(["native-catalog", "openrouter-models"]),
@@ -24,7 +24,7 @@ const ModelIdentityRuleCitationSchema = z.strictObject({
   recordID: z.string().max(512).nullable(),
 })
 
-export const ModelIdentityRuleSchema = z.strictObject({
+const ModelIdentityRuleSchema = z.strictObject({
   id: z.string().min(1).max(128),
   version: z.literal(MODEL_IDENTITY_RULE_VERSION),
   citations: z.array(ModelIdentityRuleCitationSchema).max(4).optional(),
@@ -206,10 +206,6 @@ export function modelConfigurationID(
   return [segment(providerID), segment(modelID), variant === null ? "-" : segment(variant)].join(
     "|",
   )
-}
-
-export function unsupportedModelGroupID(route: Route): string {
-  return `route:${segment(route.providerID)}:${segment(route.modelID)}`
 }
 
 function boundedReferences(references: ModelIdentityEvidenceReference[]) {

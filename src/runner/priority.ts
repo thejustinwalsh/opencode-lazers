@@ -33,7 +33,7 @@ export function hasPriority(priority: number | null | undefined): priority is nu
 }
 
 /** SQL expression giving an ascending sort key for a priority expression (none sorts last). */
-export function prioritySortSQL(expression: string): string {
+function prioritySortSQL(expression: string): string {
   return `CASE WHEN COALESCE(${expression},0)>0 THEN ${expression} ELSE ${MAX_PRIORITY + 1} END`
 }
 
