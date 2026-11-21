@@ -10,7 +10,6 @@ import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
 import { nativeTools } from "../test/retry-process.ts"
 import { SQLITE_BUSY_TIMEOUT_MS, TaskRepository } from "./storage.ts"
-import { ensureTaskScheduleSchema } from "./tasks/schedule/schema.ts"
 import { TaskScheduleOwner } from "./tasks/schedule/owner.ts"
 import { submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
@@ -77,7 +76,9 @@ async function setup(
   const directory = mkdtempSync(join(tmpdir(), "lazers-tool-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), process.cwd())
   // The project core's owner indexes the project; the tools read the index through a stream.
-  ensureTaskScheduleSchema(repository)
+  // The runner store installs its tables, then the projection with its triggers on them, as the
+  // core does (a projection installed before the runner tables has no triggers on them).
+  new RunnerStore(repository)
   const owner = new TaskScheduleOwner(repository)
   cleanup.push(() => {
     owner.close()

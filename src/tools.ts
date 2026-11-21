@@ -114,10 +114,19 @@ async function submitTaskReceipt(
       timeoutDefaults,
     )
     if (submitted.status !== "submitted") return submitted
-    // Point reads of the task this transaction wrote: a new task has no plan yet.
+    // Point reads of the task the submission wrote, and of its stored status (a replayed
+    // submission's task may be planned since: the status the list shows, as `execution` did).
     const task = connection.get(submitted.taskID)
     const classification = connection.taskClassification(submitted.taskID)
     if (!task || !classification) return submitted
+    // A database the runner store has not opened yet has no projection: no plan either.
+    const shown = connection.read((db) =>
+      db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_schedule'").get()
+        ? db
+            .query<{ status: string }, [string]>("SELECT status FROM task_schedule WHERE task_id=?")
+            .get(submitted.taskID)?.status
+        : undefined,
+    )
     // The submitting session wrote this task, so it has seen its records.
     observeRevision(
       connection,
@@ -126,7 +135,7 @@ async function submitTaskReceipt(
       "classification",
       classification.current.revision,
     )
-    return taskSubmissionSummary(submitted, task, task.status)
+    return taskSubmissionSummary(submitted, task, shown ?? task.status)
   })
   return receipt
 }
