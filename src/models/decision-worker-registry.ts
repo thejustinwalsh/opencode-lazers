@@ -145,8 +145,6 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       return {
         overview: (input, opts) => target().overview(input, opts),
         rows: (input, opts) => target().rows(input, opts),
-        configurations: (input, opts) => target().configurations(input, opts),
-        inspect: (input, opts) => target().inspect(input, opts),
       }
     },
     openView(projectDirectory, request) {

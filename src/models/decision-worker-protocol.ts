@@ -1,7 +1,6 @@
 import type { PriceInputs } from "./price-state.ts"
 
-export type DecisionWorkerMethod =
-  "overview" | "rows" | "configurations" | "inspect" | "view" | "candidates"
+export type DecisionWorkerMethod = "overview" | "rows" | "view" | "candidates"
 
 /**
  * One worker serves every project of a database. Only ids, filters and the few hundred bytes of

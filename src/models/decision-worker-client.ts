@@ -172,9 +172,6 @@ export function createThreadedDecisionWorker(
     reader: (projectDirectory) => ({
       overview: (input, opts) => call(projectDirectory, "overview", input, opts?.signal),
       rows: (input, opts) => call(projectDirectory, "rows", input, opts?.signal),
-      configurations: (input, opts) =>
-        call(projectDirectory, "configurations", input, opts?.signal),
-      inspect: (input, opts) => call(projectDirectory, "inspect", input, opts?.signal),
     }),
     view: (projectDirectory, input, signal) => call(projectDirectory, "view", input, signal),
     candidates: (projectDirectory, onPage, signal) =>

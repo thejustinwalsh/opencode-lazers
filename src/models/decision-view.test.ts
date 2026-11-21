@@ -21,7 +21,7 @@ import { modelDisplayLabel } from "./comparison-presentation.ts"
 import { scoreOptions } from "./public-score.ts"
 import { readModelComparison } from "./comparison-read.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
-import type { ModelDecisionFilters, ModelDecisionInspect } from "./decision-contract.ts"
+import type { ModelDecisionFilters } from "./decision-contract.ts"
 import { createModelDecisionReader } from "./decision-read.ts"
 import {
   dropIdleDecisionViews,
@@ -324,53 +324,28 @@ test("points/contributors parity: equal overview.graph.points and inspect contri
     ).toEqual(JSON.parse(JSON.stringify(references)) as unknown[])
     priced += chart.filter((point) => point.currentMarketUSDPerAcceptedTask > 0).length
 
-    const configurations = await reader.configurations({
-      ...input,
-      snapshotID: overview.context.snapshotID,
-      limit: 100,
-    })
+    const parts = await reader.viewParts(input)
+    const configurations = parts.inspections.map((item) => item.configuration)
     const displayRoutes = [
-      ...configurations.configurations.map((item) => ({ ...item.route, variant: null })),
+      ...configurations.map((item) => ({ ...item.route, variant: null })),
       ...(overview.graph.referenceEstimates ?? []).map((item) => ({
         ...item.estimate.route,
         variant: null,
       })),
     ]
-    for (const configuration of configurations.configurations) {
+    for (const [index, configuration] of configurations.entries()) {
       const row = points.find((item) => item.configuration_id === configuration.configurationID)
       expect(row?.display_label).toBe(
         modelDisplayLabel(configuration.route, displayRoutes, candidates, nativeNames),
       )
       expect(row?.group_id).toBe(configuration.groupID)
-      const found = (await reader.inspect({
-        ...input,
-        snapshotID: overview.context.snapshotID,
-        configurationID: configuration.configurationID,
-        selectedTaskID: null,
-        contributorLimit: 1,
-      })) as Extract<ModelDecisionInspect, { status: "found" }>
-      const {
-        status: _status,
-        context: _context,
-        selectedTaskID: _selected,
-        contributorPage: _page,
-        ...facts
-      } = found
-      expect(row?.inspection).toEqual(JSON.parse(JSON.stringify(facts)) as unknown)
-      const inspected: unknown[] = []
-      let cursor: string | undefined
-      do {
-        const page = (await reader.inspect({
-          ...input,
-          snapshotID: overview.context.snapshotID,
-          configurationID: configuration.configurationID,
-          selectedTaskID: null,
-          contributorLimit: 2,
-          ...(cursor ? { contributorCursor: cursor } : {}),
-        })) as Extract<ModelDecisionInspect, { status: "found" }>
-        inspected.push(...page.contributorPage.contributors)
-        cursor = page.contributorPage.nextCursor ?? undefined
-      } while (cursor)
+      expect(row?.inspection).toEqual(
+        JSON.parse(JSON.stringify(parts.inspections[index])) as unknown,
+      )
+      const part = parts.contributors.find(
+        (item) => item.configurationID === configuration.configurationID,
+      )
+      const inspected: unknown[] = JSON.parse(JSON.stringify(part?.contributors ?? [])) as unknown[]
       const stored = await walk(
         modelContributorsSource,
         { ...scope(viewID), configurationID: configuration.configurationID },
@@ -398,11 +373,9 @@ test("benchmark and sources parity: equal benchmarkBaseline, scoreOptions and th
     for (const basis of [null, "swe-bench-verified"]) {
       const input = inputOf(filters)
       const overview = await reader.overview(input)
-      const configurations = await reader.configurations({
-        ...input,
-        snapshotID: overview.context.snapshotID,
-        limit: 100,
-      })
+      const configurations = (await reader.viewParts(input)).inspections.map(
+        (item) => item.configuration,
+      )
       const references = chartReferences(overview.graph, candidates, nativeNames)
       const label = modelDisplayLabeler(
         candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
@@ -418,7 +391,7 @@ test("benchmark and sources parity: equal benchmarkBaseline, scoreOptions and th
           modelsDev: date("models-dev"),
         },
         observedRoutes: new Set([
-          ...configurations.configurations.map((item) => routeKey(item.route)),
+          ...configurations.map((item) => routeKey(item.route)),
           ...references.map((item) => routeKey(item.estimate.route)),
         ]),
         preferredBasis: basis,

@@ -327,18 +327,13 @@ async function panel(path: string, projectDirectory: string) {
       limit: 50,
       snapshotID: overview.context.snapshotID,
     } as never)
-    const configurations = await reader.configurations({
-      ...base,
-      limit: 50,
-      snapshotID: overview.context.snapshotID,
-    } as never)
-    return stable({ overview, rows, configurations })
+    return stable({ overview, rows })
   } finally {
     reader.close()
   }
 }
 
-test("the panel's decision overview, rows and configurations are identical with and without the projection", async () => {
+test("the panel's decision overview and rows are identical with and without the projection", async () => {
   const fixture = fixtureWithHistory(900)
   routeAttempt(fixture, fixture.attempts.failed.id, ROUTES[0]!, [40, 60])
   routeAttempt(fixture, fixture.attempts.accepted.id, ROUTES[1]!, [20, 30])
