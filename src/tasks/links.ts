@@ -79,18 +79,38 @@ export interface TaskLinkServices {
   open(target: TaskLinkTarget): void
 }
 
+/** What both link kinds read before they look the target up: the session, its location, the project. */
+export async function resolveLinkProject(
+  services: Pick<TaskLinkServices, "session" | "project" | "signal">,
+  source: SessionRef,
+  projectID: string,
+): Promise<
+  | {
+      session: SessionRef
+      location: NonNullable<SessionRef["location"]>
+      signal: AbortSignal
+      project: { id: string; canonical: string }
+    }
+  | undefined
+> {
+  const session = services.session(source)
+  if (!session?.location) return undefined
+  const signal = services.signal()
+  if (signal.aborted) return undefined
+  const project = await services.project(session, signal)
+  if (signal.aborted || project.id !== projectID) return undefined
+  return { session, location: session.location, signal, project }
+}
+
 export function createTaskLinkHandler(services: TaskLinkServices): LinkHandler {
   async function resolve(link: Link): Promise<TaskLinkTarget | undefined> {
     const parsed = parseTaskLink(link.href)
     const source = link.session
     if (!parsed || !source) return undefined
     try {
-      const session = services.session(source)
-      if (!session?.location) return undefined
-      const signal = services.signal()
-      if (signal.aborted) return undefined
-      const project = await services.project(session, signal)
-      if (signal.aborted || project.id !== parsed.projectID) return undefined
+      const found = await resolveLinkProject(services, source, parsed.projectID)
+      if (!found) return undefined
+      const { session, location, signal, project } = found
       const detail = await services.get(session, parsed.reference, signal)
       if (
         signal.aborted ||
@@ -102,7 +122,7 @@ export function createTaskLinkHandler(services: TaskLinkServices): LinkHandler {
         return undefined
       return {
         session,
-        sessionDirectory: session.location.directory,
+        sessionDirectory: location.directory,
         projectDirectory: project.canonical,
         taskID: detail.task.id,
       }
