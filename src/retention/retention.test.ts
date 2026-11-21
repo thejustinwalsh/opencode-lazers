@@ -13,7 +13,11 @@ import {
   firstAttemptID,
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
-import { ensureTranscriptMetaSchema, writeTranscriptPage } from "../transcript-meta/schema.ts"
+import {
+  ensureTranscriptMetaSchema,
+  UNREAD_TRANSCRIPT,
+  writeTranscriptPage,
+} from "../transcript-meta/schema.ts"
 import {
   AUDIT_RECEIPTS_KEPT,
   classifyPlans,
@@ -701,7 +705,7 @@ test("transcript metadata follows the finished-plan age; sessions no plan holds 
         db,
         fixture.directory,
         session,
-        { cursor: null, base: 0, messageCount: 0, state: "not-read" },
+        UNREAD_TRANSCRIPT,
         [
           { id: `u-${session}`, type: "user", text: "hello" },
           {

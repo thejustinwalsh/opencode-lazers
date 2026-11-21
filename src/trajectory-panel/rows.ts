@@ -9,6 +9,7 @@ import type {
   TrajectoryReport,
 } from "./projection.ts"
 import { isActiveAttemptState } from "./projection.ts"
+import { listRowOf } from "../tasks/task-row.ts"
 
 /**
  * The view's data, built from stream rows. A row carries only what the stream's columns name; a
@@ -48,6 +49,14 @@ export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
   const status = text(row.status)
   const tool = text(row.tool)
   const event = text(row.event)
+  // A step's route, and a tool call's (its step's), as the old read's `model`.
+  const model = text(row.route_model)
+    ? {
+        providerID: text(row.route_provider) ?? "",
+        id: String(row.route_model),
+        ...(text(row.route_variant) ? { variant: String(row.route_variant) } : {}),
+      }
+    : undefined
   const shaped =
     kind === "transition"
       ? { kind: "runner-transition", event, from: text(row.from_state), to: text(row.to_state) }
@@ -63,20 +72,10 @@ export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
                 text: text(row.title),
               }
             : kind === "assistant-step"
-              ? {
-                  kind,
-                  status,
-                  model: text(row.route_model)
-                    ? {
-                        providerID: text(row.route_provider) ?? "",
-                        id: String(row.route_model),
-                        ...(text(row.route_variant) ? { variant: String(row.route_variant) } : {}),
-                      }
-                    : undefined,
-                }
+              ? { kind, status, model }
               : kind === "provider-retry" || kind === "assistant-error"
                 ? { kind, error: text(row.error_type), status }
-                : { kind, tool, status, completedAt: num(row.completed_at) }
+                : { kind, tool, status, model, completedAt: num(row.completed_at) }
   const parsed = Event.safeParse(defined({ ...base, ...defined(shaped) }))
   return parsed.success ? parsed.data : { id: base.id, kind }
 }
@@ -118,25 +117,22 @@ export function checkFromDetail(detail: unknown): Partial<TrajectoryCheck> | und
   return parsed.success ? parsed.data : undefined
 }
 
-/**
- * One `check` row. The list row knows when the result was recorded, not when the check began, so
- * its interval is the recorded instant; the selected check's detail adds the stored interval.
- */
+/** One `check` row, with the receipt interval the list row carries (`started_at`, `ended_at`). */
 export function checkFromRow(row: Raw): TrajectoryCheck & { planID: string; ref: string } {
   const status = text(row.status)
-  const at = num(row.at) ?? null
   return {
     ref: String(row.ref),
     planID: text(row.plan_id) ?? "",
     id: text(row.event) ?? String(row.ref),
     scope: text(row.attempt_id) ? "attempt" : "plan",
     attemptID: text(row.attempt_id) ?? null,
-    state: status ?? "",
+    state: text(row.to_state) ?? status ?? "",
     result: status === "passed" || status === "failed" ? status : "unknown",
     command: null,
-    startedAt: null,
-    endedAt: at,
-    timingBasis: "Check result event time; the start is in the check's detail",
+    startedAt: num(row.started_at) ?? null,
+    endedAt: num(row.ended_at) ?? null,
+    timingBasis:
+      "Verification receipt check.startedAt/check.endedAt; absent endpoints remain unknown",
     exitCode: null,
     timedOut: null,
     unchanged: null,
@@ -144,6 +140,15 @@ export function checkFromRow(row: Raw): TrajectoryCheck & { planID: string; ref:
     stderr: null,
     error: null,
   }
+}
+
+/**
+ * The task's current hold from its stored `tasks.schedule` row: held and why, by the rule Tasks
+ * lists by (`listRowOf`). Stored plan and node state, never a windowed event.
+ */
+export function holdFromSchedule(row: Raw): { waiting: boolean; reason: string | null } {
+  const { waiting, holdReason } = listRowOf((column) => row[column], String(row.task_id))
+  return { waiting, reason: holdReason }
 }
 
 export type ConcernSignal = { line: string; action?: string; because?: string } | undefined

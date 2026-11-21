@@ -23,6 +23,8 @@ import {
   transcriptRefRange,
   writeTranscriptPage,
   type StoredTranscriptSession,
+  type TranscriptPageStart,
+  UNREAD_TRANSCRIPT,
 } from "./schema.ts"
 
 /**
@@ -295,9 +297,13 @@ export class TranscriptMetaFold {
     /** The cursor of the page being read: a refused cursor is reset only when there was one. */
     let reading: string | null = null
     try {
-      let from: StoredTranscriptSession = this.repository.read((db) =>
-        storedTranscriptSession(db, this.project, sessionID),
-      ) ?? { cursor: null, base: 0, messageCount: 0, state: "not-read" }
+      let from: StoredTranscriptSession =
+        this.repository.read((db) => storedTranscriptSession(db, this.project, sessionID)) ??
+        UNREAD_TRANSCRIPT
+      // The last non-empty page read in this pass: where the stored cursor goes when the page
+      // after it is empty (a transcript of an exact multiple of the page size).
+      let tail: TranscriptPageStart | undefined
+      let restarted = false
       const seen = new Set<string>()
       for (;;) {
         this.reads.pages++
@@ -308,10 +314,19 @@ export class TranscriptMetaFold {
           ...hostPage("asc", from.cursor ?? undefined),
         })
         if (this.closed) return
-        const next = page.cursor.next
-        const end = !next || next === from.cursor || seen.has(next)
+        if (page.data.length === 0 && from.cursor !== null && !tail && !restarted) {
+          // The stored page is gone (a revert, or a cursor stored at the end by an older fold):
+          // read again from the start; the rows are upserted by message id.
+          restarted = true
+          from = { ...from, cursor: null, base: 0, compactionsBefore: 0, compactionBeforeAt: null }
+          continue
+        }
+        // A page shorter than the limit ends the list as it was read; a full one may have more.
+        const next = page.cursor.next ?? undefined
+        const more = page.data.length >= this.pageSize && next !== undefined && !seen.has(next)
         if (next) seen.add(next)
         const start = from
+        const pageTail = tail
         from = await this.repository.retryBusy(() =>
           this.repository.atomic((db) =>
             writeTranscriptPage(
@@ -320,11 +335,18 @@ export class TranscriptMetaFold {
               sessionID,
               start,
               page.data,
-              end ? undefined : next,
+              more ? next : undefined,
+              pageTail,
             ),
           ),
         )
-        if (end) break
+        if (!more) break
+        tail = {
+          cursor: start.cursor,
+          base: start.base,
+          compactionsBefore: start.compactionsBefore,
+          compactionBeforeAt: start.compactionBeforeAt,
+        }
       }
       this.settled(ref, sessionID, seq)
     } catch (error) {

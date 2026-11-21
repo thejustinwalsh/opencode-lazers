@@ -15,6 +15,7 @@ import {
 import type { TrajectorySession } from "./native.ts"
 import { inspectTaskEffort, type TaskEffort } from "./read.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
+import type { TaskRepository } from "../storage.ts"
 
 /**
  * What one effort refresh computes, off the main thread: the task's stored facts read on a
@@ -31,6 +32,8 @@ type EffortSessionRow = {
   route_variant: string | null
   outcome: string | null
   busy: number
+  last_busy_at: number | null
+  last_idle_at: number | null
   tokens_in: number | null
   tokens_out: number | null
   tokens_reasoning: number | null
@@ -52,8 +55,8 @@ const CONTEXT: Record<TranscriptReadState, TrajectorySession["messageStatus"]> =
 /**
  * A stored session as the trajectory host's read returns it: model, outcome, busy, stamp and the
  * cumulative token snapshot; its context status is the stored transcript's read state (`not-read`
- * before the transcript fold has read it in full). The messages themselves are never here. The
- * host keeps no busy or idle endpoint here; the effort reads neither.
+ * before the transcript fold has read it in full), its busy and idle endpoints the host record's
+ * last `time.busy` / `time.idle`. The messages themselves are never here.
  */
 function trajectorySessionOf(
   row: EffortSessionRow,
@@ -84,7 +87,12 @@ function trajectorySessionOf(
         ? (row.outcome as NonNullable<TrajectorySession["outcome"]>)
         : null,
     busy: row.busy === 1,
-    time: { created: row.created_at ?? 0, updated: row.host_updated_at, busy: null, idle: null },
+    time: {
+      created: row.created_at ?? 0,
+      updated: row.host_updated_at,
+      busy: row.last_busy_at,
+      idle: row.last_idle_at,
+    },
     tokens: tokens.every((value) => value === null)
       ? null
       : {
@@ -101,6 +109,7 @@ function trajectorySessionOf(
 
 const SESSION_COLUMNS =
   "session_id,parent_session_id,route_provider,route_model,route_variant,outcome,busy," +
+  "last_busy_at,last_idle_at," +
   "tokens_in,tokens_out,tokens_reasoning,tokens_cache_read,tokens_cache_write,created_at," +
   "host_updated_at"
 
@@ -202,6 +211,25 @@ export type TaskEffortCompute = (
   signal: AbortSignal,
 ) => Promise<EffortRow | undefined>
 
+/**
+ * A project's stored session reader: `host_session_state` as the trajectory host's read returns a
+ * session, its context status the stored transcript's read state; null for a session not stored.
+ */
+export function storedSessionOf(repository: TaskRepository, project: string, projectID: string) {
+  const session = repository.read((db) =>
+    db.query<EffortSessionRow, [string, string]>(
+      `SELECT ${SESSION_COLUMNS} FROM host_session_state
+       WHERE project_directory=? AND session_id=?`,
+    ),
+  )
+  return (sessionID: string) => {
+    const row = repository.read(() => session.get(project, sessionID))
+    if (!row) return null
+    const transcript = repository.read((db) => storedTranscriptSession(db, project, sessionID))
+    return trajectorySessionOf(row, projectID, transcript?.state ?? "not-read")
+  }
+}
+
 /** The task's whole effort from stored facts on a read-only connection, valued by `provider`. */
 async function storedTaskEffort(
   path: string,
@@ -214,22 +242,11 @@ async function storedTaskEffort(
   const connection = openReadOnlyTrajectoryStore(path, project)
   try {
     const { repository } = connection.store
-    const session = repository.read((db) =>
-      db.query<EffortSessionRow, [string, string]>(
-        `SELECT ${SESSION_COLUMNS} FROM host_session_state
-         WHERE project_directory=? AND session_id=?`,
-      ),
-    )
     return await inspectTaskEffort(
       connection.store,
       projectID,
       taskID,
-      (sessionID) => {
-        const row = repository.read(() => session.get(project, sessionID))
-        if (!row) return null
-        const transcript = repository.read((db) => storedTranscriptSession(db, project, sessionID))
-        return trajectorySessionOf(row, projectID, transcript?.state ?? "not-read")
-      },
+      storedSessionOf(repository, project, projectID),
       {
         taskValuationProvider: provider,
         signal,

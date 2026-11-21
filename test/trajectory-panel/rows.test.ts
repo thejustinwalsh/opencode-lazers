@@ -4,6 +4,7 @@ import {
   attemptFromRow,
   checkFromDetail,
   concernFromSchedule,
+  holdFromSchedule,
   checkFromRow,
   eventFromDetail,
   eventFromRow,
@@ -70,9 +71,18 @@ test("a tool row and its transcript row are one event by id", () => {
     tool: "bash",
     status: "completed",
     at: 7,
+    route_provider: "openai",
+    route_model: "gpt-6",
+    route_variant: "max",
   }
   expect(timelineEventID(row)).toBe("msg:tool:c1")
   const call = eventFromRow(row, "t")
+  // The call carries its step's route and the host part's status word, as the old read did.
+  expect(call).toMatchObject({
+    kind: "tool",
+    status: "completed",
+    model: { providerID: "openai", id: "gpt-6", variant: "max" },
+  })
   const text = eventFromTranscript(
     {
       id: "msg:tool:c1",
@@ -131,19 +141,52 @@ test("the schedule row's concern carries the stored recommendation onto the atte
   expect(concernFromSchedule({ concern: null })).toBeUndefined()
 })
 
-test("a check row is a point; its detail adds the stored interval", () => {
-  const row = { ...base, ref: "tr:3", kind: "check", event: "tests", status: "passed", at: 40 }
+test("a check row carries its receipt interval, so the timeline draws it unselected", () => {
+  const row = {
+    ...base,
+    ref: "ef:3",
+    kind: "check",
+    event: "tests",
+    status: "passed",
+    to_state: "completed",
+    at: 40,
+    started_at: 30,
+    ended_at: 40,
+  }
   expect(checkFromRow(row)).toMatchObject({
     id: "tests",
     scope: "attempt",
+    state: "completed",
     result: "passed",
-    startedAt: null,
+    startedAt: 30,
     endedAt: 40,
   })
+  // A receipt without an end keeps it unknown, as the old read did; the event time is not used.
+  expect(checkFromRow({ ...row, ended_at: null })).toMatchObject({ startedAt: 30, endedAt: null })
   const detail = {
-    event: { id: "tr:3", kind: "verification" },
+    event: { id: "ef:3", kind: "verification" },
     check: { startedAt: 30, endedAt: 40, command: "bun test" },
   }
   expect(checkFromDetail(detail)).toMatchObject({ startedAt: 30, command: "bun test" })
   expect(eventFromDetail(detail)?.kind).toBe("verification")
+})
+
+test("the hold is the stored schedule row's plan state and reason, not a timeline event", () => {
+  const row = {
+    task_id: "t1",
+    status: "running",
+    node_state: "running",
+    plan_state: "blocked",
+    plan_reason: "Worker execution was interrupted and could not resume",
+    node_reason: null,
+    reason: null,
+  }
+  expect(holdFromSchedule(row)).toEqual({
+    waiting: true,
+    reason: "Worker execution was interrupted and could not resume",
+  })
+  expect(holdFromSchedule({ ...row, plan_state: "running", plan_reason: null })).toEqual({
+    waiting: false,
+    reason: null,
+  })
 })

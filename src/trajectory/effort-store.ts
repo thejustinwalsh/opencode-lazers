@@ -651,6 +651,11 @@ const registryKey = Symbol.for("lazers.task-effort-fold.v1")
 const host = globalThis as typeof globalThis & { [registryKey]?: Map<string, Held> }
 const held = () => (host[registryKey] ??= new Map())
 
+/** The effort fold of `projectDirectory` over `path` running in this process, if one is. */
+export function runningTaskEffortFold(path: string, projectDirectory: string) {
+  return held().get(JSON.stringify([path, projectDirectory]))?.fold
+}
+
 /**
  * The one effort fold of `projectDirectory` over the database at `path` in this process, started
  * on the first acquire with its own connection and its seed backfill. The last release stops it.

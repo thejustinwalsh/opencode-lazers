@@ -100,41 +100,63 @@ beforeAll(async () => {
     } as never,
   ]
   seedDisplayCorpus(made)
-  // The old read's tool times are the part's `time.ran`; the display row's are the recorder's.
+  // The recorder's rows for the host's tool parts: the call's own timing endpoints (the part's
+  // `time.ran` and `time.completed`) beside its first and last observation. The failed call was
+  // first observed at its input (1030), the successful one only after its call (2024); a
+  // tool-wrapper invocation inside the successful call is not a host part.
   made.store.atomic((db) => {
     const call = db.query(
       `INSERT INTO native_tool_calls(project_directory,project_id,session_id,identity_kind,invocation_id,
          native_call_id,context_call_id,message_id,agent,tool,first_observed_at,last_observed_at,
          sources_json,event_ids_json,payload)
-       VALUES(?, 'project', ?, 'native-call', ?, ?, ?, ?, 'lazers-implementor', ?, ?, ?, '[]','[]',?)`,
+       VALUES(?, 'project', ?, ?, ?, ?, ?, ?, 'lazers-implementor', ?, ?, ?, '[]','[]',?)`,
     )
-    const payload = JSON.stringify({
-      status: "failed",
-      detail: "PRIVATE-DETAIL",
-      error: { message: "PRIVATE" },
+    const timing = (called: number, completed: number) => ({
+      unit: "unix-epoch-ms",
+      endpoints: { calledAt: { at: called }, completedAt: { at: completed } },
     })
     call.run(
       project,
       "ses-failed",
+      "native-call",
       "call-failed",
       "call-failed",
       "call-failed",
       "msg-old-tool",
       "Read",
-      1035,
-      1040,
-      payload,
+      1030,
+      1041,
+      JSON.stringify({
+        status: "failed",
+        detail: "PRIVATE-DETAIL",
+        error: { message: "PRIVATE" },
+        timing: timing(1035, 1040),
+      }),
     )
     call.run(
       project,
       "ses-accepted",
+      "native-call",
       "call-success",
       "call-success",
       "call-success",
       "msg-new-tool",
       "Bash",
       2024,
-      2030,
+      2031,
+      JSON.stringify({ status: "succeeded", timing: timing(2022, 2030) }),
+    )
+    call.run(
+      project,
+      "ses-accepted",
+      "local-invocation",
+      "wrapped-invocation",
+      null,
+      "call-success",
+      "msg-new-tool",
+      "lz-inspect-plan",
+      2025,
+      2026,
       JSON.stringify({ status: "succeeded" }),
     )
   })
@@ -276,8 +298,19 @@ test("timeline parity: the stream walked by windows equals the old read's order,
   const byID = new Map(old.map((event) => [String(event.id), event]))
   for (const row of full) {
     const event = byID.get(String(row.sort_key))!
-    if (String(row.kind) === "progress" || row.kind === "tool") continue
+    if (String(row.kind) === "progress") continue
     expect(row.kind).toBe(KIND[String(event.kind)] ?? event.kind)
+    if (row.kind === "tool") {
+      // The host part's status word, its `time.ran`, `time.completed` and its message's route.
+      expect(row.status).toBe(event.status)
+      expect(row.completed_at).toBe(event.completedAt)
+      const model = event.model as { providerID: string; id: string; variant?: string }
+      expect([row.route_provider, row.route_model, row.route_variant ?? undefined]).toEqual([
+        model.providerID,
+        model.id,
+        model.variant,
+      ])
+    }
     if (row.kind === "assistant-step") {
       expect(row.status).toBe(event.status)
       const model = event.model as { providerID: string; id: string; variant: string }
@@ -326,28 +359,74 @@ test("timeline parity: the stream walked by windows equals the old read's order,
   expect(JSON.stringify(full)).not.toContain("PRIVATE")
 })
 
+test("check intervals: every check row carries the old read's receipt interval, unselected", async () => {
+  const report = await inspectTrajectory(
+    made.store,
+    made.host,
+    "project",
+    InspectTrajectoryInput.parse({ taskID }),
+    cursorSecret,
+    { allEvents: true },
+  )
+  const old = [
+    ...report.plans.flatMap((plan) => plan.checks),
+    ...report.attempts.flatMap((attempt) => attempt.checks),
+  ]
+  const key = (check: {
+    id: unknown
+    attemptID: unknown
+    startedAt: unknown
+    endedAt: unknown
+    state: unknown
+    result: unknown
+  }) =>
+    JSON.stringify([
+      check.id,
+      check.attemptID,
+      check.startedAt,
+      check.endedAt,
+      check.state,
+      check.result,
+    ])
+  // The list columns alone, as the panel's every-check stream reads them (no window-1 detail).
+  const listed = (await events({ kinds: ["check"] })).map((row) =>
+    key({
+      id: row.event,
+      attemptID: row.attempt_id,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      state: row.to_state,
+      result: row.status,
+    }),
+  )
+  expect(listed.length).toBe(3)
+  expect(listed.toSorted()).toEqual([...new Set(old.map(key))].toSorted())
+  expect(listed.every((row) => JSON.parse(row)[2] !== null && JSON.parse(row)[3] !== null)).toBe(
+    true,
+  )
+})
+
 test("documented differences from the old read", async () => {
   const old = new Map((await oldEvents()).map((event) => [String(event.id), event]))
   const full = new Map((await events()).map((row) => [String(row.sort_key), row]))
-  // 1. A tool call's time is the recorder's first observation, the old read's the part's `time.ran`.
-  expect([
-    old.get("msg-new-tool:tool:call-success")!.at,
-    full.get("msg-new-tool:tool:call-success")!.at,
-  ]).toEqual([2022, 2024])
-  expect(full.get("msg-new-tool:tool:call-success")!.completed_at).toBe(2030)
-  // 2. A tool call's status is the recorder's word (succeeded/failed), the old read's the part's (completed/error).
-  expect([
-    old.get("msg-old-tool:tool:call-failed")!.status,
-    full.get("msg-old-tool:tool:call-failed")!.status,
-  ]).toEqual(["error", "failed"])
-  // 3. A tool row has no route: the old read repeated its step's model on it.
-  expect(full.get("msg-old-tool:tool:call-failed")!.route_model).toBeNull()
-  // 4. A progress row's time is the display row's `at`; the old read sorted a visible-text row by its message time.
+  // Tool rows are the old read's: time, status word, completion and route (asserted in the
+  // parity test above). What remains differs where no user sees it, or as justified here:
+  // 1. A progress row's time is the display row's `at`; the old read sorted a visible-text row by
+  //    its message time. Justified: the display row is the stored fact; the old time came from a
+  //    host message read per report.
   expect([old.get("progress:5")!.at, full.get("progress:5")!.at]).toEqual([10, 1028.5])
-  // 5. Progress rows keep the display kind (commentary, tool, ...) in `event`; the old read said worker-*.
+  // 2. Progress rows keep the display kind (commentary, tool, ...) in `event`; the old read said
+  //    worker-*. Not seen: the panel maps it back (`eventFromRow`).
   expect(full.get("progress:1")).toMatchObject({ kind: "progress", event: "commentary" })
   expect(old.get("progress:1")!.kind).toBe("commentary")
-  // 6. The old read ordered tied ids with localeCompare; the stream orders them bytewise.
+  // 3. The old read ordered tied ids with localeCompare; the stream orders them bytewise. Not seen
+  //    for the ids LAZERS and OpenCode write (ASCII), where the two orders agree.
+  // 4. A call recorded as not executed keeps no host status; it reads `error` with an error,
+  //    `completed` with a completion time, otherwise `running` (the old read showed the host part's
+  //    word). A call still streaming its input sits at its input start; the old read had no time
+  //    for it and sorted it last.
+  // 5. A tool-wrapper invocation (a LAZERS tool inside a host call) is not a row, as before.
+  expect([...full.values()].some((row) => row.tool === "lz-inspect-plan")).toBe(false)
 })
 
 test("filters: an attempt keeps its own rows and the plan-level ones; kinds narrow", async () => {

@@ -78,6 +78,9 @@ function eventRows(data: TrajectoryData): DemoRow[] {
         attempt_id: attemptID(check.attempt),
         event: check.id,
         status: check.result,
+        to_state: check.end === null ? "running" : "completed",
+        started_at: when(check.start),
+        ended_at: check.end === null ? null : when(check.end),
         detail: {
           event: { id: `tr:check-${check.id}-${check.attempt}`, kind: "verification", at },
           check: {

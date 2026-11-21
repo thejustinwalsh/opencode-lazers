@@ -285,7 +285,7 @@ export const schemaModules = {
     tables: ["host_session_state", "host_session_dirty"],
   },
   "transcript-meta": {
-    generation: 2,
+    generation: 3,
     source: "src/transcript-meta/schema.ts",
     tables: ["transcript_steps", "transcript_sessions", "transcript_meta_dirty"],
   },

@@ -36,6 +36,9 @@ type Row = {
   attempt_id: string | null
   session_id: string | null
   at: number | null
+  /** A check's receipt interval (`check.startedAt`/`check.endedAt`); NULL for every other kind. */
+  started_at: number | null
+  ended_at: number | null
   /** The old event id: the trajectory read's tie-break. */
   sort_key: string
   kind: "transition" | "effect" | "check" | "progress"
@@ -63,6 +66,8 @@ const COLUMNS = [
   "at",
   "sort_at",
   "sort_key",
+  "started_at",
+  "ended_at",
   "kind",
   "origin",
   "event",
@@ -97,6 +102,8 @@ function write(db: Database, row: Row) {
     row.at,
     row.at ?? UNTIMED,
     row.sort_key,
+    row.started_at,
+    row.ended_at,
     row.kind,
     row.origin,
     row.event,
@@ -114,6 +121,8 @@ function write(db: Database, row: Row) {
 }
 
 const empty = {
+  started_at: null,
+  ended_at: null,
   status: null,
   tool: null,
   title: null,
@@ -253,6 +262,8 @@ function refreshEffect(db: Database, id: string) {
         from_state: null,
         to_state: str(event!.state),
         status: check ? check.result : null,
+        started_at: check ? check.startedAt : null,
+        ended_at: check ? check.endedAt : null,
         detail: JSON.stringify(check ? { event, check } : { event }),
       })
       written.push(origin)
@@ -312,6 +323,8 @@ function refreshProgress(db: Database, seq: number) {
     session_id: display.session_id,
     at: display.at,
     sort_key: `progress:${seq}`,
+    started_at: null,
+    ended_at: null,
     kind: "progress",
     origin,
     event: display.kind,

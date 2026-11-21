@@ -17,6 +17,8 @@ function hostRecord(session: TrajectorySession): HostSessionRecord {
     directory: null,
     archived: false,
     busy: session.busy,
+    busyAt: session.time.busy,
+    idleAt: session.time.idle,
     outcome: session.outcome,
     model: session.model
       ? {

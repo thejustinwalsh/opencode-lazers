@@ -76,6 +76,9 @@ export const trajectoryEventColumns = {
   /** Step streamed/completed time, call last observation; epoch ms. */
   streamed_at: "float",
   completed_at: "float",
+  /** A check's receipt interval (`check.startedAt`/`check.endedAt`), epoch ms; null otherwise. */
+  started_at: "float",
+  ended_at: "float",
   input_tokens: "int",
   output_tokens: "int",
   /** Error name (never a message): a failed step, or a retry's error. */

@@ -7,17 +7,29 @@ import { acquireReaderPool } from "../streams/pool.ts"
 import { openStream } from "../streams/client.ts"
 import { trajectoryEventsSource } from "../streams/sources/trajectory.ts"
 import { trajectoryEventColumns } from "../streams/sources/trajectory-ref.ts"
+import { awaitTaskEffort, EFFORT_WAIT_MS, type TaskEffortState } from "./effort-wait.ts"
 import { privacyStats, safeError } from "./privacy.ts"
 import { declareInput } from "../tool-input.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
+import { readTrajectorySummary } from "./summary.ts"
 
 type ToolContext = Pick<Plugin.Context, "permission" | "tool">
 
 /**
- * One window of a task's timeline (`trajectory.events`, the stream the Trajectory panel reads),
- * read on the server with the tool's own permission check. The continuation is the edge: the
- * `ref` of the last row, which the next call reads from (a stream anchored on a key starts at it).
+ * The task's summary (task, plans, attempts, effort, coverage, privacy: `summary.ts`, stored rows
+ * only) and one window of its timeline (`trajectory.events`, the stream the Trajectory panel
+ * reads), read on the server with the tool's own permission check. The continuation is the edge:
+ * the `ref` of the last row, which the next call reads from (a stream anchored on a key starts at
+ * it).
+ *
+ * `schemaVersion` 2: the sections of version 1 (the pre-stream read) under the same names, with
+ * three differences an old reader would see. Events are `trajectory.events` rows, not the old
+ * event objects, and message text is not among them; the cursor is a row key, not a signed
+ * offset; the effort is the stored summary, whose per-call route lists are counts
+ * (`observedStepRouteCount`, `assessmentCount`, `mismatchCount`), each call's route being its
+ * `assistant-step` row in the paged events. `effortState` says why `effort` is null when it is:
+ * `computing` (queued, not written within the read's short wait) or `not-computed`.
  */
 async function readTrajectoryWindow(
   path: string,
@@ -25,9 +37,11 @@ async function readTrajectoryWindow(
   sessionID: string,
   input: InspectTrajectoryInput,
 ) {
-  // The task is the project's: two point reads on a short read-only connection.
+  // The task is the project's; the summary is composed on a short read-only connection.
   const connection = openReadOnlyTrajectoryStore(path, projectDirectory)
   let taskID: string | undefined
+  let summary: ReturnType<typeof readTrajectorySummary>
+  let effortState: TaskEffortState = "not-computed"
   try {
     taskID =
       input.taskID ??
@@ -46,11 +60,24 @@ async function readTrajectoryWindow(
           .query("SELECT 1 FROM tasks WHERE project_directory=? AND id=?")
           .get(projectDirectory, taskID!),
       )
-    if (!known) taskID = undefined
+    if (known) {
+      // A task with attempts whose effort is a moment away gets it, not a null: queue it and wait
+      // for the row within a short bound; still missing, the output says `computing`.
+      const attempts = connection.store.read((db) =>
+        db.query("SELECT 1 FROM runner_attempts WHERE task_id=? LIMIT 1").get(taskID!),
+      )
+      effortState = await awaitTaskEffort(
+        path,
+        projectDirectory,
+        taskID!,
+        attempts ? EFFORT_WAIT_MS : 0,
+      )
+    }
+    summary = known ? readTrajectorySummary(connection.store, taskID!, input.attemptID) : undefined
   } finally {
     connection.close()
   }
-  if (!taskID) throw new Error("No observation in this scope")
+  if (!taskID || !summary) throw new Error("No observation in this scope")
   const lease = acquireReaderPool(path)
   try {
     const stream = openStream(lease.pool, trajectoryEventsSource, {
@@ -78,19 +105,31 @@ async function readTrajectoryWindow(
             ]),
           ) as Record<string, unknown>,
       )
+      // Rows of the timeline before this page: the exact count the source keeps.
+      let before = typeof stream.before === "number" ? stream.before : 0
       if (input.cursor) {
         if (rows[0]?.ref !== input.cursor) throw new Error("Invalid trajectory cursor")
         rows.shift()
+        before++
       }
       const events = rows.slice(0, input.limit)
       const more = rows.length > input.limit
+      const after = typeof stream.after === "number" ? stream.after : 0
       return {
         schemaVersion: 2,
         taskID,
-        focusedAttemptID: input.attemptID ?? null,
+        ...summary,
+        // A summary read after the wait can find the row the timer missed.
+        effortState: summary.effort
+          ? "stored"
+          : effortState === "stored"
+            ? "computing"
+            : effortState,
         trajectory: {
           order: "sort_at, then sort_key, then ref (ascending)",
+          page: Math.floor(before / input.limit) + 1,
           limit: input.limit,
+          totalEvents: before + rows.length + after,
           events,
           nextCursor: more ? (events.at(-1)?.ref ?? null) : null,
           hasMore: more,
@@ -111,7 +150,7 @@ export function registerTrajectoryTools(ctx: ToolContext, store: RunnerStore) {
     editor.add({
       name: "lz-inspect-trajectory",
       description:
-        "Read one window of a project-owned worker task's stored timeline (transitions, effects, checks, progress, model steps with route/tokens/errors, tool calls), oldest first. Provide exactly one taskID or attemptID (an attempt's view keeps the task's plan-level rows); continue with the returned nextCursor and unchanged limit. Rows carry ids, times, states, routes and error names only, never message text, tool input or output.",
+        "Read a project-owned worker task's stored trajectory: the task, plans, attempts (including failed retries and takeovers), total effort, coverage and privacy, plus one window of its timeline (transitions, effects, checks, progress, model steps with route/tokens/errors, tool calls with route and status), oldest first. Provide exactly one taskID or attemptID (an attempt's view keeps the task's plan-level rows); continue with the returned nextCursor and unchanged limit. Each call's route is its assistant-step row; the effort carries route counts. effort is null only while effortState is computing (the read waits briefly for it) or not-computed. Rows carry ids, times, states, routes and error names only, never message text, tool input or output.",
       input: declareInput(InspectTrajectoryInput),
       output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
       options: {

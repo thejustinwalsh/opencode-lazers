@@ -7,43 +7,39 @@ import type { TrajectoryAttempt, TrajectoryEvent, TrajectoryReport } from "./pro
 
 const terminalNodes = new Set(["accepted", "incorporated", "failed", "exhausted", "cancelled"])
 
-/** The latest recorded reason a task or plan was held, from the runner's BLOCKED transitions. */
-export function holdReason(events: readonly TrajectoryEvent[]) {
-  const blocked = events
-    .filter((event) => event.kind === "runner-transition" && event.event === "BLOCKED")
-    .toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0))
-  return blocked.find((event) => event.reason?.trim())?.reason ?? null
-}
-
 type TaskReport = Pick<TrajectoryReport, "task" | "plans" | "attempts">
 
 const latestPlan = (report: TaskReport) =>
   report.plans.find((item) => item.id === report.attempts.at(-1)?.planID) ?? report.plans.at(-1)
 
 /**
- * Recorded hold reasons, most specific first: the task node's, the plan's (the sources Tasks and
- * Radar read), then the latest BLOCKED transition.
+ * Recorded hold reasons, most specific first: the task's current hold from its stored schedule
+ * row, then the latest plan's node and plan reasons (the sources Tasks and Radar read). Stored
+ * state only: what the timeline window holds never changes the reason.
  */
-export function holdReasons(report: TaskReport, events: readonly TrajectoryEvent[]) {
+export function holdReasons(report: TaskReport) {
   const plan = latestPlan(report)
   return [
     ...new Set(
-      [plan?.taskReason, plan?.reason, holdReason(events)].filter((reason): reason is string =>
-        Boolean(reason?.trim()),
+      [report.task.hold?.reason, plan?.taskReason, plan?.reason].filter(
+        (reason): reason is string => Boolean(reason?.trim()),
       ),
     ),
   ]
 }
 
 /**
- * The task row `taskStateView` reads, rebuilt from the report the way Radar rebuilds it from an
- * attempt read: a blocked task, or a blocked plan around a task that is not finished, is held.
+ * The task row `taskStateView` reads. With the stored schedule row's hold, it is that row's
+ * (`listRowOf`, as Tasks lists it); otherwise it is rebuilt from the report the way Radar rebuilds
+ * it from an attempt read: a blocked task, or a blocked plan around a task that is not finished.
  */
-function reportTaskRow(report: TaskReport, events: readonly TrajectoryEvent[]): ExecutionListRow {
+function reportTaskRow(report: TaskReport): ExecutionListRow {
   const state = currentTaskState(report)
   const plan = latestPlan(report)
-  const held = state === "blocked" || (plan?.state === "blocked" && !terminalNodes.has(state))
-  const reason = held ? (holdReasons(report, events)[0] ?? null) : null
+  const held =
+    report.task.hold?.waiting ??
+    (state === "blocked" || (plan?.state === "blocked" && !terminalNodes.has(state)))
+  const reason = held ? (holdReasons(report)[0] ?? null) : null
   return {
     taskID: report.task.id,
     title: "",
@@ -59,11 +55,8 @@ function reportTaskRow(report: TaskReport, events: readonly TrajectoryEvent[]): 
 }
 
 /** The state word, tone and glyph every panel shows for this task, and whether it is working. */
-export function reportTaskView(
-  report: TaskReport,
-  events: readonly TrajectoryEvent[],
-): TaskStateView & { working: boolean } {
-  const view = taskStateView(reportTaskRow(report, events))
+export function reportTaskView(report: TaskReport): TaskStateView & { working: boolean } {
+  const view = taskStateView(reportTaskRow(report))
   return { ...view, working: view.tone === "running" }
 }
 
@@ -71,11 +64,10 @@ export function reportTaskView(
 export function taskReason(
   view: Pick<TaskStateView, "tone" | "explained">,
   report: TaskReport,
-  events: readonly TrajectoryEvent[],
   failure?: string | null,
 ) {
   return taskExplanation(view, {
-    hold: holdReasons(report, events),
+    hold: holdReasons(report),
     failure: latestPlan(report)?.reason ?? failure ?? null,
   })
 }

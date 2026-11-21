@@ -7,7 +7,7 @@ import { isTakeoverAttempt } from "../recovery/detector.ts"
 import { ensureHostSessionStateSchema } from "../host-sessions/state.ts"
 import { RunnerStore } from "../runner/store.ts"
 import type { TaskRepository } from "../storage.ts"
-import { transcriptStep, type TranscriptStep } from "./step.ts"
+import { dateMillis, transcriptStep, type TranscriptStep } from "./step.ts"
 
 /**
  * `transcript_steps` and `transcript_sessions`: the metadata LAZERS derives from the transcripts
@@ -25,11 +25,18 @@ import { transcriptStep, type TranscriptStep } from "./step.ts"
  *
  * - `transcript_steps`: one row per assistant message. `ordinal` is the message's position in the
  *   whole transcript (every message type counts), so the report's transcript bound applies to it.
- * - `transcript_sessions`: the cursor (the host cursor of the page the next read starts at: the
- *   tail page is read again, as `core/host-messages.ts` does), `base_ordinal` (messages before
- *   that page), `message_count` (every message type) and `read_state`: `not-read` until a pass
- *   reaches the end of the transcript, then `available`; `unavailable` when reads fail before
- *   one has. A session OpenCode no longer has keeps its rows and state.
+ * - `transcript_sessions`: `cursor`, the host cursor of the LAST NON-EMPTY page (null: the first
+ *   page), never the end: the host sets `next` on every page that has messages, and reading
+ *   through the last page's `next` returns an empty page with no cursors (verified live,
+ *   2026-11-21). The cursor is keyset (`{id, order, direction}` of the page's anchor message), so
+ *   reading it again returns the last page and every message added after it: a tail open is one
+ *   read, and the fold's resume re-reads the tail page (its last message may still be changing)
+ *   and follows `next` only when the page came back full. `base_ordinal` and `compaction_base` /
+ *   `compaction_base_at` describe what precedes that page; `message_count` (every message type),
+ *   `compactions` and `last_compaction_at` (compaction messages: `coverage.compacted`, the
+ *   compaction event's time) the whole transcript; `read_state`: `not-read` until a pass reaches
+ *   the end, then `available`; `unavailable` when reads fail before one has. A session OpenCode
+ *   no longer has keeps its rows and state.
  * - Tool calls are not stored here: `native_tool_call_display` holds them (session, message, call).
  *
  * Readers: the trajectory effort (attempt sessions: routes, count, read state), the Radar
@@ -54,9 +61,9 @@ export const TRANSCRIPT_META_QUEUE = "transcript_meta_dirty"
 
 /**
  * Raise when the stored derivation changes: the seed queues every session again. 2: every shown
- * session, not only attempt sessions.
+ * session, not only attempt sessions. 3: the last non-empty page's cursor; compactions.
  */
-const TRANSCRIPT_META_GENERATION = 2
+const TRANSCRIPT_META_GENERATION = 3
 
 const TABLES_SQL = `
   CREATE TABLE transcript_steps (
@@ -73,7 +80,9 @@ const TABLES_SQL = `
   CREATE TABLE transcript_sessions (
     id INTEGER PRIMARY KEY,
     project_directory TEXT NOT NULL, session_id TEXT NOT NULL,
-    cursor TEXT, base_ordinal INTEGER NOT NULL, message_count INTEGER NOT NULL,
+    cursor TEXT, base_ordinal INTEGER NOT NULL,
+    compaction_base INTEGER NOT NULL, compaction_base_at INTEGER,
+    message_count INTEGER NOT NULL, compactions INTEGER NOT NULL, last_compaction_at INTEGER,
     read_state TEXT NOT NULL CHECK(read_state IN ('not-read','available','unavailable')),
     UNIQUE(project_directory, session_id)
   );
@@ -163,11 +172,52 @@ export function ensureTranscriptMetaSchema(repository: TaskRepository) {
 }
 
 export type TranscriptReadState = "not-read" | "available" | "unavailable"
-export type StoredTranscriptSession = {
+/** Where a page of the transcript starts: its host cursor and what precedes it. */
+export type TranscriptPageStart = {
   cursor: string | null
   base: number
+  compactionsBefore: number
+  compactionBeforeAt: number | null
+}
+export type StoredTranscriptSession = TranscriptPageStart & {
   messageCount: number
+  compactions: number
+  lastCompactionAt: number | null
   state: TranscriptReadState
+}
+
+/** A transcript nothing has been read of. */
+export const UNREAD_TRANSCRIPT: StoredTranscriptSession = {
+  cursor: null,
+  base: 0,
+  compactionsBefore: 0,
+  compactionBeforeAt: null,
+  messageCount: 0,
+  compactions: 0,
+  lastCompactionAt: null,
+  state: "not-read",
+}
+
+const SESSION_COLUMNS = [
+  "cursor",
+  "base_ordinal",
+  "compaction_base",
+  "compaction_base_at",
+  "message_count",
+  "compactions",
+  "last_compaction_at",
+  "read_state",
+] as const
+
+type SessionRow = {
+  cursor: string | null
+  base_ordinal: number
+  compaction_base: number
+  compaction_base_at: number | null
+  message_count: number
+  compactions: number
+  last_compaction_at: number | null
+  read_state: string
 }
 
 export function storedTranscriptSession(
@@ -176,11 +226,8 @@ export function storedTranscriptSession(
   sessionID: string,
 ): StoredTranscriptSession | undefined {
   const row = db
-    .query<
-      { cursor: string | null; base_ordinal: number; message_count: number; read_state: string },
-      [string, string]
-    >(
-      `SELECT cursor,base_ordinal,message_count,read_state FROM transcript_sessions
+    .query<SessionRow, [string, string]>(
+      `SELECT ${SESSION_COLUMNS.join(",")} FROM transcript_sessions
        WHERE project_directory=? AND session_id=?`,
     )
     .get(project, sessionID)
@@ -188,7 +235,11 @@ export function storedTranscriptSession(
     ? {
         cursor: row.cursor,
         base: row.base_ordinal,
+        compactionsBefore: row.compaction_base,
+        compactionBeforeAt: row.compaction_base_at,
         messageCount: row.message_count,
+        compactions: row.compactions,
+        lastCompactionAt: row.last_compaction_at,
         state: row.read_state as TranscriptReadState,
       }
     : undefined
@@ -233,20 +284,48 @@ function writeSession(
   row: StoredTranscriptSession,
 ) {
   db.query(
-    `INSERT INTO transcript_sessions(project_directory,session_id,cursor,base_ordinal,message_count,read_state)
-     VALUES(?,?,?,?,?,?)
+    `INSERT INTO transcript_sessions(project_directory,session_id,${SESSION_COLUMNS.join(",")})
+     VALUES(?,?,${SESSION_COLUMNS.map(() => "?").join(",")})
      ON CONFLICT(project_directory,session_id) DO UPDATE SET
-       cursor=excluded.cursor,base_ordinal=excluded.base_ordinal,
-       message_count=excluded.message_count,read_state=excluded.read_state
-     WHERE cursor IS NOT excluded.cursor OR base_ordinal IS NOT excluded.base_ordinal
-       OR message_count IS NOT excluded.message_count OR read_state IS NOT excluded.read_state`,
-  ).run(project, sessionID, row.cursor, row.base, row.messageCount, row.state)
+       ${SESSION_COLUMNS.map((column) => `${column}=excluded.${column}`).join(",")}
+     WHERE ${SESSION_COLUMNS.map((column) => `${column} IS NOT excluded.${column}`).join(" OR ")}`,
+  ).run(
+    project,
+    sessionID,
+    row.cursor,
+    row.base,
+    row.compactionsBefore,
+    row.compactionBeforeAt,
+    row.messageCount,
+    row.compactions,
+    row.lastCompactionAt,
+    row.state,
+  )
+}
+
+const later = (left: number | null, right: number | null) =>
+  left === null ? right : right === null ? left : Math.max(left, right)
+
+/** The compaction messages of a page: how many, and the newest one's time. */
+function compactionsIn(page: readonly unknown[]) {
+  let count = 0
+  let at: number | null = null
+  for (const raw of page) {
+    const message =
+      typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : null
+    if (message?.type !== "compaction") continue
+    count++
+    const time = message.time as Record<string, unknown> | undefined
+    at = later(at, dateMillis(time?.created))
+  }
+  return { count, at }
 }
 
 /**
- * One page read from `from` (the stored cursor and base) in the caller's transaction: its steps,
- * the steps it no longer holds, and the session row. `next` is the host cursor after the page, or
- * undefined at the end of the transcript, where the cursor stays so the tail page is read again.
+ * One page read from `from` in the caller's transaction: its steps, the steps it no longer holds,
+ * and the session row. `next` is the page's host cursor when another page follows (the fold
+ * reads on), undefined at the end of the transcript. At the end the stored cursor is the last
+ * non-empty page's: this page's when it has messages, else `tail` (the page before an empty one).
  * Returns the state the next page starts from. A step or session row that is unchanged is not
  * written.
  */
@@ -257,6 +336,7 @@ export function writeTranscriptPage(
   from: StoredTranscriptSession,
   page: readonly unknown[],
   next: string | undefined,
+  tail?: TranscriptPageStart,
 ): StoredTranscriptSession {
   const upsert = db.query(
     `INSERT INTO transcript_steps(project_directory,session_id,message_id,${STEP_COLUMNS.join(",")})
@@ -282,15 +362,33 @@ export function writeTranscriptPage(
     db.query(
       "DELETE FROM transcript_steps WHERE project_directory=? AND session_id=? AND ordinal>=?",
     ).run(project, sessionID, end)
-  const state: StoredTranscriptSession =
-    next === undefined
-      ? { cursor: from.cursor, base: from.base, messageCount: end, state: "available" }
-      : {
-          cursor: next,
-          base: end,
-          messageCount: Math.max(from.messageCount, end),
-          state: from.state,
-        }
+  const compaction = compactionsIn(page)
+  const compactions = from.compactionsBefore + compaction.count
+  const lastCompactionAt = later(from.compactionBeforeAt, compaction.at)
+  let state: StoredTranscriptSession
+  if (next !== undefined)
+    state = {
+      cursor: next,
+      base: end,
+      compactionsBefore: compactions,
+      compactionBeforeAt: lastCompactionAt,
+      messageCount: Math.max(from.messageCount, end),
+      compactions: Math.max(from.compactions, compactions),
+      lastCompactionAt: later(from.lastCompactionAt, lastCompactionAt),
+      state: from.state,
+    }
+  else {
+    const start: TranscriptPageStart =
+      page.length > 0 || !tail
+        ? {
+            cursor: from.cursor,
+            base: from.base,
+            compactionsBefore: from.compactionsBefore,
+            compactionBeforeAt: from.compactionBeforeAt,
+          }
+        : tail
+    state = { ...start, messageCount: end, compactions, lastCompactionAt, state: "available" }
+  }
   writeSession(db, project, sessionID, state)
   return state
 }
@@ -299,18 +397,13 @@ export function writeTranscriptPage(
 export function markTranscriptUnavailable(db: Database, project: string, sessionID: string) {
   const stored = storedTranscriptSession(db, project, sessionID)
   if (stored?.state === "available") return
-  writeSession(db, project, sessionID, {
-    cursor: stored?.cursor ?? null,
-    base: stored?.base ?? 0,
-    messageCount: stored?.messageCount ?? 0,
-    state: "unavailable",
-  })
+  writeSession(db, project, sessionID, { ...(stored ?? UNREAD_TRANSCRIPT), state: "unavailable" })
 }
 
 /** Read a session again from its start; its rows stay and are upserted by message id. */
 export function resetTranscriptCursor(db: Database, project: string, sessionID: string) {
   db.query(
-    `UPDATE transcript_sessions SET cursor=NULL,base_ordinal=0
+    `UPDATE transcript_sessions SET cursor=NULL,base_ordinal=0,compaction_base=0,compaction_base_at=NULL
      WHERE project_directory=? AND session_id=?`,
   ).run(project, sessionID)
 }
