@@ -20,7 +20,7 @@ function metadataOnlyHost(fixture: ReturnType<typeof makeFixture>): TrajectoryHo
   }
 }
 
-test("snapshot supplies complete task labels and recorded Timeline intervals without native history", () => {
+test("snapshot supplies complete task labels without native history", () => {
   const fixture = makeFixture()
   try {
     const secret = new Uint8Array(32).fill(6)
@@ -52,40 +52,9 @@ test("snapshot supplies complete task labels and recorded Timeline intervals wit
       revision: 1,
       objective: "Inspect a worker attempt without disclosing private data",
     })
-    const timeline = snapshot as unknown as {
-      attempts: Array<{
-        id: string
-        startedAt: number
-        endedAt: number | null
-        executions: Array<{ startedAt: number | null; endedAt: number | null }>
-      }>
-      checks: Array<{
-        id: string
-        attemptID: string | null
-        startedAt: number | null
-        endedAt: number | null
-        exitCode: number | null
-      }>
-    }
-    expect(timeline.attempts).toHaveLength(2)
-    expect(timeline.attempts.every((attempt) => attempt.endedAt === null)).toBe(true)
-    expect(timeline.attempts.find((attempt) => attempt.id === firstAttemptID)).toMatchObject({
-      startedAt: 1000,
-      endedAt: null,
-      executions: [{ startedAt: 1010, endedAt: 1090 }],
-    })
-    expect(timeline.checks.find((check) => check.id === "check-failed")).toMatchObject({
-      attemptID: firstAttemptID,
-      startedAt: 1100,
-      endedAt: 1200,
-      exitCode: 7,
-    })
-    expect(timeline.checks.find((check) => check.id === "check-combined")).toMatchObject({
-      attemptID: null,
-      startedAt: 3600,
-      endedAt: 3800,
-      exitCode: 0,
-    })
+    // Attempts and checks are the Trajectory streams' rows, not the snapshot's.
+    expect(snapshot).not.toHaveProperty("attempts")
+    expect(snapshot).not.toHaveProperty("checks")
     expect(nativeReads).toBe(0)
     expect(JSON.stringify(snapshot)).not.toContain("logged-secret")
     expect(JSON.stringify(snapshot)).not.toContain("stdout")
