@@ -11,7 +11,7 @@ const Recorded = lazy(() => import("./Recorded"))
 
 /** How long a hidden tab keeps the model in GPU memory. The product's "keep loaded" default is
  *  never; a public page should not hold ~2 GB of GPU memory for a tab nobody is looking at. */
-export const HIDDEN_UNLOAD_MS = 120_000
+const HIDDEN_UNLOAD_MS = 120_000
 
 /** Holds the transcript state, runs the machine's effects and loads the runtime on first use. */
 function useChat() {
@@ -115,7 +115,7 @@ function useChat() {
   return { state, meter, dispatch, list }
 }
 
-export function missingWebGPU(): string {
+function missingWebGPU(): string {
   const ua = navigator.userAgent
   const safari = /Safari\//.test(ua) && !/Chrom(e|ium)|CriOS|FxiOS|Edg\//.test(ua)
   if (safari)

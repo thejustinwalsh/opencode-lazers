@@ -106,16 +106,16 @@ export type ChatEvent =
   | { t: "transcribed"; text: string }
   | { t: "transcribeFailed"; message: string }
 
-export const gigabytes = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`
+const gigabytes = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`
 const sizeLabel = (bytes: number) =>
   bytes < 1e9 ? `${(bytes / 1e6).toFixed(1)} MB` : gigabytes(bytes)
 export const MODEL_SIZE_LABEL = gigabytes(MODEL_BYTES)
 
 /** Oldest messages leave the prompt first once the chat grows past what a small model's context
  *  is useful for; the transcript on screen is never trimmed. */
-export const CONTEXT_MESSAGES = 12
+const CONTEXT_MESSAGES = 12
 
-export const INTRO_TEXT = `This is Liquid AI's LFM3-Omni-2B running live in this browser tab on WebGPU through ruNNtime. Because it's a compact ~2B-parameter model built for fast local assistance, expect brisk, plain answers—and the occasional small-model quirk.
+const INTRO_TEXT = `This is Liquid AI's LFM3-Omni-2B running live in this browser tab on WebGPU through ruNNtime. Because it's a compact ~2B-parameter model built for fast local assistance, expect brisk, plain answers—and the occasional small-model quirk.
 
 Type a prompt below, or click the microphone, talk, and click again: your speech is transcribed on this device and placed in the message box. Replies are read aloud automatically (Shift-click the speaker to mute auto-read).
 

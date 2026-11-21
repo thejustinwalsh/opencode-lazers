@@ -1,4 +1,3 @@
-import type { Rpc } from "@opencode/schema/rpc"
 
 /** One recorded read and the contract schema that must accept it. */
 export interface Read {
@@ -29,7 +28,3 @@ export interface PanelAdapter<D> {
   /** Optional initial values of the plugin's stores (view state), by store name. */
   stores?: Record<string, unknown>
 }
-
-export type Out<C extends Rpc.Definition, M extends keyof C["methods"] & string> = Rpc.Output<
-  C["methods"][M]["output"]
->

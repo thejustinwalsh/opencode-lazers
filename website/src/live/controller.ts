@@ -12,7 +12,7 @@ export type Meter = { bars: string; seconds: number } | null
 export type Controller = ReturnType<typeof createController>
 
 const PCM_RATE = 16_000
-export const MAX_RECORD_SECONDS = 30
+const MAX_RECORD_SECONDS = 30
 const BARS = "▁▂▃▄▅▆▇█"
 import { FLAT_METER } from "./meter"
 

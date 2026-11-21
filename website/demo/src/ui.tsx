@@ -8,7 +8,7 @@ import { iconPaths } from "./icons.ts"
  * the look is the demo shell's own (see theme.css, `.oc-*`).
  */
 type IconProps = { name: string; size?: "small" | "normal" | "large"; class?: string }
-export function Icon(props: IconProps) {
+function Icon(props: IconProps) {
   const px = () => (props.size === "large" ? 24 : props.size === "small" ? 16 : 20)
   return (
     <svg
