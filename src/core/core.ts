@@ -5,6 +5,13 @@ import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { startHostSessionFold } from "../host-sessions/fold.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
+import {
+  ensureProjectOverviewSchema,
+  projectOverviewProjection,
+  projectsDefaultsOf,
+  setProjectOverviewDefaults,
+} from "../projects/overview-store.ts"
+import { acquirePresence } from "../projects/presence.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -197,6 +204,22 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
+  // The Projects section's rows: kept by triggers in each writer's transaction; this start
+  // resolves settings with this service's plugin-option defaults and marks the project loaded.
+  ensureProjectOverviewSchema(repository)
+  const overviewLease = startProjection(
+    repository.path,
+    info.projectDirectory,
+    projectOverviewProjection,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS project overview failed", { error: String(error) }),
+        ),
+    },
+  )
+  setProjectOverviewDefaults(repository, projectsDefaultsOf(info.options))
+  const presence = acquirePresence(repository, info.projectDirectory)
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
@@ -358,6 +381,8 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     taskEventsLease.release()
     nativeCallLease.release()
     hostSessions.release()
+    overviewLease.release()
+    presence.release()
     scheduleLease.release()
     await registration.dispose()
     await schedulerStatus.stop()

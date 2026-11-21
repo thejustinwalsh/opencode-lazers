@@ -825,6 +825,30 @@ Module `model-mappings` generation 1 → 2; 3.4; demo `models-streams.ts`.
 
 Module `project-overview` generation 1; `projects` generation 2 → 3 (paths index); 4.2–4.5.
 
+★ As built (`src/projects/overview-store.ts`, `presence.ts`, `overview-view.ts`; sources
+`projects.list`, `projects.global` in `src/streams/sources/projects{,-ref}.ts`). Corrections:
+
+- Settings are one resolved JSON column (`settings`, the exact `ProjectSettings` /
+  `GlobalSettings` object), not one column each; pauses and Architect contact carry a `paused` /
+  `architect_contact` flag (a pause reason may be empty). `canonical_checkouts` (real paths,
+  resolved once at refresh) is what `loaded` matches `project_presence.canonical` against.
+- Writers are not edited: guarded triggers on `lazers_projects`, `lazers_project_paths`,
+  `lazers_settings`, `lazers_dispatch_pause`, `runner_architect_contact` and
+  `lazers_profile_revisions` queue the key, and the projections hook drains it in the writer's
+  transaction (the shared owner retries parked entries). Trigger bodies queue with UPDATE then
+  INSERT-if-missing, never `INSERT OR REPLACE`: under a writer's upsert (`ON CONFLICT DO
+UPDATE`, which `setPause` and the settings writer use) SQLite applies the outer conflict
+  handling to trigger statements, and a second `OR REPLACE` of the same ref failed the writer
+  with a UNIQUE error (found by the writers test).
+- The backfill is one owner page (queue every key and the global row, drain); new plugin-option
+  defaults (`setProjectOverviewDefaults`, at each core start) queue every row again.
+- Presence is written by the project core (create, dispose), refcounted per root (a reload
+  builds the new core before disposing the old); the first write of a process clears other
+  instances' rows.
+- `projects.revisions` / `projects.proofs` are not built yet: the Verification group still reads
+  the `profile` RPC, now once per stored profile change (driven by the list row), not per poll.
+  The `list` RPC is removed; `listProjects` stays as the parity oracle until Task 14.
+
 ### Task 12: Tasks detail, activity, current activity, search fields (L)
 
 Sources `tasks.detail` (`task_schedule` + `tasks.body` cold), `tasks.attempts`
