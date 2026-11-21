@@ -10,12 +10,14 @@ import {
   taskWaitsSource,
 } from "../streams/sources/tasks.ts"
 import type { StreamPool } from "../streams/client.ts"
-import { bucketsFor } from "./schedule/key.ts"
+import { bucketsFor, bucketsForSelection } from "./schedule/key.ts"
+import type { TaskStateSelection } from "./state-filter.ts"
 import { BUCKETS } from "./schedule/buckets.ts"
 import { AgentQueryInput, type TaskSummary } from "./contract.ts"
 import { TaskStateFilter, effectiveTaskStateFilter as effective } from "./state-filter.ts"
 import { backfillPage } from "./schedule/backfill.ts"
 import { summaryOf } from "./summary-row.ts"
+import { selectionCursor } from "./selection-cursor.ts"
 
 /**
  * One window of the stored task list for an agent tool: a stream opened on the project's reader
@@ -74,7 +76,12 @@ function matchesOf(
 }
 
 /** The stored bucket counters of the project, summed into the numbers a state filter selects. */
-async function storedCounts(pool: StreamPool, project: string, state: string) {
+async function storedCounts(
+  pool: StreamPool,
+  project: string,
+  state: string,
+  states?: readonly TaskStateSelection[],
+) {
   const stream = openStream(pool, taskBucketCountsSource, {
     filter: { project } as never,
     order: "bucket",
@@ -90,7 +97,10 @@ async function storedCounts(pool: StreamPool, project: string, state: string) {
         0,
       )
     return {
-      count: sum(state),
+      count: (bucketsForSelection(states, state) ?? BUCKETS).reduce(
+        (total, bucket) => total + (perBucket.get(bucket) ?? 0),
+        0,
+      ),
       stateCounts: Object.fromEntries(
         TaskStateFilter.options
           .filter((filter) => filter !== "completed")
@@ -128,6 +138,7 @@ export async function queryTaskPage(
   input: unknown,
 ): Promise<TaskToolPage> {
   const query = AgentQueryInput.parse(input)
+  const cursor = selectionCursor(query, repository.projectDirectory)
   // A fresh process has no schedule owner yet: index the project here, a page per write
   // transaction, so a tool never answers that tasks which exist are missing.
   const ready = () =>
@@ -149,6 +160,7 @@ export async function queryTaskPage(
       filter: {
         project: repository.projectDirectory,
         state: effectiveTaskStateFilter(query.state, query.includeCompleted),
+        ...(query.states === undefined ? {} : { states: query.states }),
         includeRetired: query.includeRetired,
         ...(query.search ? { search: query.search } : {}),
         ...(query.scopePath ? { scopePath: query.scopePath } : {}),
@@ -157,7 +169,7 @@ export async function queryTaskPage(
       order: query.sort,
       // One more than the page: the first row of a continued page is the marker itself.
       window: query.limit + (query.cursor ? 1 : 0) + 1,
-      ...(query.cursor ? { anchor: { key: [query.cursor], place: "start" as const } } : {}),
+      ...(cursor.taskID ? { anchor: { key: [cursor.taskID], place: "start" as const } } : {}),
     })
     try {
       await stream.ready()
@@ -171,7 +183,7 @@ export async function queryTaskPage(
         ),
       )
       if (query.cursor) {
-        if (rows[0]?.task_id !== query.cursor) throw new Error("Invalid task cursor")
+        if (rows[0]?.task_id !== cursor.taskID) throw new Error("Invalid task cursor")
         rows.shift()
       }
       const page = rows.slice(0, query.limit)
@@ -203,13 +215,14 @@ export async function queryTaskPage(
               lease.pool,
               repository.projectDirectory,
               effective(query.state, query.includeCompleted),
+              query.states,
             )
       return {
         projectDirectory: repository.projectDirectory,
         ...(counted ? { count: counted.count } : {}),
         ...(counted && !query.cursor ? { stateCounts: counted.stateCounts } : {}),
         tasks,
-        nextCursor: more && tasks.length ? tasks[tasks.length - 1]!.taskID : null,
+        nextCursor: more && tasks.length ? cursor.encode(tasks[tasks.length - 1]!.taskID) : null,
         serverTime: new Date().toISOString(),
       }
     } finally {

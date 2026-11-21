@@ -74,6 +74,12 @@ import {
 import type { NavigationKey, VirtualItem, VirtualTaskItem } from "./virtual-rows.ts"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
+import type { TaskStateSelection } from "./state-filter.ts"
+import {
+  normalizeTaskStateSelection,
+  taskStateLabel,
+  taskStateSelectionLabel,
+} from "./state-selection.ts"
 import { Keyed } from "./keyed.ts"
 import {
   ActivityLane,
@@ -127,7 +133,7 @@ const View = Schema.Struct({
 /** State menu order: live work, then finished work, then everything. */
 const STATE_MENU = [
   ["open", "queued", "running", "blocked", "paused"],
-  ["accepted", "integrated", "failed", "cancelled"],
+  ["completed", "accepted", "integrated", "failed", "cancelled"],
   ["all"],
 ] as const
 const initial: typeof View.Type = {
@@ -142,6 +148,28 @@ export const taskStores = {
   taskView: Store.session(Schema.Struct({ projects: Schema.Record(Schema.String, View) }), {
     projects: {},
   }),
+  taskStateDefaults: Store.global(
+    Schema.Struct({
+      projects: Schema.Record(
+        Schema.String,
+        Schema.Array(
+          Schema.Literals([
+            "open",
+            "queued",
+            "running",
+            "blocked",
+            "paused",
+            "completed",
+            "accepted",
+            "integrated",
+            "failed",
+            "cancelled",
+          ]),
+        ).check(Schema.isMaxLength(10)),
+      ),
+    }),
+    { projects: {} },
+  ),
 }
 type TaskContext = SetupContext<{ stores: typeof taskStores }>
 export type TaskTrajectoryRequest = Omit<TaskTrajectoryTarget, "requestID">
@@ -372,6 +400,39 @@ function TaskPanel(
       : initial
   }
   const stateFilter = () => preferredTaskStateFilter(prefs().state, prefs().history)
+  const savedStateSelection = () => {
+    const project = current()?.project
+    if (!project || !ctx.stores.taskStateDefaults.ready()) return undefined
+    const saved = ctx.stores.taskStateDefaults.value.projects[project]
+    return saved === undefined ? undefined : normalizeTaskStateSelection(saved)
+  }
+  const selectedStateSelection = (): TaskStateSelection[] => {
+    const saved = savedStateSelection()
+    if (saved !== undefined) return saved
+    const legacy = stateFilter()
+    return legacy === "all" ? [] : [legacy]
+  }
+  const stateFilterIdentity = () => savedStateSelection() ?? stateFilter()
+  const stateFilterDescription = () =>
+    selectedStateSelection().map(taskStateLabel).join(" + ") || "All"
+  const saveStateSelection = (states: readonly TaskStateSelection[]) => {
+    const value = current()
+    if (!value) return
+    const normalized = normalizeTaskStateSelection(states)
+    ctx.stores.taskStateDefaults.update((draft) => {
+      draft.projects[value.project] = normalized
+    })
+  }
+  const toggleStateSelection = (state: TaskStateSelection) => {
+    const selected = selectedStateSelection()
+    saveStateSelection(
+      selected.includes(state) ? selected.filter((item) => item !== state) : [...selected, state],
+    )
+  }
+  const stateTriggerLabel = () => {
+    const selected = selectedStateSelection()
+    return `${taskStateSelectionLabel(selected)}${selected.length > 1 ? ` · ${stateFilterDescription()}` : ""}`
+  }
   const save = (change: Partial<typeof initial>) => {
     const value = current()
     if (!value) return
@@ -395,7 +456,12 @@ function TaskPanel(
   createKeyed(
     () => {
       const value = current()
-      if (!value || !frame.visible() || !ctx.stores.taskView(props.session).ready()) {
+      if (
+        !value ||
+        !frame.visible() ||
+        !ctx.stores.taskView(props.session).ready() ||
+        !ctx.stores.taskStateDefaults.ready()
+      ) {
         return undefined
       }
       // The connection holds the scope; a search or a state chip only moves the list's own stream.
@@ -420,6 +486,7 @@ function TaskPanel(
           scope: taskScope,
           search: () => prefs().search,
           state: stateFilter,
+          states: savedStateSelection,
           fit,
           expanded: expandedKeys,
           startAt: untrack(() => prefs().anchorTaskID),
@@ -470,14 +537,18 @@ function TaskPanel(
   /** The list a person is looking at: another search, chip or scope is another list. */
   const listKey = () => {
     const key = expectedKey()
-    return key ? JSON.stringify([key, prefs().search, stateFilter()]) : ""
+    return key ? JSON.stringify([key, prefs().search, stateFilterIdentity()]) : ""
   }
   // Disclosure starts over only for another list (scope, filter, search, session, project). A
   // transient gap with no view (a reconnect) keeps it for its return.
   let listIdentity = ""
+  let anchorScope = ""
   createEffect(() => {
     const key = listKey()
     if (!key || key === listIdentity) return
+    const scopeKey = expectedKey()
+    if (listIdentity && anchorScope === scopeKey) untrack(() => save({ anchorTaskID: undefined }))
+    anchorScope = scopeKey
     listIdentity = key
     setExpandedKeys(new Set<string>())
   })
@@ -1338,15 +1409,13 @@ function TaskPanel(
         chooseTask(taskID)
     }
   }
-  const stateLabel = (state: NonNullable<typeof initial.state>) => {
-    if (state === "failed") return "Failed / exhausted"
-    if (state === "blocked") return "Blocked / waiting"
-    return state[0]!.toUpperCase() + state.slice(1)
-  }
+  const stateLabel = taskStateLabel
   /** "23 open · 4 running": the stored counters for this filter; none while a search narrows it. */
   const headerCount = () => {
-    const count = taskList()?.chipCount(stateFilter())
+    const count = taskList()?.selectionCount()
     if (count === undefined) return ""
+    if (savedStateSelection() !== undefined)
+      return `${count}${selectedStateSelection().length ? ` ${taskStateSelectionLabel(selectedStateSelection()).toLowerCase()}` : ""}`
     const filter = stateFilter()
     if (filter === "all") return String(count)
     const label = `${count} ${stateLabel(filter).toLowerCase()}`
@@ -1760,9 +1829,10 @@ function TaskPanel(
           </span>
           <span class="lazers-tasks-state-filter">
             <Ui.Menu
-              label={stateLabel(stateFilter())}
+              label={stateTriggerLabel()}
               trigger="button"
               icon="chevron-down"
+              disabled={!ctx.stores.taskStateDefaults.ready()}
               items={STATE_MENU.flatMap((group, index) => [
                 ...(index ? [{ type: "separator" as const }] : []),
                 ...group.map((state) => ({
@@ -1771,15 +1841,17 @@ function TaskPanel(
                   ...(taskList()?.chipCount(state) !== undefined
                     ? { keys: [String(taskList()!.chipCount(state))] }
                     : {}),
-                  ...(state === stateFilter() ? { icon: "check" as const } : {}),
+                  ...((
+                    state === "all"
+                      ? !selectedStateSelection().length
+                      : selectedStateSelection().includes(state)
+                  )
+                    ? { icon: "check" as const }
+                    : {}),
                   // The selection survives: it stays while the task is listed, and the inspector keeps
                   // its content otherwise.
                   onSelect: () =>
-                    save({
-                      state,
-                      history: state !== "open",
-                      anchorTaskID: undefined,
-                    }),
+                    state === "all" ? saveStateSelection([]) : toggleStateSelection(state),
                 })),
               ])}
             />
@@ -1893,9 +1965,9 @@ function TaskPanel(
                           ? ""
                           : prefs().search
                             ? "No matching tasks."
-                            : stateFilter() === "all"
+                            : selectedStateSelection().length === 0
                               ? "No tasks in this view."
-                              : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
+                              : `No ${stateFilterDescription().toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
                       </div>
                     }
                   >
@@ -1903,7 +1975,7 @@ function TaskPanel(
                       class="lazers-tasks-tree"
                       role="tree"
                       data-panel-dimmed={status.dimmed()}
-                      aria-label={`${stateLabel(stateFilter())} tasks`}
+                      aria-label={`${stateFilterDescription()} tasks`}
                       style={{ height: `${virtualizer.getTotalSize()}px` }}
                       ref={(element) => {
                         tree = element

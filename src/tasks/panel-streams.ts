@@ -24,7 +24,9 @@ import {
   type TaskScope,
   type TaskStateFilter,
 } from "../streams/sources/tasks-ref.ts"
-import { bucketsFor } from "./schedule/key.ts"
+import { bucketsFor, bucketsForSelection } from "./schedule/key.ts"
+import type { TaskStateSelection } from "./state-filter.ts"
+import { normalizeTaskStateSelection } from "./state-selection.ts"
 import { BUCKETS } from "./schedule/buckets.ts"
 import { childRowOf, listRowOf, priorityOfRow, type ExecutionListRow } from "./task-row.ts"
 import { spliceItems, type VirtualItem } from "./virtual-rows.ts"
@@ -76,6 +78,7 @@ export type TaskListInput = {
   scope: TaskScope
   search: Accessor<string>
   state: Accessor<TaskStateFilter>
+  states?: Accessor<readonly TaskStateSelection[] | undefined>
   /** Rows that fit in view; the window follows it and never shrinks. */
   fit: Accessor<number>
   expanded: Accessor<ReadonlySet<string>>
@@ -90,6 +93,14 @@ export function createTaskList(input: TaskListInput) {
   // reopen the stream.
   const search = createMemo(input.search)
   const state = createMemo(input.state)
+  const states = createMemo(
+    () => {
+      const selected = input.states?.()
+      return selected === undefined ? undefined : normalizeTaskStateSelection(selected)
+    },
+    undefined,
+    { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) },
+  )
   const windowSize = createMemo<number>((previous) =>
     Math.max(previous ?? 0, windowFor(input.fit())),
   )
@@ -100,7 +111,7 @@ export function createTaskList(input: TaskListInput) {
   const schedule = createStream(input.transport, taskScheduleRef, () => {
     const filter = {
       ...filterBase,
-      state: state(),
+      ...(states() === undefined ? { state: state() } : { states: states() }),
       ...(search() ? { search: search() } : {}),
     }
     const now = JSON.stringify(filter)
@@ -204,6 +215,16 @@ export function createTaskList(input: TaskListInput) {
     const buckets = bucketsFor(chip) ?? BUCKETS
     return buckets.reduce((sum, bucket) => sum + (byBucket.get(bucket) ?? 0), 0)
   }
+  const selectionCount = (): number | undefined => {
+    if (search() || !counts.loaded()) return undefined
+    const byBucket = new Map(
+      counts.items().map((raw) => [String(readerOf(raw)("bucket")), Number(readerOf(raw)("n"))]),
+    )
+    return (bucketsForSelection(states(), state()) ?? BUCKETS).reduce(
+      (sum, bucket) => sum + (byBucket.get(bucket) ?? 0),
+      0,
+    )
+  }
 
   const index = createStream(input.transport, taskIndexRef, () => ({
     filter: { project: input.project, scope: input.scope },
@@ -239,6 +260,7 @@ export function createTaskList(input: TaskListInput) {
     items,
     rows,
     chipCount,
+    selectionCount,
     indexed,
     schedule,
     /** Every frame of the list has arrived at least once. */
@@ -258,7 +280,7 @@ export function createTaskList(input: TaskListInput) {
     reveal: (taskID: string, bucket: string) => {
       if (rows().some(({ row }) => row.taskID === taskID)) return
       if (search()) return
-      const buckets = bucketsFor(state())
+      const buckets = bucketsForSelection(states(), state())
       if (buckets && !(buckets as readonly string[]).includes(bucket)) return
       schedule.seek({ key: [taskID], place: "center" })
     },

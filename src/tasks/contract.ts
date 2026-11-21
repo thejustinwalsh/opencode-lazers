@@ -11,7 +11,7 @@ import {
 import { TaskDispositionRecord } from "../task-disposition.ts"
 import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
-import { TaskStateFilter } from "./state-filter.ts"
+import { TaskStateFilter, TaskStateSelection } from "./state-filter.ts"
 import { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
 import { ProjectRef } from "../projects/scope.ts"
 
@@ -23,11 +23,15 @@ const QueryFields = {
   limit: z.int().min(1).max(100).default(30),
   cursor: z.string().min(1).max(2_048).optional(),
   state: TaskStateFilter.optional(),
+  states: z.array(TaskStateSelection).max(10).optional(),
   includeCompleted: z.boolean().default(false),
   includeRetired: z.boolean().default(false),
 }
 /** The query an agent tool offers: this project, optionally one session. Never all projects. */
-export const AgentQueryInput = z.strictObject(QueryFields)
+export const AgentQueryInput = z.strictObject(QueryFields).superRefine((input, ctx) => {
+  if (input.states !== undefined && input.state !== undefined)
+    ctx.addIssue({ code: "custom", path: ["states"], message: "Choose state or states, not both" })
+})
 const GetFields = {
   taskID: z.union([z.uuid(), TaskReferenceSchema]),
   revision: z.int().positive().optional(),

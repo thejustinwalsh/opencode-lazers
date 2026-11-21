@@ -160,3 +160,44 @@ test("a process with no schedule owner indexes the project before answering", as
   const page = await queryTaskPage(f.repository, { limit: 10 })
   expect(page.tasks.map((task) => task.taskID)).toEqual([id])
 })
+
+test("explicit state unions deduplicate counts and pages and bind continuation to the normalized query", async () => {
+  const { f } = await project()
+  const expected = await queryTaskPage(f.repository, { state: "open", limit: 100 })
+  const ids: string[] = []
+  let cursor: string | undefined
+  const followed = new Set<string>()
+  for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
+    const page = await queryTaskPage(f.repository, {
+      states: ["running", "open"],
+      limit: 2,
+      ...(cursor ? { cursor } : {}),
+    })
+    expect(page.count).toBe(expected.count)
+    ids.push(...page.tasks.map((task) => task.taskID))
+    if (!page.nextCursor) break
+    expect(followed.has(page.nextCursor)).toBe(false)
+    followed.add(page.nextCursor)
+    cursor = page.nextCursor
+    const equivalent = await queryTaskPage(f.repository, {
+      states: ["open", "running"],
+      limit: 2,
+      cursor,
+    })
+    expect(equivalent.count).toBe(expected.count)
+  }
+  expect(new Set(ids).size).toBe(ids.length)
+  expect(ids).toEqual(expected.tasks.map((task) => task.taskID))
+  expect(cursor).toBeDefined()
+  await expect(queryTaskPage(f.repository, { states: ["running"], cursor })).rejects.toThrow(
+    "does not match",
+  )
+  await expect(queryTaskPage(f.repository, { state: "all", cursor })).rejects.toThrow(
+    "does not match",
+  )
+  await expect(queryTaskPage(f.repository, { state: "open", states: [] })).rejects.toThrow()
+  const all = await queryTaskPage(f.repository, { state: "all", limit: 100 })
+  const explicitAll = await queryTaskPage(f.repository, { states: [], limit: 100 })
+  expect(explicitAll.tasks.map((task) => task.taskID)).toEqual(all.tasks.map((task) => task.taskID))
+  expect(explicitAll.count).toBe(all.count)
+})

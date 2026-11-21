@@ -124,3 +124,19 @@ export function bucketsFor(state: string | undefined): readonly Bucket[] | undef
       return [state as Bucket]
   }
 }
+
+/** Explicit sets union projection buckets once; an empty set is unrestricted All. */
+export function bucketsForSelection(
+  states: readonly string[] | undefined,
+  state?: string,
+): readonly Bucket[] | undefined {
+  if (states === undefined) return bucketsFor(state)
+  if (!states.length) return undefined
+  const selected = new Set<Bucket>()
+  for (const item of states) {
+    const buckets = bucketsFor(item)
+    if (!buckets) return undefined
+    for (const bucket of buckets) selected.add(bucket)
+  }
+  return [...selected].sort()
+}
