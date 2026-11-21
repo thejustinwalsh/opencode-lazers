@@ -1,3 +1,4 @@
+import { coalescedDrain, leaseFold, type QueueEntry } from "../core/async-fold.ts"
 import { joinNativeEvents } from "../core/event-hub.ts"
 import { LruMap, SESSION_MEMO_ENTRIES } from "../core/process-shared.ts"
 import { parkQueueEntry, QueueRetryTimer } from "../core/queue-retry.ts"
@@ -122,8 +123,7 @@ export type HostSessionFoldOptions = {
 
 export class HostSessionFold {
   private closed = false
-  private again = false
-  private draining: Promise<void> | undefined
+  private readonly loop: ReturnType<typeof coalescedDrain>
   private resyncing: Promise<void> | undefined
   private resyncAgain = false
   private readonly retry: QueueRetryTimer
@@ -153,6 +153,13 @@ export class HostSessionFold {
     this.now = options.now ?? Date.now
     this.retry = new QueueRetryTimer(repository, HOST_SESSION_QUEUE, this.range, this.now, () => {
       void this.drain()
+    })
+    this.loop = coalescedDrain({
+      closed: () => this.closed,
+      due: () => this.due(),
+      read: (entry) => this.readOne(entry),
+      schedule: () => this.retry.schedule(),
+      onError: options.onError,
     })
   }
 
@@ -191,7 +198,7 @@ export class HostSessionFold {
 
   /** True when the fold holds no timer and runs nothing. */
   idle(): boolean {
-    return !this.retry.pending && !this.draining && !this.resyncing
+    return !this.retry.pending && !this.loop.running() && !this.resyncing
   }
 
   /**
@@ -270,37 +277,14 @@ export class HostSessionFold {
 
   /** Read every due queued session of this project; coalesces concurrent calls. */
   drain(): Promise<void> {
-    if (this.closed) return Promise.resolve()
-    this.again = true
-    this.draining ??= (async () => {
-      while (this.again && !this.closed) {
-        this.again = false
-        try {
-          for (;;) {
-            const batch = this.due()
-            if (!batch.length || this.closed) break
-            for (const entry of batch) {
-              if (this.closed) break
-              await this.readOne(entry.ref, entry.attempts)
-            }
-          }
-        } catch (error) {
-          // The database is busy or failing: the work stays queued for the next change or retry.
-          this.options.onError?.(error)
-        }
-        if (!this.closed) this.retry.schedule()
-      }
-    })().finally(() => {
-      this.draining = undefined
-    })
-    return this.draining
+    return this.loop.drain()
   }
 
-  private due() {
+  private due(): QueueEntry[] {
     const [low, high] = this.range
     return this.repository.read((db) =>
       db
-        .query<{ ref: string; attempts: number }, [string, string, number, number]>(
+        .query<QueueEntry, [string, string, number, number]>(
           `SELECT ref,attempts FROM ${HOST_SESSION_QUEUE}
            WHERE ref>=? AND ref<? AND next_at<=? ORDER BY next_at,ref LIMIT ?`,
         )
@@ -308,7 +292,7 @@ export class HostSessionFold {
     )
   }
 
-  private async readOne(ref: string, attempts: number) {
+  private async readOne({ ref, attempts }: QueueEntry) {
     const sessionID = ref.slice(this.range[0].length)
     const started = this.now()
     const seq = this.hintSeq
@@ -355,7 +339,7 @@ export class HostSessionFold {
 
   /** Resync and drain until nothing is due: for tests and tools that must wait. */
   async settle(): Promise<void> {
-    while (!this.closed && (this.resyncing || this.draining || this.due().length)) {
+    while (!this.closed && (this.resyncing || this.loop.running() || this.due().length)) {
       await this.resyncing
       await this.drain()
     }
@@ -372,16 +356,7 @@ type EventContext = Parameters<typeof joinNativeEvents>[0]
 
 export type HostSessionFoldLease = { readonly fold: HostSessionFold; release(): void }
 
-type Held = {
-  fold: HostSessionFold
-  repository: TaskRepository
-  seed: ProjectionLease
-  leave?: () => void
-  refs: number
-}
 const registryKey = Symbol.for("lazers.host-session-fold.v1")
-const host = globalThis as typeof globalThis & { [registryKey]?: Map<string, Held> }
-const held = () => (host[registryKey] ??= new Map())
 
 /**
  * The one fold of `projectDirectory` over the database at `path` in this process, started on the
@@ -395,9 +370,7 @@ export function startHostSessionFold(
   source: HostSessionSource,
   options: HostSessionFoldOptions & { events?: EventContext; location?: string } = {},
 ): HostSessionFoldLease {
-  const id = JSON.stringify([path, projectDirectory])
-  let entry = held().get(id)
-  if (!entry) {
+  return leaseFold(registryKey, JSON.stringify([path, projectDirectory]), () => {
     const repository = new TaskRepository(path, projectDirectory)
     const fold = new HostSessionFold(repository, projectID, source, options)
     let seed: ProjectionLease | undefined
@@ -412,33 +385,26 @@ export function startHostSessionFold(
       repository.close()
       throw error
     }
-    entry = { fold, repository, seed, refs: 0 }
-    if (options.events)
-      entry.leave = joinNativeEvents(
-        options.events,
-        HOST_SESSION_EVENT_TYPES,
-        {
-          attached: () => void fold.resync(),
-          event: (event) => fold.hint(event),
-        },
-        options.location,
-      )
-    held().set(id, entry)
-  }
-  entry.refs++
-  const taken = entry
-  let released = false
-  return {
-    fold: taken.fold,
-    release() {
-      if (released) return
-      released = true
-      if (--taken.refs > 0) return
-      held().delete(id)
-      taken.leave?.()
-      taken.seed.release()
-      taken.fold.close()
-      taken.repository.close()
-    },
-  }
+    const leave = options.events
+      ? joinNativeEvents(
+          options.events,
+          HOST_SESSION_EVENT_TYPES,
+          {
+            attached: () => void fold.resync(),
+            event: (event) => fold.hint(event),
+          },
+          options.location,
+        )
+      : undefined
+    const taken = seed
+    return {
+      fold,
+      stop() {
+        leave?.()
+        taken.release()
+        fold.close()
+        repository.close()
+      },
+    }
+  })
 }
