@@ -14,7 +14,8 @@ import { findSource, streamColumns } from "../streams/source.ts"
 import { readTaskDetail, type TaskDetailQuery, type WindowRead } from "./detail-read.ts"
 import { GetOutput, type TaskDetail } from "./contract.ts"
 import { startProjection } from "../projections/owner.ts"
-import { taskEventsProjection } from "../events/task-events-refresh.ts"
+import { TASK_EVENTS, taskEventsProjection } from "../events/task-events-refresh.ts"
+import { projectionStatus } from "../projections/lifecycle.ts"
 import { bucketsFor } from "./schedule/key.ts"
 import { BUCKETS } from "./schedule/buckets.ts"
 import { AgentQueryInput, type TaskSummary } from "./contract.ts"
@@ -145,8 +146,8 @@ async function waitsOf(pool: StreamPool, project: string, taskID: string, count:
  * A fresh process has no schedule owner yet: index the project here, a page per write
  * transaction, so a tool never answers that tasks which exist are missing.
  */
-function ensureScheduleIndexed(
-  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomic">,
+async function ensureScheduleIndexed(
+  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomicAsync">,
 ) {
   const ready = () =>
     repository.read(
@@ -157,11 +158,19 @@ function ensureScheduleIndexed(
           )
           .get(repository.projectDirectory)?.ready === 1,
     )
+  // `atomicAsync` waits out another process's write lock instead of failing the tool.
   while (!ready())
-    repository.atomic((db) => {
+    await repository.atomicAsync((db) => {
       backfillPage(db, repository.projectDirectory)
     })
 }
+
+const busy = (error: unknown) =>
+  String((error as { code?: unknown } | null)?.code ?? "").startsWith("SQLITE_BUSY") ||
+  /database is locked/.test(String(error))
+
+/** How long a tool waits out another writer while the task events fold; a unit, not a cap. */
+const FOLD_WAIT_MS = 30_000
 
 /**
  * `lz-get-task`: one task's detail from the stored rows, every transition payload included. The
@@ -178,13 +187,29 @@ export async function getTaskDetail(
     Boolean(db.query("SELECT 1 FROM sqlite_master WHERE name='task_schedule_state'").get()),
   )
   if (!installed) new RunnerStore(repository)
-  ensureScheduleIndexed(repository)
-  const events = startProjection(repository.path, repository.projectDirectory, taskEventsProjection)
-  try {
-    await events.owner.settle()
-  } finally {
-    events.release()
-  }
+  await ensureScheduleIndexed(repository)
+  // Folded already (the core's owner, or writes drained in their own transaction): read now.
+  const folded = repository.read((db) => projectionStatus(db, TASK_EVENTS)?.state === "ready")
+  // Another process's write lock is waited out: starting the owner and its pages write.
+  if (!folded)
+    for (const started = Date.now(); ;) {
+      try {
+        const events = startProjection(
+          repository.path,
+          repository.projectDirectory,
+          taskEventsProjection,
+        )
+        try {
+          await events.owner.settle()
+        } finally {
+          events.release()
+        }
+        break
+      } catch (error) {
+        if (!busy(error) || Date.now() - started > FOLD_WAIT_MS) throw error
+        await Bun.sleep(25)
+      }
+    }
   const lease = acquireReaderPool(repository.path)
   try {
     return GetOutput.parse(
@@ -200,11 +225,11 @@ export async function getTaskDetail(
 }
 
 export async function queryTaskPage(
-  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomic">,
+  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomicAsync">,
   input: unknown,
 ): Promise<TaskToolPage> {
   const query = AgentQueryInput.parse(input)
-  ensureScheduleIndexed(repository)
+  await ensureScheduleIndexed(repository)
   const lease = acquireReaderPool(repository.path)
   try {
     const stream = openStream(lease.pool, taskScheduleSource, {
