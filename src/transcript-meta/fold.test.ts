@@ -369,3 +369,117 @@ test("an attempt's state change queues its session; the seed queues every worker
     fixture.close()
   }
 })
+
+/** A host session row as the host session fold writes it (the columns the fold reads). */
+function hostSession(
+  fixture: Fixture,
+  sessionID: string,
+  options: { archived?: boolean; updated: number; busy?: boolean },
+) {
+  fixture.repository.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO host_session_state(project_directory,session_id,role,busy,pending_input,
+           pending_permissions,pending_forms,archived,updated_at,host_updated_at)
+         VALUES(?,?,'architect',?,0,0,0,?,?,?)`,
+      )
+      .run(
+        fixture.directory,
+        sessionID,
+        Number(options.busy ?? false),
+        Number(options.archived ?? false),
+        options.updated,
+        options.updated,
+      ),
+  )
+}
+
+test("sessions no plan holds: a shown host session is queued, hinted and read newest first", async () => {
+  const fixture = makeFixture()
+  try {
+    const transcripts = new Map([
+      ["ses-architect-old", transcript(4, "o")],
+      ["ses-architect-new", transcript(4, "n")],
+      ["ses-architect-archived", transcript(4, "a")],
+    ])
+    const host = fakeClient(transcripts)
+    ensureTranscriptMetaSchema(fixture.repository)
+    // The host session fold writes rows; each unarchived insert queues its session.
+    hostSession(fixture, "ses-architect-old", { updated: 1_000 })
+    hostSession(fixture, "ses-architect-new", { updated: 9_000 })
+    hostSession(fixture, "ses-architect-archived", { updated: 5_000, archived: true })
+    const folding = new TranscriptMetaFold(fixture.repository, host.client, { spacingMs: 0 })
+    folding.start()
+    await folding.settle()
+    expect(host.calls.map((call) => call.sessionID)).toEqual([
+      "ses-architect-new",
+      "ses-architect-old",
+    ])
+    expect(steps(fixture, "ses-architect-new")).toHaveLength(2)
+
+    // A step event of a shown session reads it; of an archived one outside the window, nothing.
+    host.calls.length = 0
+    const event = (sessionID: string) => ({
+      type: "session.step.ended",
+      created: Date.now() + 1_000,
+      data: { sessionID },
+    })
+    folding.hint(event("ses-architect-old"))
+    folding.hint(event("ses-architect-archived"))
+    await folding.settle()
+    expect(host.calls.map((call) => call.sessionID)).toEqual(["ses-architect-old"])
+
+    // With a retention age, an archived session updated within it is shown: the seed queues it.
+    fixture.repository.atomic((db) => {
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS retention_settings(id INTEGER PRIMARY KEY, auto_days INTEGER, updated_at INTEGER)",
+      )
+      db.query("INSERT INTO retention_settings(id,auto_days,updated_at) VALUES(1,7,0)").run()
+      db.query("UPDATE host_session_state SET host_updated_at=? WHERE session_id=?").run(
+        Date.now(),
+        "ses-architect-archived",
+      )
+    })
+    const seed = startProjection(
+      fixture.repository.path,
+      fixture.directory,
+      transcriptMetaSeedProjection,
+      { scope: fixture.directory },
+    )
+    await seed.owner.settle()
+    seed.release()
+    host.calls.length = 0
+    await folding.settle()
+    expect(host.calls.map((call) => call.sessionID)).toContain("ses-architect-archived")
+    folding.close()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("a cursor the host refuses is read again from the start; the rows stay", async () => {
+  const fixture = makeFixture()
+  try {
+    const transcripts = new Map([["ses-accepted", transcript(60)]])
+    const host = fakeClient(transcripts)
+    const folding = fold(fixture, host.client)
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(steps(fixture, "ses-accepted")).toHaveLength(30)
+    let refused = false
+    host.failWith(() => {
+      if (refused) return undefined
+      refused = true
+      return { _tag: "InvalidCursorError", message: "Unknown cursor" }
+    })
+    host.calls.length = 0
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(host.calls.map((call) => call.cursor ?? null)).toEqual(["c:50", null, "c:50"])
+    expect(steps(fixture, "ses-accepted")).toHaveLength(30)
+    expect(folding.idle()).toBe(true)
+    folding.close()
+  } finally {
+    fixture.close()
+  }
+})
