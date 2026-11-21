@@ -394,7 +394,7 @@ export class Dispatch {
         workspace,
         base,
         JSON.stringify(policy),
-        Date.now(),
+        this.core.now(),
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
       return "admitted" as const

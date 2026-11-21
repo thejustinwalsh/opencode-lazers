@@ -11,6 +11,7 @@ import {
   drive,
   fixture,
   prepareIdleArchitect,
+  queueArchitectNotice,
   runPlan,
   useRuntimeFixtureCleanup,
 } from "./runtime.fixture.ts"
@@ -44,6 +45,8 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(owner.archived).toBe(false)
 
   owner.idleAt = now - DEFAULT_ARCHITECT_CACHE_WINDOW_MS
+  // The warm owner already received the first notice; renewal waits for new news.
+  queueArchitectNotice(f)
   const peer = new TaskRuntime(f.store, f.host, "project", undefined, {
     autoResumeInterrupted: false,
     architectPromptHook: true,
@@ -128,7 +131,11 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
     null,
     "ARCHITECT_RENEWAL_COMMITTED",
   )!
-  expect(committed.wakeContext.bytes).toBe(new TextEncoder().encode(wake.text).byteLength)
+  // The notice that triggered the renewal rides in the same wake as the handoff.
+  expect(new TextEncoder().encode(wake.text).byteLength).toBeGreaterThan(
+    committed.wakeContext.bytes,
+  )
+  expect(wake.text).toContain("Awaiting Architect judgement")
   expect(committed.wakeContext.tokens).toBeNull()
   expect(committed.wakeContext.bytes).toBeGreaterThan(0)
 })
@@ -190,6 +197,93 @@ test("a cold Architect with a large context is renewed exactly once", async () =
   expect(renewal.state).toBe("committed")
   expect(owner.archived).toBe(true)
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+})
+
+// Live: an idle Architect lineage renewed about five times an hour for a day (130 committed
+// renewals), each successor cold and over the reuse threshold five minutes after its handoff.
+test("an idle, cold, large Architect with nothing new to deliver is never renewed", async () => {
+  const now = 2_000_000_320_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4, false)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 60_000
+  const notified = f.notifications.length
+  for (let tick = 0; tick < 24; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
+  expect(f.events.filter((event) => event.startsWith("update-session:"))).toHaveLength(0)
+  expect(f.notifications).toHaveLength(notified)
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)).toBeFalsy()
+  expect(owner.archived).toBe(false)
+})
+
+test("a new notice for a cold, large Architect renews once; the idle successor is left alone", async () => {
+  const now = 2_000_000_330_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4, false)
+  f.sessions.get("owner")!.contextTokens = 60_000
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
+
+  queueArchitectNotice(f)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+  const successor = f.sessions.get(renewal.successor_session_id)!
+  expect(f.inbox.get(successor.id)).toHaveLength(1)
+
+  // The successor handled its handoff and went idle over the threshold, as live successors do.
+  successor.busy = false
+  successor.idleAt = now - DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4
+  successor.contextTokens = 60_000
+  for (let tick = 0; tick < 24; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(successor.id)
+})
+
+test("ownership-only version bumps do not re-send the closeout reminder for one accepted artifact", async () => {
+  const now = 2_000_000_340_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 0, false)
+  const artifact = f.store.attempts(f.receipt.planID)[0]!.base_commit
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='accepted',reason=NULL,artifact=? WHERE id=?")
+      .run(artifact, f.receipt.planID),
+  )
+  const reminders = () =>
+    f.store.atomic((db) =>
+      db
+        .query<{ id: string }, [string]>(
+          "SELECT id FROM runner_outbox WHERE plan_id=? AND json_extract(payload,'$.closeoutReminder')=1",
+        )
+        .all(f.receipt.planID),
+    )
+  await f.runtime.tick()
+  expect(reminders()).toHaveLength(1)
+  // Each renewal transfer bumps the plan version without changing what the reminder says.
+  for (let renewal = 0; renewal < 5; renewal++) {
+    f.store.atomic((db) =>
+      db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(f.receipt.planID),
+    )
+    await f.runtime.tick()
+  }
+  expect(reminders()).toHaveLength(1)
+  expect(f.store.closeoutReviewPlanIDs()).not.toContain(f.receipt.planID)
 })
 
 // Live LZ-200 (renewal b298778b): the predecessor ran gpt-6.1-sol/high, the shared Architect
@@ -285,6 +379,7 @@ test("idle-window overrides, busy sessions, unsupported hooks, and pre-create in
   await overridden.runtime.tick()
   expect(overridden.events.filter((event) => event.startsWith("create-architect:")).length).toBe(0)
   overridden.sessions.get("owner")!.idleAt = now - 5_000
+  queueArchitectNotice(overridden)
   await overridden.runtime.tick()
   expect(overridden.store.architectRenewalForPlan(overridden.receipt.planID)?.state).toBe(
     "committed",
@@ -342,6 +437,7 @@ test("Architect renewal waits for native questions and permissions to clear", as
   expect(owner.archived).toBe(false)
 
   owner.pendingPermissions = 0
+  queueArchitectNotice(f)
   await f.runtime.tick()
   expect(f.store.architectRenewalForPlan(f.receipt.planID)?.state).toBe("committed")
 })
@@ -435,6 +531,7 @@ test("one successor receives every live plan owned by the same Architect", async
       )
       .run(),
   )
+  queueArchitectNotice(f)
 
   await f.runtime.tick()
 
@@ -884,6 +981,7 @@ test("generated renewal notifications are authenticated and do not form A-to-B-t
 
   middle.idleAt = now - 1_000
   middle.tokens = null
+  queueArchitectNotice(f)
   await f.runtime.tick()
   const second = f.store.architectRenewalForSource(middle.id)!
 
@@ -1502,6 +1600,7 @@ test("a continuity checkpoint cannot outlive a later observed user input", async
     unresolvedQuestions: [],
   })
   expect(f.store.architectContinuityCoverage(owner.id)).toContain("msg_new_user_decision")
+  queueArchitectNotice(f)
   await f.runtime.tick()
 
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!

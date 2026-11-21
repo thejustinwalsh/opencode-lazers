@@ -40,11 +40,9 @@ export type PlanStepDeps = {
   cancelCheckActivities: CheckActivities["cancelCheckActivities"]
   reconcileCancelledCheckActivities: CheckActivities["reconcileCancelledCheckActivities"]
   recoverCancelledRetainedChecks: CheckActivities["recoverCancelledRetainedChecks"]
-  retainedCheckSettlementProblem: CheckActivities["retainedCheckSettlementProblem"]
   cancelReservedAttempt: Cancellation["cancelReservedAttempt"]
   cancelWorkers: Cancellation["cancelWorkers"]
   command: TaskRuntime["command"]
-  considerArchitectRenewal: ArchitectRenewal["considerArchitectRenewal"]
   continueArchitectRenewal: ArchitectRenewal["continueArchitectRenewal"]
   dispatch: Dispatch["dispatch"]
   integratedPrerequisiteBaseline: Dispatch["integratedPrerequisiteBaseline"]
@@ -82,11 +80,9 @@ export class PlanStep {
   private readonly cancelCheckActivities: PlanStepDeps["cancelCheckActivities"]
   private readonly reconcileCancelledCheckActivities: PlanStepDeps["reconcileCancelledCheckActivities"]
   private readonly recoverCancelledRetainedChecks: PlanStepDeps["recoverCancelledRetainedChecks"]
-  private readonly retainedCheckSettlementProblem: PlanStepDeps["retainedCheckSettlementProblem"]
   private readonly cancelReservedAttempt: PlanStepDeps["cancelReservedAttempt"]
   private readonly cancelWorkers: PlanStepDeps["cancelWorkers"]
   private readonly command: PlanStepDeps["command"]
-  private readonly considerArchitectRenewal: PlanStepDeps["considerArchitectRenewal"]
   private readonly continueArchitectRenewal: PlanStepDeps["continueArchitectRenewal"]
   private readonly dispatch: PlanStepDeps["dispatch"]
   private readonly integratedPrerequisiteBaseline: PlanStepDeps["integratedPrerequisiteBaseline"]
@@ -121,11 +117,9 @@ export class PlanStep {
     this.reconcileCancelledCheckActivities = (...args) =>
       deps.reconcileCancelledCheckActivities(...args)
     this.recoverCancelledRetainedChecks = (...args) => deps.recoverCancelledRetainedChecks(...args)
-    this.retainedCheckSettlementProblem = (...args) => deps.retainedCheckSettlementProblem(...args)
     this.cancelReservedAttempt = (...args) => deps.cancelReservedAttempt(...args)
     this.cancelWorkers = (...args) => deps.cancelWorkers(...args)
     this.command = (...args) => deps.command(...args)
-    this.considerArchitectRenewal = (...args) => deps.considerArchitectRenewal(...args)
     this.continueArchitectRenewal = (...args) => deps.continueArchitectRenewal(...args)
     this.dispatch = (...args) => deps.dispatch(...args)
     this.integratedPrerequisiteBaseline = (...args) => deps.integratedPrerequisiteBaseline(...args)
@@ -297,19 +291,14 @@ export class PlanStep {
         await this.timed("step:recoverCancelledRetainedChecks", () =>
           this.recoverCancelledRetainedChecks(operation.id),
         )
-      const retainedProblem = this.store.atomic((db) =>
-        retainedVerificationsForPlan(db, this.directory, plan!.id).some(
-          (operation) =>
-            operation.state === "cancelled" &&
-            Boolean(this.retainedCheckSettlementProblem(operation.id)),
-        ),
-      )
-      const unsettled = activities.find((activity) => checkSettlementProblem(activity))
-      if (unsettled || retainedProblem) {
-        // Process uncertainty fences terminal settlement, not interruption of
-        // other owned workers. Continue cancellation without declaring idle.
+      // Only a check process still running fences terminal settlement. A finished check whose
+      // receipt or subprocess cleanup is uncertain keeps its resources as durable
+      // cleanup-pending rows for the terminal cleanup retry; it no longer holds the plan.
+      const running = activities.find((activity) => activity.state === "running")
+      if (running) {
+        // Continue cancellation of other owned workers without declaring idle.
         await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence, false))
-        const reason = `Verification cancellation settlement is uncertain: ${unsettled ? checkSettlementProblem(unsettled) : "retained check resources remain unconfirmed"}`
+        const reason = `Verification cancellation settlement is uncertain: ${checkSettlementProblem(running)}`
         this.store.fenced(this.owner, fence, (db) => {
           if (this.store.plan(plan!.id)?.reason === reason) return
           db.query("UPDATE runner_plans SET reason=? WHERE id=? AND state='cancelling'").run(
@@ -375,16 +364,6 @@ export class PlanStep {
           this.continueArchitectRenewal(renewal, fence),
         )
         return
-      }
-      // Only work that needs judgement routes; a cold, large Architect is replaced.
-      if (["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) {
-        this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-        if (
-          await this.timed("step:considerArchitectRenewal", () =>
-            this.considerArchitectRenewal(plan!, owner, fence),
-          )
-        )
-          return
       }
     }
     // An owner read can overlap an authorized resume, cancellation, or reassignment.

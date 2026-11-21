@@ -82,12 +82,10 @@ test("a missing owner is replaced by a fresh Architect and the routing reason is
   await runPlan(f)
   f.sessions.get("owner")!.archived = true
   await drive(f.runtime, 2)
-  const routed = f.store.latestTransition<{ reason: string; action: string }>(
-    planID,
-    null,
-    "ARCHITECT_ROUTED",
-  )
-  expect(routed).toMatchObject({ reason: "missing", action: "fresh" })
+  const routed = (f.store.detail(planID).activity as { event: string; payload: string }[])
+    .filter((row) => row.event === "ARCHITECT_ROUTED")
+    .map((row) => JSON.parse(row.payload) as { reason: string; action: string })
+  expect(routed).toContainEqual(expect.objectContaining({ reason: "missing", action: "fresh" }))
   expect(f.store.plan(planID)!.owner).not.toBe("owner")
 })
 
@@ -415,9 +413,11 @@ test("an interrupted worker resumes without an Architect command", async () => {
   worker.outcome = "interrupted"
   worker.turn = { inputID: attempt.message_id, state: "interrupted" }
   await f.runtime.tick()
+  expect(transitions(f, planID, "WORKER_AUTO_RESUME_ATTEMPTED")).toHaveLength(1)
   expect(f.store.latestTransition(planID, attempt.task_id, "WORKER_AUTO_RESUMED")).toMatchObject({
     attemptID: attempt.id,
   })
+  expect(transitions(f, planID, "WORKER_AUTO_RESUME_REFUSED")).toHaveLength(0)
   // The same worker continues; the plan is not left waiting for an explicit command.
   expect(f.store.plan(planID)!.state).toBe("running")
   expect(f.store.attempts(planID)[0]).toMatchObject({
@@ -426,6 +426,53 @@ test("an interrupted worker resumes without an Architect command", async () => {
   })
   await f.runtime.tick()
   expect(f.store.attempts(planID)[0]!.state).toBe("running")
+})
+
+// Live LZ-216: three "resumed" rows were recorded while every resume command was refused and the
+// error was lost. A refused resume says so, carries the host's reason to the hold, and stays bounded.
+test("a refused automatic resume is recorded as refused with its reason, never as resumed", async () => {
+  const f = fixture({
+    autoResume: true,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "interrupted"
+  // The shape the pre-fix adapter reported: an interrupted outcome over a "completed" turn.
+  worker.turn = { inputID: attempt.message_id, state: "completed" }
+  for (let tick = 0; tick < 8; tick++) await f.runtime.tick()
+  expect(transitions(f, planID, "WORKER_AUTO_RESUMED")).toHaveLength(0)
+  expect(transitions(f, planID, "WORKER_AUTO_RESUME_ATTEMPTED")).toHaveLength(3)
+  const refused = transitions(f, planID, "WORKER_AUTO_RESUME_REFUSED").map(
+    (row) => JSON.parse(row.payload) as { attemptID: string; error: string },
+  )
+  expect(refused).toHaveLength(3)
+  expect(refused[0]).toMatchObject({
+    attemptID: attempt.id,
+    error: "Terminal worker outcome does not match the current assigned input lineage",
+  })
+  const plan = f.store.plan(planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toBe(
+    "Worker execution was interrupted; automatic resume was refused: Terminal worker outcome does not match the current assigned input lineage",
+  )
+  // Past the bound the hold is stable: no new resume, no re-hold per tick.
+  const holds = transitions(f, planID, "BLOCKED").length
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(transitions(f, planID, "BLOCKED")).toHaveLength(holds)
+  expect(transitions(f, planID, "WORKER_AUTO_RESUME_ATTEMPTED")).toHaveLength(3)
+  // The Architect's notice carries the same reason.
+  expect(
+    f.store
+      .outboxForDelivery()
+      .concat(f.notifications.map((n) => ({ payload: n.text }) as never))
+      .some((row: { payload: string }) => row.payload.includes("automatic resume was refused")),
+  ).toBe(true)
 })
 
 test("a worker that went idle without answering its input fails the attempt instead of holding", async () => {
