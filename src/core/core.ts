@@ -5,6 +5,7 @@ import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { startHostSessionFold } from "../host-sessions/fold.ts"
 import { startTaskEffortFold } from "../trajectory/effort-store.ts"
+import { workerTaskEffort } from "../trajectory/effort-worker-client.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
 import {
   ensureProjectOverviewSchema,
@@ -24,7 +25,11 @@ import { Session } from "@opencode/schema/session"
 import { UsageCache } from "../budget/server.ts"
 import { ProjectIndex } from "../context/index.ts"
 import { nativeContextPermission } from "../context/tools.ts"
-import { createModelsTaskValuationProvider } from "../models/server.ts"
+import {
+  configuredAccess,
+  createModelsTaskValuationProvider,
+  createPriceSourceSettingsStore,
+} from "../models/server.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { nativeRadarSessionHost } from "../observability/native.ts"
 import { historyCacheBytes } from "../trajectory/history.ts"
@@ -285,12 +290,25 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     },
   )
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
-  // Each task's effort and market valuation, recomputed when its facts or the prices change.
+  // Each task's effort and market valuation, recomputed off the main thread (the effort worker)
+  // when its facts or the prices change; only the price-source settings are read here.
+  const priceSourceSettings = createPriceSourceSettingsStore(host, repository.projectDirectory)
+  const effortCompute = workerTaskEffort({
+    path: repository.path,
+    projectDirectory: info.projectDirectory,
+    projectID,
+    readPriceInputs: async (signal) => {
+      const [policy, openrouter] = await Promise.all([
+        priceSourceSettings.read(signal),
+        configuredAccess(host, "openrouter", signal),
+      ])
+      return { policy, openrouter }
+    },
+  })
   const taskEffort = startTaskEffortFold(
     repository.path,
     info.projectDirectory,
-    projectID,
-    taskValuationProvider,
+    effortCompute.compute,
     {
       onError: (error) =>
         void Effect.runPromise(
@@ -396,6 +414,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     nativeCallLease.release()
     hostSessions.release()
     taskEffort.release()
+    effortCompute.release()
     overviewLease.release()
     presence.release()
     scheduleLease.release()

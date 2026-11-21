@@ -4,15 +4,13 @@ import { parkQueueEntry, QueueRetryTimer } from "../core/queue-retry.ts"
 import { databaseChanges } from "../database-events.ts"
 import { schemaModules } from "../database-schema.ts"
 import { ensureHostSessionStateSchema } from "../host-sessions/state.ts"
-import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import { ensureProjectionStateSchema, resetProjectionState } from "../projections/lifecycle.ts"
 import { startProjection, type ProjectionLease, type ProjectionSpec } from "../projections/owner.ts"
 import { queueRef, queueRefs, queueTableSQL } from "../projections/queue.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
-import type { TrajectorySession } from "./native.ts"
-import { inspectTaskEffort, type TaskEffort } from "./read.ts"
-import { openReadOnlyTrajectoryStore } from "./store.ts"
+import type { EffortRow, TaskEffortCompute } from "./effort-compute.ts"
+import type { TaskEffort } from "./read.ts"
 
 /**
  * `trajectory_task_effort`: each task's effort, stored so a panel or tool reads one row instead of
@@ -29,7 +27,9 @@ import { openReadOnlyTrajectoryStore } from "./store.ts"
  *        ─► projectTaskEffortBasis + taskValuationProvider (await) ─► compare, then write the row
  * ```
  *
- * The row is the composition the trajectory report makes (`composeTaskEffort` in `read.ts`), over
+ * The read and the composition run off the main thread (`effort-compute.ts`, in the effort
+ * worker); this thread claims an entry and writes the computed row. The row is the composition
+ * the trajectory report makes (`composeTaskEffort` in `read.ts`), over
  * stored facts only: usage per unique worker session (the host session fold's five-category
  * snapshot first, else the retained cumulative snapshot, else the additive steps), routes, and the
  * market valuation of the same request by the configured ordered price sources. No message text
@@ -61,7 +61,7 @@ const TABLES_SQL = `
     uncached_input INTEGER, output INTEGER, reasoning INTEGER, cache_read INTEGER, cache_write INTEGER,
     sessions INTEGER NOT NULL, known_sessions INTEGER NOT NULL,
     market_value TEXT, market_status TEXT, price_index TEXT,
-    effort TEXT NOT NULL,
+    effort TEXT NOT NULL, effort_key TEXT NOT NULL,
     refreshed_at INTEGER NOT NULL,
     UNIQUE(project_directory, task_id)
   );
@@ -243,76 +243,6 @@ export const taskEffortSeedProjection: ProjectionSpec = {
   ],
 }
 
-/** The stored columns of `host_session_state` the effort reads. */
-type EffortSessionRow = {
-  session_id: string
-  parent_session_id: string | null
-  route_provider: string | null
-  route_model: string | null
-  route_variant: string | null
-  outcome: string | null
-  busy: number
-  tokens_in: number | null
-  tokens_out: number | null
-  tokens_reasoning: number | null
-  tokens_cache_read: number | null
-  tokens_cache_write: number | null
-  created_at: number | null
-  host_updated_at: number
-}
-
-const OUTCOMES = new Set(["succeeded", "failed", "interrupted"])
-
-/**
- * A stored session as the trajectory host's status read returns it: model, outcome, busy, stamp
- * and the cumulative token snapshot, with no transcript (`not-read`). The host keeps no busy or
- * idle endpoint here; the effort reads neither.
- */
-function trajectorySessionOf(row: EffortSessionRow, projectID: string): TrajectorySession {
-  const tokens = [
-    row.tokens_in,
-    row.tokens_out,
-    row.tokens_reasoning,
-    row.tokens_cache_read,
-    row.tokens_cache_write,
-  ]
-  return {
-    id: row.session_id,
-    projectID,
-    parentID: row.parent_session_id,
-    model:
-      row.route_provider && row.route_model
-        ? {
-            providerID: row.route_provider,
-            id: row.route_model,
-            ...(row.route_variant ? { variant: row.route_variant } : {}),
-          }
-        : null,
-    outcome:
-      row.outcome && OUTCOMES.has(row.outcome)
-        ? (row.outcome as NonNullable<TrajectorySession["outcome"]>)
-        : null,
-    busy: row.busy === 1,
-    time: { created: row.created_at ?? 0, updated: row.host_updated_at, busy: null, idle: null },
-    tokens: tokens.every((value) => value === null)
-      ? null
-      : {
-          input: row.tokens_in!,
-          output: row.tokens_out!,
-          reasoning: row.tokens_reasoning!,
-          cache: { read: row.tokens_cache_read!, write: row.tokens_cache_write! },
-        },
-    messages: null,
-    messageStatus: "not-read",
-    messageError: null,
-  }
-}
-
-const SESSION_COLUMNS =
-  "session_id,parent_session_id,route_provider,route_model,route_variant,outcome,busy," +
-  "tokens_in,tokens_out,tokens_reasoning,tokens_cache_read,tokens_cache_write,created_at," +
-  "host_updated_at"
-
 export type StoredTaskEffort = {
   busy: boolean
   effort: TaskEffort
@@ -340,42 +270,6 @@ export function readTaskEffort(
     : undefined
 }
 
-type EffortColumns = {
-  busy: number
-  uncached_input: number | null
-  output: number | null
-  reasoning: number | null
-  cache_read: number | null
-  cache_write: number | null
-  sessions: number
-  known_sessions: number
-  market_value: string | null
-  market_status: string | null
-  price_index: string | null
-  effort: string
-}
-
-function effortColumns(busy: boolean, effort: TaskEffort): EffortColumns {
-  const measured = effort.tokenUsage.measuredSubtotal
-  const market = effort.marketEquivalentCost
-  return {
-    busy: Number(busy),
-    uncached_input: measured.uncachedInput,
-    output: measured.output,
-    reasoning: measured.reasoning,
-    cache_read: measured.cacheRead,
-    cache_write: measured.cacheWrite,
-    sessions: effort.tokenUsage.totalSessions,
-    known_sessions: effort.tokenUsage.knownSessions,
-    // A missing price is NULL, never a zero: the panel omits it.
-    market_value:
-      market?.valueUSD === null || market?.valueUSD === undefined ? null : String(market.valueUSD),
-    market_status: market?.status ?? null,
-    price_index: market?.currentIndex?.indexID ?? null,
-    effort: JSON.stringify(effort),
-  }
-}
-
 const COLUMNS = [
   "busy",
   "uncached_input",
@@ -389,7 +283,10 @@ const COLUMNS = [
   "market_status",
   "price_index",
   "effort",
-] as const satisfies readonly (keyof EffortColumns)[]
+  "effort_key",
+] as const satisfies readonly (keyof EffortRow)[]
+/** What a write compares: every column but the effort text, whose identity `effort_key` is. */
+const COMPARED = COLUMNS.filter((column) => column !== "effort")
 
 type TaskEffortWrite = "written" | "unchanged" | "deleted" | "absent"
 
@@ -398,15 +295,15 @@ function writeTaskEffort(
   db: Database,
   project: string,
   taskID: string,
-  result: { busy: boolean; effort: TaskEffort } | undefined,
+  row: EffortRow | undefined,
   now = Date.now(),
 ): TaskEffortWrite {
   const stored = db
-    .query<EffortColumns, [string, string]>(
-      `SELECT ${COLUMNS.join(",")} FROM trajectory_task_effort WHERE project_directory=? AND task_id=?`,
+    .query<Omit<EffortRow, "effort">, [string, string]>(
+      `SELECT ${COMPARED.join(",")} FROM trajectory_task_effort WHERE project_directory=? AND task_id=?`,
     )
     .get(project, taskID)
-  if (!result) {
+  if (!row) {
     if (!stored) return "absent"
     db.query("DELETE FROM trajectory_task_effort WHERE project_directory=? AND task_id=?").run(
       project,
@@ -414,8 +311,7 @@ function writeTaskEffort(
     )
     return "deleted"
   }
-  const row = effortColumns(result.busy, result.effort)
-  if (stored && COLUMNS.every((column) => stored[column] === row[column])) return "unchanged"
+  if (stored && COMPARED.every((column) => stored[column] === row[column])) return "unchanged"
   db.query(
     `INSERT INTO trajectory_task_effort(project_directory,task_id,${COLUMNS.join(",")},refreshed_at)
      VALUES(?,?,${COLUMNS.map(() => "?").join(",")},?)
@@ -444,8 +340,8 @@ const REPRICE_ROWS = 500
  * and the price sources, so refreshes of a busy task are spaced by this much (entries wait, none
  * is dropped). Measured in `effort-store.test.ts` ("refresh cost"): a task of 3,619 progress
  * rows, the largest live attempt, refreshes in a median 86 ms (173 ms on a loaded machine), so at
- * this spacing a running task costs at most about 6% of one core while it runs and nothing once
- * it stops.
+ * this spacing a running task keeps the effort worker about 6% busy while it runs and nothing
+ * once it stops; the main thread spends only the claim and the write.
  */
 const EFFORT_REFRESH_SPACING_MS = 3_000
 
@@ -468,13 +364,19 @@ export class TaskEffortFold {
   private readonly spacingMs: number
   /** When each task was last refreshed: the spacing of a busy task's refreshes. */
   private readonly refreshedAt = new LruMap<string, number>(SESSION_MEMO_ENTRIES)
-  /** Refreshes and provider calls made: a measurement for tests and diagnostics. */
-  readonly counts = { refreshes: 0, written: 0, reprices: 0 }
+  /**
+   * Refreshes, writes and reprices made, and the longest single main-thread step of a refresh
+   * (its claim or its compare-and-write), in milliseconds: measurements for tests and diagnostics.
+   */
+  readonly counts = { refreshes: 0, written: 0, reprices: 0, longestMainMs: 0 }
+
+  private mainMs(ms: number) {
+    if (ms > this.counts.longestMainMs) this.counts.longestMainMs = ms
+  }
 
   constructor(
     private readonly repository: TaskRepository,
-    private readonly projectID: string,
-    private readonly provider: TaskValuationProvider,
+    private readonly compute: TaskEffortCompute,
     private readonly options: TaskEffortFoldOptions = {},
   ) {
     const project = repository.projectDirectory
@@ -616,46 +518,30 @@ export class TaskEffortFold {
       )
       return
     }
+    const claimStarted = performance.now()
     const claimed = this.repository.atomic(
       (db) =>
         db.query(`UPDATE ${TASK_EFFORT_QUEUE} SET next_at=-1 WHERE ref=? AND next_at>=0`).run(ref)
           .changes > 0,
     )
+    this.mainMs(performance.now() - claimStarted)
     if (!claimed) return
     this.refreshedAt.set(taskID, this.now())
     try {
       this.counts.refreshes++
-      const connection = openReadOnlyTrajectoryStore(this.repository.path, this.project)
-      let result: Awaited<ReturnType<typeof inspectTaskEffort>>
-      try {
-        const session = connection.store.repository.read((db) =>
-          db.query<EffortSessionRow, [string, string]>(
-            `SELECT ${SESSION_COLUMNS} FROM host_session_state
-             WHERE project_directory=? AND session_id=?`,
-          ),
-        )
-        result = await inspectTaskEffort(
-          connection.store,
-          this.projectID,
-          taskID,
-          (sessionID) => {
-            const row = connection.store.repository.read(() => session.get(this.project, sessionID))
-            return row ? trajectorySessionOf(row, this.projectID) : null
-          },
-          { taskValuationProvider: this.provider, signal: this.controller.signal },
-        )
-      } finally {
-        connection.close()
-      }
+      // The read and the composition run in the effort worker; this thread only claims and writes.
+      const row = await this.compute(taskID, this.controller.signal)
       if (this.closed) return
+      const started = performance.now()
       await this.repository.retryBusy(() =>
         this.repository.atomic((db) => {
-          if (writeTaskEffort(db, this.project, taskID, result, this.now()) === "written")
+          if (writeTaskEffort(db, this.project, taskID, row, this.now()) === "written")
             this.counts.written++
           // A write during the computation reset the claim: leave the entry for the next pass.
           db.query(`DELETE FROM ${TASK_EFFORT_QUEUE} WHERE ref=? AND next_at=-1`).run(ref)
         }),
       )
+      this.mainMs(performance.now() - started)
     } catch (error) {
       if (this.closed) return
       this.options.onError?.(error)
@@ -706,15 +592,14 @@ const held = () => (host[registryKey] ??= new Map())
 export function startTaskEffortFold(
   path: string,
   projectDirectory: string,
-  projectID: string,
-  provider: TaskValuationProvider,
+  compute: TaskEffortCompute,
   options: TaskEffortFoldOptions = {},
 ): TaskEffortFoldLease {
   const id = JSON.stringify([path, projectDirectory])
   let entry = held().get(id)
   if (!entry) {
     const repository = new TaskRepository(path, projectDirectory)
-    const fold = new TaskEffortFold(repository, projectID, provider, options)
+    const fold = new TaskEffortFold(repository, compute, options)
     let seed: ProjectionLease | undefined
     try {
       fold.start()

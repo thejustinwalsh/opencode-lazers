@@ -23,6 +23,7 @@ import {
   TaskEffortFold,
   taskEffortSeedProjection,
 } from "./effort-store.ts"
+import { computeTaskEffort } from "./effort-compute.ts"
 import type { TrajectoryHost, TrajectorySession } from "./native.ts"
 import { inspectTrajectory } from "./read.ts"
 
@@ -107,6 +108,11 @@ function statusHost(fixture: Fixture, missing: readonly string[] = []): Trajecto
   }
 }
 
+/** The fold's computation on this thread, valued by `provider`. */
+const inThread =
+  (fixture: Fixture, provider: TaskValuationProvider) => (task: string, signal: AbortSignal) =>
+    computeTaskEffort(fixture.repository.path, fixture.directory, "project", task, provider, signal)
+
 async function oracle(
   fixture: Fixture,
   provider: TaskValuationProvider,
@@ -123,7 +129,7 @@ async function oracle(
 }
 
 async function storedEffort(fixture: Fixture, provider: TaskValuationProvider) {
-  const fold = new TaskEffortFold(fixture.repository, "project", provider, { spacingMs: 0 })
+  const fold = new TaskEffortFold(fixture.repository, inThread(fixture, provider), { spacingMs: 0 })
   fold.start()
   try {
     fold.touch(taskID)
@@ -216,7 +222,9 @@ test("a price change reprices the stored effort; usage is unchanged", async () =
     for (const session of fixture.sessions.values())
       session.model = { providerID: "openai", id: "gpt-6-luna", variant: "max" }
     storeSessions(fixture)
-    const fold = new TaskEffortFold(fixture.repository, "project", provider, { spacingMs: 0 })
+    const fold = new TaskEffortFold(fixture.repository, inThread(fixture, provider), {
+      spacingMs: 0,
+    })
     fold.start()
     try {
       fold.touch(taskID)
@@ -266,8 +274,10 @@ test("a price write re-queues every stored task", async () => {
     storeSessions(fixture)
     const fold = new TaskEffortFold(
       fixture.repository,
-      "project",
-      pricedProvider(() => 1),
+      inThread(
+        fixture,
+        pricedProvider(() => 1),
+      ),
       {
         spacingMs: 0,
       },
@@ -337,7 +347,9 @@ test("a write during the computation is computed again; a failure parks and reco
     for (const session of fixture.sessions.values())
       session.model = { providerID: "openai", id: "gpt-6-luna", variant: "max" }
     storeSessions(fixture)
-    const fold = new TaskEffortFold(fixture.repository, "project", provider, { spacingMs: 0 })
+    const fold = new TaskEffortFold(fixture.repository, inThread(fixture, provider), {
+      spacingMs: 0,
+    })
     fold.start()
     try {
       fold.touch(taskID)
@@ -399,8 +411,10 @@ test("triggers queue a task's inputs and never a plan-level transition", async (
   try {
     const fold = new TaskEffortFold(
       fixture.repository,
-      "project",
-      pricedProvider(() => 1),
+      inThread(
+        fixture,
+        pricedProvider(() => 1),
+      ),
       {
         spacingMs: 0,
       },
@@ -478,8 +492,10 @@ test("a deleted task's row is deleted", async () => {
     storeSessions(fixture)
     const fold = new TaskEffortFold(
       fixture.repository,
-      "project",
-      pricedProvider(() => 1),
+      inThread(
+        fixture,
+        pricedProvider(() => 1),
+      ),
       {
         spacingMs: 0,
       },
@@ -561,7 +577,9 @@ test("refresh cost: a task with 3,619 progress rows (the largest live attempt)",
       }
     })
     const provider = lz137ValuationProvider({ withStrictOpenCodePrice: true })
-    const fold = new TaskEffortFold(fixture.repository, "project", provider, { spacingMs: 0 })
+    const fold = new TaskEffortFold(fixture.repository, inThread(fixture, provider), {
+      spacingMs: 0,
+    })
     fold.start()
     try {
       fold.touch(taskID)
@@ -593,8 +611,10 @@ test("the seed queues every planned task of the project once; the fold computes 
     storeSessions(fixture)
     const fold = new TaskEffortFold(
       fixture.repository,
-      "project",
-      pricedProvider(() => 1),
+      inThread(
+        fixture,
+        pricedProvider(() => 1),
+      ),
       {
         spacingMs: 0,
       },
