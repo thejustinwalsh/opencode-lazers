@@ -98,9 +98,14 @@ export class ProjectionOwner {
       this.unsubscribe = databaseChanges.subscribeTables(this.repository.path, (tables) => {
         if (tables.has(queue.table)) void this.drain()
       })
-    const state = this.repository.atomic((db) =>
-      openProjectionState(db, this.spec.name, this.spec.generation, this.scope),
-    )
+    // Read first: a current state row (the load's prepare step opened it) takes no write lock.
+    const current = this.repository.read((db) => projectionStatus(db, this.spec.name, this.scope))
+    const state =
+      current && current.generation >= this.spec.generation
+        ? current
+        : this.repository.atomic((db) =>
+            openProjectionState(db, this.spec.name, this.spec.generation, this.scope),
+          )
     if (state.state === "backfilling" && state.generation === this.spec.generation)
       this.scheduleBackfill(this.pacing.startMs)
     void this.drain()

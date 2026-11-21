@@ -92,18 +92,35 @@ const hasTable = (db: Database, name: string) =>
   Boolean(db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
 
 /** Create the triggers on every source table that exists now; safe to run again. */
-function installProjectOverviewTriggers(db: Database) {
-  if (!hasTable(db, "project_overview")) return
-  for (const trigger of TRIGGERS) {
-    if (!hasTable(db, trigger.on)) continue
-    for (const [suffix, event, rows] of EVENTS)
-      db.exec(
-        `DROP TRIGGER IF EXISTS ${triggerName(trigger.on, suffix)};
-         CREATE TRIGGER ${triggerName(trigger.on, suffix)} AFTER ${event} ON ${trigger.on} BEGIN
+/** Each trigger the existing source tables need, with the SQL that creates it. */
+function overviewTriggers(db: Database) {
+  if (!hasTable(db, "project_overview")) return []
+  return TRIGGERS.filter((trigger) => hasTable(db, trigger.on)).flatMap((trigger) =>
+    EVENTS.map(([suffix, event, rows]) => ({
+      name: triggerName(trigger.on, suffix),
+      sql: `CREATE TRIGGER ${triggerName(trigger.on, suffix)} AFTER ${event} ON ${trigger.on} BEGIN
            ${rows.map(trigger.body).join("\n")}
-         END;`,
+         END`,
+    })),
+  )
+}
+
+/** The triggers missing or stale (a source table created after the module): none on a current database. */
+function staleOverviewTriggers(db: Database) {
+  const stored = new Map(
+    db
+      .query<{ name: string; sql: string }, []>(
+        "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'project_overview_%'",
       )
-  }
+      .all()
+      .map((row) => [row.name, row.sql]),
+  )
+  return overviewTriggers(db).filter((trigger) => stored.get(trigger.name) !== trigger.sql)
+}
+
+function installProjectOverviewTriggers(db: Database) {
+  for (const trigger of staleOverviewTriggers(db))
+    db.exec(`DROP TRIGGER IF EXISTS ${trigger.name}; ${trigger.sql};`)
 }
 
 function installProjectOverviewSchema(db: Database) {
@@ -118,16 +135,18 @@ function installProjectOverviewSchema(db: Database) {
 }
 
 /**
- * Install through the module registry; the triggers are re-created on every call, so a source
- * table created after the module (the runner's contact table in a database that had none) is
- * covered from the next start.
+ * Install through the module registry; a trigger missing or stale is re-created on every call, so
+ * a source table created after the module (the runner's contact table in a database that had
+ * none) is covered from the next start.
  */
 export function ensureProjectOverviewSchema(repository: TaskRepository) {
   ensureProjectionStateSchema(repository)
   repository.installSchema("project-overview", MODULE.generation, MODULE.tables, (db) =>
     installProjectOverviewSchema(db),
   )
-  repository.atomic((db) => installProjectOverviewTriggers(db))
+  // Read first: a current database has every trigger, and its load takes no write lock.
+  if (repository.read((db) => staleOverviewTriggers(db).length > 0))
+    repository.atomic((db) => installProjectOverviewTriggers(db))
   registerProjectionDrain(PROJECT_OVERVIEW, QUEUE, (db) => void drainOverview(db))
   repository.read((db) => enrollProjectionConnection(db, PROJECT_OVERVIEW))
 }
@@ -254,11 +273,12 @@ function queueEverything(db: Database) {
  */
 export function setProjectOverviewDefaults(repository: TaskRepository, next: ProjectsDefaults) {
   if (JSON.stringify(host[defaultsKey]) === JSON.stringify(next)) return
-  host[defaultsKey] = next
   repository.atomic((db) => {
     queueEverything(db)
     drainOverview(db)
   })
+  // Recorded once written: a busy database leaves the next call to write them.
+  host[defaultsKey] = next
 }
 
 /**

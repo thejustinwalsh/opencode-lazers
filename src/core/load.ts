@@ -11,6 +11,35 @@ import { TaskRepository, taskDatabasePath, waitForWriteLock } from "../storage.t
 import { acquireLazersCore } from "./core.ts"
 import type { LazersCoreHandle, LazersCoreInfo } from "./core.ts"
 import type { Plugin } from "@opencode/plugin/effect"
+import { taskEventsProjection } from "../events/task-events-refresh.ts"
+import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
+import { ensureModelCandidatesSchema } from "../models/candidate-store.ts"
+import { ensureModelAssignmentViewSchema } from "../models/assignment-view.ts"
+import {
+  ensureProjectOverviewSchema,
+  projectOverviewProjection,
+  projectsDefaultsOf,
+  setProjectOverviewDefaults,
+} from "../projects/overview-store.ts"
+import { acquirePresence } from "../projects/presence.ts"
+import { ensureProjectionStateSchema, openProjectionState } from "../projections/lifecycle.ts"
+import type { ProjectionSpec } from "../projections/owner.ts"
+import { hostSessionSeedProjection } from "../host-sessions/state.ts"
+import { transcriptMetaSeedProjection } from "../transcript-meta/schema.ts"
+import { ensureTaskEffortSchema, taskEffortSeedProjection } from "../trajectory/effort-store.ts"
+
+/** The database-wide projections the core starts; their state rows are opened here, under the wait. */
+const LOAD_PROJECTIONS: readonly ProjectionSpec[] = [
+  taskEventsProjection,
+  nativeCallDisplayProjection,
+  projectOverviewProjection,
+]
+/** The per-project seeds of the folds the core starts (host sessions, transcripts, effort). */
+const LOAD_PROJECT_SEEDS: readonly ProjectionSpec[] = [
+  hostSessionSeedProjection,
+  transcriptMetaSeedProjection,
+  taskEffortSeedProjection,
+]
 
 /**
  * Take the schema installs and upgrades that core construction would run, waiting for the write
@@ -21,7 +50,7 @@ import type { Plugin } from "@opencode/plugin/effect"
  * once the core holds its own, so construction runs no write on a current database.
  */
 export function prepareDatabase(
-  info: Pick<LazersCoreInfo, "dataDirectory" | "projectDirectory" | "projectID">,
+  info: Pick<LazersCoreInfo, "dataDirectory" | "projectDirectory" | "projectID" | "options">,
   options: { deadlineMs?: number } = {},
 ) {
   const path = taskDatabasePath(info.dataDirectory)
@@ -37,7 +66,29 @@ export function prepareDatabase(
       new ManagedUsageStore(repository)
       new HandoffStore(repository)
       new RepositorySnapshotStore(join(dirname(path), "context", "repositories"), repository)
-      return repository
+      // The panel stores the core installs and the projections it starts.
+      ensureModelCandidatesSchema(repository)
+      ensureModelAssignmentViewSchema(repository)
+      ensureProjectOverviewSchema(repository)
+      // Host session state, transcript metadata and task effort, with their triggers.
+      ensureTaskEffortSchema(repository)
+      ensureProjectionStateSchema(repository)
+      repository.atomic((db) => {
+        for (const spec of LOAD_PROJECTIONS) openProjectionState(db, spec.name, spec.generation)
+        for (const spec of LOAD_PROJECT_SEEDS)
+          openProjectionState(db, spec.name, spec.generation, info.projectDirectory)
+      })
+      // Process-wide records the core would write: this service's settings defaults and the
+      // project's presence. The core's own acquire then only counts a held presence.
+      setProjectOverviewDefaults(repository, projectsDefaultsOf(info.options))
+      const presence = acquirePresence(repository, info.projectDirectory)
+      return {
+        repository,
+        close() {
+          presence.release()
+          repository.close()
+        },
+      }
     } catch (error) {
       repository.close()
       throw error

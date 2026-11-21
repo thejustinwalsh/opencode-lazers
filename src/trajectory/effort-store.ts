@@ -461,12 +461,18 @@ export class TaskEffortFold {
   start(): void {
     ensureTaskEffortSchema(this.repository)
     const [low, high] = this.range
-    // A claim held when the process stopped is due again.
-    this.repository.atomic((db) =>
+    // A claim held when the process stopped is due again; with none held the start writes nothing.
+    const claimed = this.repository.read((db) =>
       db
-        .query(`UPDATE ${TASK_EFFORT_QUEUE} SET next_at=0 WHERE ref>=? AND ref<? AND next_at<0`)
-        .run(low, high),
+        .query(`SELECT 1 FROM ${TASK_EFFORT_QUEUE} WHERE ref>=? AND ref<? AND next_at<0 LIMIT 1`)
+        .get(low, high),
     )
+    if (claimed)
+      this.repository.atomic((db) =>
+        db
+          .query(`UPDATE ${TASK_EFFORT_QUEUE} SET next_at=0 WHERE ref>=? AND ref<? AND next_at<0`)
+          .run(low, high),
+      )
     this.unsubscribe = databaseChanges.subscribeTables(this.repository.path, (tables) => {
       if (PRICE_TABLES.some((table) => tables.has(table))) void this.reprice()
       if (tables.has(TASK_EFFORT_QUEUE)) void this.drain()

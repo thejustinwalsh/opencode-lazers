@@ -29,7 +29,6 @@ export function acquirePresence(
   const state = held()
   const id = JSON.stringify([repository.path, directory])
   const count = state.refs.get(id) ?? 0
-  state.refs.set(id, count + 1)
   if (count === 0)
     repository.atomic((db) => {
       if (!state.cleared.has(repository.path)) {
@@ -42,6 +41,8 @@ export function acquirePresence(
            loaded_at=excluded.loaded_at`,
       ).run(directory, canonicalPath(directory), state.instance, Date.now())
     })
+  // Counted once recorded: a busy database leaves the next acquire to write the row.
+  state.refs.set(id, count + 1)
   let released = false
   return {
     release() {
