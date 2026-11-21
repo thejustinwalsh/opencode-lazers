@@ -169,6 +169,37 @@ export type CandidateChanges = {
   publicCatalog: string
 }
 
+/** A build without its rows: what the last page of a paged build carries. */
+export type CandidateFinish = Omit<CandidateChanges, "changed">
+
+/**
+ * Detail bytes per page of changed rows: a unit of work, not a ceiling (every row is delivered).
+ * One message is received, decoded and written in one main-thread step, and the step grows with
+ * the bytes. Measured on a seeded fixture of the live counts (1,466 candidates, 6.2 MB of detail,
+ * about 4.2 KB each): one message of all rows is a single receive of the whole set (49 ms live);
+ * 250-row transactions (about 1 MB) took up to 22 ms to write; 256 KB pages (about 60 rows) cut
+ * the receive and the write of one step to a few milliseconds each.
+ */
+export const CANDIDATE_PAGE_BYTES = 256 * 1024
+
+/** Split changed rows into pages of about CANDIDATE_PAGE_BYTES of detail; every row is in a page. */
+export function pageCandidateRows(rows: readonly CandidateRow[]): CandidateRow[][] {
+  const pages: CandidateRow[][] = []
+  let page: CandidateRow[] = []
+  let bytes = 0
+  for (const row of rows) {
+    page.push(row)
+    bytes += row.values[11].length
+    if (bytes >= CANDIDATE_PAGE_BYTES) {
+      pages.push(page)
+      page = []
+      bytes = 0
+    }
+  }
+  if (page.length > 0) pages.push(page)
+  return pages
+}
+
 /** The project's snapshot set, from refresh rows and snapshot metadata only (no body). */
 function candidateSnapshotSet(db: Database, projectDirectory: string) {
   const stamps = readComparisonSourcesFrom(db, projectDirectory, undefined, { stampOnly: true })
@@ -259,7 +290,7 @@ export function writeCandidatePage(
 export function finishCandidateBuild(
   db: Database,
   projectDirectory: string,
-  changes: CandidateChanges,
+  changes: CandidateFinish,
 ) {
   const deleted = db
     .query(

@@ -14,7 +14,8 @@ import {
   MODEL_CANDIDATES_GENERATION,
   MODEL_CANDIDATES_QUEUE,
   writeCandidatePage,
-  type CandidateChanges,
+  type CandidateFinish,
+  type CandidateRow,
 } from "./candidate-store.ts"
 
 /**
@@ -25,8 +26,10 @@ import {
  * ```
  * saveSnapshot ─trigger─► model_candidates_dirty(project) ─► (next turn) build(project)
  * build: worker.candidates(project) ─┬─ null (stored set is the latest) ─► dequeue
- *                                    └─ changed rows ─► CANDIDATE_PAGE_ROWS per transaction
- *                                                      ─► finish: deletions, set stamp, dequeue
+ *                                    └─ pages of changed rows (CANDIDATE_PAGE_BYTES), each written in
+ *                                       its own transaction as its message arrives
+ *                                    └─ last message ─► finish: deletions, set stamp, dequeue
+ * a build that fails or is closed part way stamps nothing; the next build recompares digests
  * a refresh during the build ─► the set moved again ─► one more pass
  * failure ─► the entry stays queued with its error and a backoff; a timer retries it
  * ```
@@ -35,14 +38,13 @@ import {
  * build is written, then `ready`, moved only through the `projection` lifecycle.
  */
 type CandidateWorker = {
-  candidates(projectDirectory: string, signal?: AbortSignal): Promise<CandidateChanges | null>
+  candidates(
+    projectDirectory: string,
+    onPage: (rows: CandidateRow[]) => void,
+    signal?: AbortSignal,
+  ): Promise<CandidateFinish | null>
 }
 
-/**
- * Changed rows per write transaction: a unit of work, not a ceiling. Measured on a seeded fixture of
- * the live counts (1,466 candidates): see `.agents/plans/panel-streams.md`, Task 8.
- */
-const CANDIDATE_PAGE_ROWS = 250
 const BACKOFF_FIRST_MS = 1_000
 const BACKOFF_CEILING_MS = 5 * 60_000
 
@@ -129,8 +131,6 @@ export class CandidateBuilds {
   private async buildOnce(projectDirectory: string): Promise<boolean> {
     const db = this.connection().db
     try {
-      const changes = await this.worker.candidates(projectDirectory)
-      if (this.closed) return false
       const write: CandidateWrite = { transactions: 0, rows: 0, ms: [] }
       const run = <T>(work: () => T): T => {
         const started = performance.now()
@@ -139,12 +139,12 @@ export class CandidateBuilds {
         write.transactions++
         return result
       }
+      const changes = await this.worker.candidates(projectDirectory, (page) => {
+        if (!this.closed) write.rows += run(() => writeCandidatePage(db, projectDirectory, page))
+      })
+      if (this.closed) return false
       let current = true
       if (changes) {
-        for (let at = 0; at < changes.changed.length; at += CANDIDATE_PAGE_ROWS) {
-          const page = changes.changed.slice(at, at + CANDIDATE_PAGE_ROWS)
-          write.rows += run(() => writeCandidatePage(db, projectDirectory, page))
-        }
         current = run(() => {
           const finished = finishCandidateBuild(db, projectDirectory, changes)
           this.ready(projectDirectory)

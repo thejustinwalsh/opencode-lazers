@@ -7,7 +7,7 @@ import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { readDecisionPriceState, readPriceIdentity } from "./price-state.ts"
 import type { PriceInputs } from "./price-state.ts"
 import type { WorkerRequest, WorkerResponse } from "./decision-worker-protocol.ts"
-import { computeCandidateChanges } from "./candidate-store.ts"
+import { computeCandidateChanges, pageCandidateRows } from "./candidate-store.ts"
 import {
   buildDecisionView,
   decisionViewIdentity,
@@ -227,11 +227,15 @@ const run = async (id: number, projectDirectory: string, method: string, input: 
     const options = { signal: controller.signal }
     if (method === "candidates") {
       // The candidate build: the five bodies are parsed here, never on the main thread.
-      send({
-        type: "result",
-        id,
-        value: computeCandidateChanges(readonlyDatabase(), projectDirectory),
-      })
+      // Posted in pages so no main-thread step receives, decodes and writes the whole set.
+      const changes = computeCandidateChanges(readonlyDatabase(), projectDirectory)
+      if (!changes) {
+        send({ type: "result", id, value: null })
+        return
+      }
+      const { changed, ...finish } = changes
+      for (const rows of pageCandidateRows(changed)) send({ type: "page", id, rows })
+      send({ type: "result", id, value: finish })
       return
     }
     if (method === "view") {

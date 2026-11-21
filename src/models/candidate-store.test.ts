@@ -8,10 +8,13 @@ import type { StreamContext } from "../streams/source.ts"
 import { modelCandidatesSource } from "../streams/sources/models.ts"
 import type { ModelCandidatesFilter } from "../streams/sources/models-ref.ts"
 import { acquireSharedConnection, TaskRepository } from "../storage.ts"
-import { evidenceSnapshot, seedEvidenceCorpus } from "./candidate.fixture.ts"
+import { evidenceSnapshot, nativeRecord, seedEvidenceCorpus } from "./candidate.fixture.ts"
 import {
+  CANDIDATE_PAGE_BYTES,
   computeCandidateChanges,
   ensureModelCandidatesSchema,
+  pageCandidateRows,
+  type CandidateRow,
   MODEL_CANDIDATES_QUEUE,
   refreshModelCandidates,
 } from "./candidate-store.ts"
@@ -238,19 +241,132 @@ test("a saved snapshot queues its project; the worker builds it and the main thr
   expect(builds.writes.size).toBe(0)
 })
 
+/** The worker's side of a candidate build, in process: pages through `onPage`, then the rest. */
+function inProcessBuild(
+  path: string,
+  projectDirectory: string,
+  onPage: (rows: CandidateRow[]) => void,
+  stopAfter = Infinity,
+) {
+  const shared = acquireSharedConnection(path, "readonly")
+  try {
+    const changes = computeCandidateChanges(shared.db, projectDirectory)
+    if (!changes) return null
+    const { changed, ...finish } = changes
+    let sent = 0
+    for (const rows of pageCandidateRows(changed)) {
+      if (sent++ >= stopAfter) throw new Error("worker gone mid-build")
+      onPage(rows)
+    }
+    return finish
+  } finally {
+    shared.release()
+  }
+}
+
+/** Native routes whose candidates carry about `bytes` of detail each. */
+function largeNativeRecords(count: number, bytes: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    ...nativeRecord({ providerID: `p${i % 7}`, id: `m${i}`, variants: null, price: 1 }),
+    capabilities: {
+      tools: true,
+      input: Array.from({ length: Math.ceil(bytes / 500) }, (_, k) => `t${k}${"x".repeat(480)}`),
+      output: ["text"],
+    },
+  }))
+}
+
+test("a large build arrives in pages; the stored rows equal the one-shot build; an unchanged rebuild writes nothing", async () => {
+  const { path, repository, writer } = setup()
+  const generations = writer.beginRefresh(["native-catalog"])
+  const records = largeNativeRecords(300, 4_000)
+  writer.saveSnapshot(
+    evidenceSnapshot("native-catalog", project, generations["native-catalog"], records),
+  )
+  const whole = repository.read((db) => computeCandidateChanges(db, project))!
+  const bytes = whole.changed.reduce((sum, row) => sum + row.values[11].length, 0)
+  expect(whole.changed.length).toBe(300)
+  expect(bytes).toBeGreaterThan(CANDIDATE_PAGE_BYTES * 3)
+  expect(pageCandidateRows(whole.changed).flat()).toEqual(whole.changed)
+  const worker = createThreadedDecisionWorker({
+    path,
+    readPriceInputs: async () => {
+      throw new Error("a candidate build reads no prices")
+    },
+  })
+  const builds = new CandidateBuilds(path, worker)
+  cleanups.push(() => {
+    builds.close()
+    worker.close()
+  })
+  builds.ensure(project)
+  await builds.settle()
+  const write = builds.writes.get(project)!
+  // The pages plus the finishing transaction.
+  expect(write.transactions).toBeGreaterThan(3)
+  expect(write.rows).toBe(300)
+  expect(
+    storedRows(repository)
+      .map((row) => row.detail)
+      .sort(),
+  ).toEqual(whole.changed.map((row) => row.values[11]).sort())
+  // A moved set with every digest unchanged (the stamp is lost): the rebuild writes no row.
+  repository.atomic((db) => db.query("DELETE FROM model_candidate_sets").run())
+  builds.writes.clear()
+  await builds.build(project)
+  expect(builds.writes.get(project)!.rows).toBe(0)
+  builds.writes.clear()
+  await builds.build(project)
+  expect(builds.writes.size).toBe(0)
+})
+
+test("a build that stops part way stamps no set; the next build finishes it", async () => {
+  const { path, repository } = setup()
+  const writer = new ModelEvidenceStore(path, project)
+  cleanups.push(() => writer.close())
+  const generations = writer.beginRefresh(["native-catalog"])
+  writer.saveSnapshot(
+    evidenceSnapshot(
+      "native-catalog",
+      project,
+      generations["native-catalog"],
+      largeNativeRecords(200, 4_000),
+    ),
+  )
+  let stopAfter = 1
+  const builds = new CandidateBuilds(path, {
+    async candidates(projectDirectory, onPage) {
+      return inProcessBuild(path, projectDirectory, onPage, stopAfter)
+    },
+  })
+  cleanups.push(() => builds.close())
+  builds.ensure(project)
+  await builds.settle()
+  const partial = storedRows(repository).length
+  expect(partial).toBeGreaterThan(0)
+  expect(partial).toBeLessThan(200)
+  expect(repository.read((db) => db.query("SELECT 1 FROM model_candidate_sets").all())).toEqual([])
+  expect(
+    repository.read((db) =>
+      db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${MODEL_CANDIDATES_QUEUE}`).get(),
+    )!.n,
+  ).toBe(1)
+  stopAfter = Infinity
+  await builds.build(project)
+  expect(storedRows(repository)).toHaveLength(200)
+  expect(
+    repository.read((db) => db.query("SELECT 1 FROM model_candidate_sets").all()),
+  ).toHaveLength(1)
+})
+
 test("a failing build stays queued with its error and a backoff, and a later build recovers", async () => {
   const { path, repository, writer } = setup()
   seedEvidenceCorpus(writer, project)
   let fail = true
   const builds = new CandidateBuilds(path, {
-    async candidates(projectDirectory) {
+    async candidates(projectDirectory, onPage) {
       if (fail) throw new Error("worker gone")
-      const shared = acquireSharedConnection(path, "readonly")
-      try {
-        return computeCandidateChanges(shared.db, projectDirectory)
-      } finally {
-        shared.release()
-      }
+      return inProcessBuild(path, projectDirectory, onPage)
     },
   })
   cleanups.push(() => builds.close())

@@ -21,5 +21,6 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { type: "result"; id: number; value: unknown }
+  | { type: "page"; id: number; rows: unknown }
   | { type: "error"; id: number; message: string }
   | { type: "price"; requestID: number; callID: number }
