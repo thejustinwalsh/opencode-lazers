@@ -213,11 +213,11 @@ export default Plugin.define({
         }),
       )
       yield* sectionEffect("setup:TaskReads", () =>
-        registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
+        registerTaskReads(ctx, repository, runtime).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Streams", () =>
         registerStreams(ctx, {
-          databasePath: core.taskReads.repository.path,
+          databasePath: repository.path,
           context: {
             projectID,
             projectDirectory: repository.projectDirectory,

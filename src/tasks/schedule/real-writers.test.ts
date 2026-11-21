@@ -11,7 +11,6 @@ import {
   runPlan,
   useRuntimeFixtureCleanup,
 } from "../../runner/runtime.fixture.ts"
-import { TaskReads } from "../read.ts"
 import { backfillPage } from "./backfill.ts"
 import { expectProjection } from "./parity.fixture.ts"
 import { installTaskScheduleSchema } from "./schema.ts"

@@ -7,6 +7,9 @@ import { outerPauseIn, outerPauseReason } from "../../projects/pause.ts"
 import { canStruggle, readTrajectoryFacts } from "../../recovery/trajectory-facts.ts"
 import { isTakeoverAttempt, openConcerns } from "../../recovery/detector.ts"
 import { TaskSpecSchema } from "../../task.ts"
+import { auditHistoryIn } from "../../audit/history-read.ts"
+import { MAX_EXECUTION_PLAN_WAIT_REFERENCES } from "../../runner/schema.ts"
+import { adviceSnapshotIn } from "../advice.ts"
 import { taskClassificationFor } from "../classification.ts"
 import { taskTitle } from "../presentation.ts"
 import { bucketOf, encodeSortKey, ownerHoldOf, priorityKeyOf, rankOf } from "./key.ts"
@@ -216,14 +219,14 @@ const referenceOf = (db: Database, taskID: string) =>
     .query<{ reference: string }, [string]>("SELECT reference FROM task_references WHERE task_id=?")
     .get(taskID)?.reference
 
-const NODE_PLAN_SQL = `SELECT n.plan_id,n.ordinal,n.state,n.reason,p.rowid AS plan_rowid
+const NODE_PLAN_SQL = `SELECT n.plan_id,n.ordinal,n.state,n.reason,n.version,p.rowid AS plan_rowid
   FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
   WHERE p.project_directory=? AND n.task_id=? ORDER BY p.rowid DESC LIMIT 1`
 
 /**
  * The one task row, its edges, blockers, waits, sessions and scopes. A task with several plans
  * (impossible through the writers, `UNIQUE(task_id, spec_revision)` with revision 1) shows its
- * newest plan by rowid, as `currentActivityTargets` and `tasks.list` did.
+ * newest plan by rowid, as the old current-activity read and `tasks.list` did.
  */
 export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): boolean {
   const record = db
@@ -247,6 +250,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
         ordinal: number
         state: string
         reason: string | null
+        version: number
         plan_rowid: number
       },
       [string, string]
@@ -408,9 +412,12 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   const struggling = placement ? canStruggle(status.status) : false
   const latest = placement
     ? db
-        .query<{ started_at: number; policy: string }, [string, string]>(
-          `SELECT started_at,policy FROM runner_attempts WHERE plan_id=? AND task_id=?
-           ORDER BY number DESC,started_at DESC LIMIT 1`,
+        .query<
+          { id: string; session_id: string; workspace: string; started_at: number; policy: string },
+          [string, string]
+        >(
+          `SELECT id,session_id,workspace,started_at,policy FROM runner_attempts WHERE plan_id=? AND task_id=?
+           ORDER BY number DESC,started_at DESC,id DESC LIMIT 1`,
         )
         .get(placement.plan_id, taskID)
     : undefined
@@ -547,16 +554,19 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   const scopes = [...new Set(task.proposal.writeScope)].map((path) => ({ task_id: taskID, path }))
   replaceChildren(db, "task_schedule_scopes", "task_id", taskID, scopes)
 
-  const searchText = [
-    task.id,
-    reference,
-    task.proposal.objective,
-    task.proposal.writeScope.join("\n"),
-    task.proposal.acceptance.map((item) => item.assertion).join("\n"),
-    task.proposal.context.map((item) => item.reference).join("\n"),
-  ]
+  // The six fields a search matches, as written: the tool shows where a search matched from them.
+  const fields = searchFields(task, reference)
+  const searchText = fields
+    .map((field) => field.text)
     .join("\n")
     .toLowerCase()
+  const searchChanged = replaceChildren(
+    db,
+    "task_schedule_search",
+    "task_id",
+    taskID,
+    fields.map((field, ord) => ({ task_id: taskID, ord, field: field.field, text: field.text })),
+  )
 
   const observation = placement
     ? db
@@ -586,6 +596,30 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     }
   }
 
+  const classification = taskClassificationFor(db, project, task)
+  const advice = adviceSnapshotIn(db, project, task)
+  const audit = auditHistoryIn(db, project, taskID)
+  // What the detail pane's execution shows: the node, its plan and the status the list shows.
+  const execution = placement
+    ? {
+        planID: placement.plan_id,
+        taskID,
+        state: status.status,
+        version: placement.version,
+        reason: status.reason,
+        waitingOn,
+        ...(waits.length
+          ? {
+              waitingOnPlans: waits.slice(0, MAX_EXECUTION_PLAN_WAIT_REFERENCES),
+              waitingOnPlansCount: waits.length,
+              waitingOnPlansComplete: waits.length <= MAX_EXECUTION_PLAN_WAIT_REFERENCES,
+            }
+          : {}),
+        ...(status.dispatchPause ? { dispatchPause: status.dispatchPause } : {}),
+      }
+    : undefined
+  // The rule's recommended action rides on the first open concern, as the worker pane shows it.
+  const advised = open[0]?.advice ?? null
   const row: StoredRow = {
     seq: record.created_version,
     task_id: taskID,
@@ -596,7 +630,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     session_id: task.provenance.sessionID,
     title: taskTitle(task.proposal.objective),
     objective: task.proposal.objective.slice(0, 400),
-    classification: JSON.stringify(taskClassificationFor(db, project, task).current),
+    classification: JSON.stringify(classification.current),
     source_plan: json(task.proposal.sourcePlan),
     search_text: searchText,
     stale: 0,
@@ -665,13 +699,45 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     dependency_count: edges.length,
     decision,
     decision_reason: decisionReason,
+    node_version: placement?.version ?? null,
+    execution: json(execution),
+    attempt_id: latest?.id ?? null,
+    attempt_session_id: latest?.session_id ?? null,
+    attempt_workspace: latest?.workspace ?? null,
+    concern_action: open.length && advised ? advised.action : null,
+    concern_because: open.length && advised ? advised.because.slice(0, 600) : null,
+    classification_history: JSON.stringify(classification.history),
+    advice: json(advice),
+    audit_history: json(audit),
   }
   const rowChanged = upsert(db, "task_schedule", "seq", row)
   if (rowChanged) {
     if (old && old.retired === 0) adjustCount(db, project, old.bucket as string, -1)
     if (row.retired === 0) adjustCount(db, project, bucket, 1)
   }
-  return rowChanged || edgesChanged || blockersChanged || waitsChanged || sessionsChanged
+  return (
+    rowChanged ||
+    edgesChanged ||
+    blockersChanged ||
+    waitsChanged ||
+    sessionsChanged ||
+    searchChanged
+  )
+}
+
+/** The fields a search matches, in the order the tool lists matches. */
+function searchFields(task: ReturnType<typeof TaskSpecSchema.parse>, reference: string) {
+  return [
+    { field: "id", text: task.id },
+    { field: "reference", text: reference },
+    { field: "objective", text: task.proposal.objective },
+    { field: "scope", text: task.proposal.writeScope.join("\n") },
+    {
+      field: "acceptance",
+      text: task.proposal.acceptance.map((item) => item.assertion).join("\n"),
+    },
+    { field: "context", text: task.proposal.context.map((item) => item.reference).join("\n") },
+  ]
 }
 
 /** The plan row and every node row of the plan; cascades to plans listing this one. */

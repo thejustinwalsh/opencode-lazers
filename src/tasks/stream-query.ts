@@ -1,6 +1,5 @@
 import { effectiveTaskStateFilter } from "./state-filter.ts"
 import type { TaskRepository } from "../storage.ts"
-import type { TaskSpec } from "../task.ts"
 import { openStream } from "../streams/client.ts"
 import { acquireReaderPool } from "../streams/pool.ts"
 import "../streams/sources/index.ts"
@@ -9,12 +8,19 @@ import {
   taskScheduleSource,
   taskWaitsSource,
 } from "../streams/sources/tasks.ts"
+import { taskSearchFieldsRef } from "../streams/sources/tasks-ref.ts"
 import type { StreamPool } from "../streams/client.ts"
+import { findSource, streamColumns } from "../streams/source.ts"
+import { readTaskDetail, type TaskDetailQuery, type WindowRead } from "./detail-read.ts"
+import { GetOutput, type TaskDetail } from "./contract.ts"
+import { startProjection } from "../projections/owner.ts"
+import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { bucketsFor } from "./schedule/key.ts"
 import { BUCKETS } from "./schedule/buckets.ts"
 import { AgentQueryInput, type TaskSummary } from "./contract.ts"
 import { TaskStateFilter, effectiveTaskStateFilter as effective } from "./state-filter.ts"
 import { backfillPage } from "./schedule/backfill.ts"
+import { RunnerStore } from "../runner/store.ts"
 import { summaryOf } from "./summary-row.ts"
 
 /**
@@ -38,24 +44,15 @@ export type TaskToolPage = {
   serverTime: string
 }
 
-/** Where a search matched, read from the stored specification of a task on the page. */
+/** Where a search matched, from the stored search fields of a task on the page (`task_schedule_search`). */
 function matchesOf(
-  task: TaskSpec,
-  reference: string,
+  fields: readonly { field: string; text: string }[],
   search: string,
   scopePath: string | undefined,
 ): TaskSummary["matches"] {
   const matches: TaskSummary["matches"] = []
   const needle = search.toLowerCase()
-  const fields = {
-    id: task.id,
-    reference,
-    objective: task.proposal.objective,
-    scope: task.proposal.writeScope.join("\n"),
-    acceptance: task.proposal.acceptance.map((item) => item.assertion).join("\n"),
-    context: task.proposal.context.map((item) => item.reference).join("\n"),
-  }
-  for (const [field, value] of Object.entries(fields)) {
+  for (const { field, text: value } of fields) {
     const index = needle ? value.toLowerCase().indexOf(needle) : -1
     if (index >= 0 && matches.length < 4)
       matches.push({
@@ -63,8 +60,9 @@ function matchesOf(
         snippet: value.slice(Math.max(0, index - 40), index + 160).slice(0, 240),
       })
   }
+  const scope = fields.find((field) => field.field === "scope")?.text ?? ""
   if (scopePath && matches.length < 4)
-    matches.push({ field: "scope candidate", snippet: fields.scope.slice(0, 240) })
+    matches.push({ field: "scope candidate", snippet: scope.slice(0, 240) })
   if (needle && matches.length === 0)
     matches.push({
       field: "specification",
@@ -72,6 +70,26 @@ function matchesOf(
     })
   return matches
 }
+
+/** The search fields of the page's tasks, one window: six rows per task. */
+async function searchFieldsOf(pool: StreamPool, project: string, taskIDs: readonly string[]) {
+  const byTask = new Map<string, { field: string; text: string }[]>()
+  if (!taskIDs.length) return byTask
+  const rows = await poolRead(pool)(taskSearchFieldsRef, {
+    filter: { project, tasks: taskIDs },
+    order: "field",
+    window: Math.max(2, taskIDs.length * SEARCH_FIELDS),
+  })
+  for (const row of rows) {
+    const list = byTask.get(String(row.task_id)) ?? []
+    list.push({ field: String(row.field), text: String(row.text) })
+    byTask.set(String(row.task_id), list)
+  }
+  return byTask
+}
+
+/** Fields stored per task: id, reference, objective, scope, acceptance, context. */
+const SEARCH_FIELDS = 6
 
 /** The stored bucket counters of the project, summed into the numbers a state filter selects. */
 async function storedCounts(pool: StreamPool, project: string, state: string) {
@@ -123,13 +141,13 @@ async function waitsOf(pool: StreamPool, project: string, taskID: string, count:
   }
 }
 
-export async function queryTaskPage(
-  repository: Pick<TaskRepository, "path" | "projectDirectory" | "get" | "read" | "atomic">,
-  input: unknown,
-): Promise<TaskToolPage> {
-  const query = AgentQueryInput.parse(input)
-  // A fresh process has no schedule owner yet: index the project here, a page per write
-  // transaction, so a tool never answers that tasks which exist are missing.
+/**
+ * A fresh process has no schedule owner yet: index the project here, a page per write
+ * transaction, so a tool never answers that tasks which exist are missing.
+ */
+function ensureScheduleIndexed(
+  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomic">,
+) {
   const ready = () =>
     repository.read(
       (db) =>
@@ -143,6 +161,50 @@ export async function queryTaskPage(
     repository.atomic((db) => {
       backfillPage(db, repository.projectDirectory)
     })
+}
+
+/**
+ * `lz-get-task`: one task's detail from the stored rows, every transition payload included. The
+ * task events are folded first (the core's owner, shared; a process without one folds here), so
+ * the activity is whole, never a partial list.
+ */
+export async function getTaskDetail(
+  repository: TaskRepository,
+  query: Omit<TaskDetailQuery, "project">,
+): Promise<TaskDetail> {
+  // A repository opened without the runner store has not installed the runner tables or the
+  // projection yet; the store installs both.
+  const installed = repository.read((db) =>
+    Boolean(db.query("SELECT 1 FROM sqlite_master WHERE name='task_schedule_state'").get()),
+  )
+  if (!installed) new RunnerStore(repository)
+  ensureScheduleIndexed(repository)
+  const events = startProjection(repository.path, repository.projectDirectory, taskEventsProjection)
+  try {
+    await events.owner.settle()
+  } finally {
+    events.release()
+  }
+  const lease = acquireReaderPool(repository.path)
+  try {
+    return GetOutput.parse(
+      await readTaskDetail(
+        poolRead(lease.pool),
+        { ...query, project: repository.projectDirectory },
+        { payloads: "all" },
+      ),
+    )
+  } finally {
+    lease.release()
+  }
+}
+
+export async function queryTaskPage(
+  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomic">,
+  input: unknown,
+): Promise<TaskToolPage> {
+  const query = AgentQueryInput.parse(input)
+  ensureScheduleIndexed(repository)
   const lease = acquireReaderPool(repository.path)
   try {
     const stream = openStream(lease.pool, taskScheduleSource, {
@@ -177,14 +239,21 @@ export async function queryTaskPage(
       const page = rows.slice(0, query.limit)
       const more = rows.length > query.limit
       const tasks: TaskSummary[] = []
+      const fields =
+        query.search || query.scopePath
+          ? await searchFieldsOf(
+              lease.pool,
+              repository.projectDirectory,
+              page.map((row) => String(row.task_id)),
+            )
+          : undefined
       for (const row of page) {
-        const spec =
-          query.search || query.scopePath ? repository.get(String(row.task_id)) : undefined
+        const shown = fields?.get(String(row.task_id))
         const waitCount = Number(row.wait_plans_count)
         tasks.push(
           summaryOf(
             row,
-            spec ? matchesOf(spec, String(row.reference), query.search, query.scopePath) : [],
+            shown ? matchesOf(shown, query.search, query.scopePath) : [],
             waitCount > 0
               ? await waitsOf(
                   lease.pool,
@@ -217,5 +286,32 @@ export async function queryTaskPage(
     }
   } finally {
     lease.release()
+  }
+}
+
+/**
+ * A `WindowRead` on the project's reader pool: the service's own reads of the Tasks sources (the
+ * agent tools). Filters are trusted: they skip `authorize` and name the project themselves.
+ */
+export function poolRead(pool: StreamPool): WindowRead {
+  return async (ref, options) => {
+    const source = findSource(ref.name)
+    if (!source) throw new Error(`Unknown source ${ref.name}`)
+    const stream = openStream(pool, source as never, {
+      filter: options.filter as never,
+      order: options.order,
+      window: options.window,
+      ...(options.anchor ? { anchor: options.anchor } : {}),
+    })
+    try {
+      await stream.ready()
+      const names = Object.keys(streamColumns(source, options.window))
+      // Rows are views into the frame: copy the fields before the stream closes.
+      return stream.items.map((row) =>
+        Object.fromEntries(names.map((name) => [name, (row as Record<string, unknown>)[name]])),
+      )
+    } finally {
+      stream.close()
+    }
   }
 }

@@ -4,7 +4,7 @@ import { ignoringLegacyFields } from "../legacy-fields.ts"
 import { schemaModules } from "../database-schema.ts"
 import { canonical } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
-import { TaskSpecSchema } from "../task.ts"
+import { TaskSpecSchema, type TaskSpec } from "../task.ts"
 
 const AdviceLine = z
   .string()
@@ -152,37 +152,55 @@ export function taskAdviceSnapshot(
       )
       .get(repository.projectDirectory, taskID)
     if (!taskRow) return null
-    const task = TaskSpecSchema.parse(JSON.parse(taskRow.body))
-    const historyCount = db
-      .query<{ count: number }, [string, string]>(
-        "SELECT COUNT(*) AS count FROM task_advice WHERE project_directory=? AND task_id=?",
-      )
-      .get(repository.projectDirectory, taskID)!.count
-    if (historyCount === 0) return null
-    const records = db
-      .query<AdviceRecordRow, [string, string, number]>(
-        `SELECT record_json FROM task_advice
-         WHERE project_directory=? AND task_id=? ORDER BY revision DESC LIMIT ?`,
-      )
-      .all(repository.projectDirectory, taskID, TASK_ADVICE_HISTORY_PROJECTION_LIMIT)
-      .reverse()
-      .map((row) => TaskAdviceRecord.parse(JSON.parse(row.record_json)))
-    const firstRevision = historyCount - records.length + 1
-    records.forEach((record, index) => {
-      if (
-        record.projectDirectory !== repository.projectDirectory ||
-        record.taskID !== taskID ||
-        record.specRevision !== task.revision ||
-        record.revision !== firstRevision + index
-      )
-        throw new Error("Task advice history does not match its project/task revision")
-    })
-    return TaskAdviceSnapshot.parse({
-      current: records.at(-1),
-      history: records,
-      historyCount,
-      historyTruncated: historyCount > records.length,
-    })
+    return adviceSnapshotIn(
+      db,
+      repository.projectDirectory,
+      TaskSpecSchema.parse(JSON.parse(taskRow.body)),
+    )
+  })
+}
+
+/**
+ * A task's advice as the detail shows it: the newest records (at most
+ * `TASK_ADVICE_HISTORY_PROJECTION_LIMIT`) and the whole count, inside the caller's transaction.
+ * Null with no advice, or before the advice schema exists.
+ */
+export function adviceSnapshotIn(
+  db: Database,
+  projectDirectory: string,
+  task: Pick<TaskSpec, "id" | "revision">,
+): TaskAdviceSnapshot | null {
+  if (!hasAdviceTable(db)) return null
+  const taskID = task.id
+  const historyCount = db
+    .query<{ count: number }, [string, string]>(
+      "SELECT COUNT(*) AS count FROM task_advice WHERE project_directory=? AND task_id=?",
+    )
+    .get(projectDirectory, taskID)!.count
+  if (historyCount === 0) return null
+  const records = db
+    .query<AdviceRecordRow, [string, string, number]>(
+      `SELECT record_json FROM task_advice
+       WHERE project_directory=? AND task_id=? ORDER BY revision DESC LIMIT ?`,
+    )
+    .all(projectDirectory, taskID, TASK_ADVICE_HISTORY_PROJECTION_LIMIT)
+    .reverse()
+    .map((row) => TaskAdviceRecord.parse(JSON.parse(row.record_json)))
+  const firstRevision = historyCount - records.length + 1
+  records.forEach((record, index) => {
+    if (
+      record.projectDirectory !== projectDirectory ||
+      record.taskID !== taskID ||
+      record.specRevision !== task.revision ||
+      record.revision !== firstRevision + index
+    )
+      throw new Error("Task advice history does not match its project/task revision")
+  })
+  return TaskAdviceSnapshot.parse({
+    current: records.at(-1),
+    history: records,
+    historyCount,
+    historyTruncated: historyCount > records.length,
   })
 }
 

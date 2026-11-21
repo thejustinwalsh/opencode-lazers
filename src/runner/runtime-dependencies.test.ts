@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { git } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
-import { TaskReads } from "../tasks/read.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import {
   TaskRuntime,
   acceptAndIntegratePlan,
@@ -142,7 +142,7 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       ).next,
     ).toEqual({ status: "none" })
     const accepted = await acceptPlan(f, parentID)
-    expect(new TaskReads(f.repository).get({ taskID: childTask.id })).toMatchObject({
+    expect(await getTaskDetail(f.repository, { taskID: childTask.id })).toMatchObject({
       recordedState: "queued",
       execution: {
         state: "blocked",

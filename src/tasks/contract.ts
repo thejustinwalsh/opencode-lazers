@@ -36,17 +36,8 @@ const GetFields = {
 }
 /** The get an agent tool offers: a task of this project. Never another project. */
 export const AgentGetInput = z.strictObject(GetFields)
-/** The Tasks RPC get; `allProjects` reads a task of any registered project for the owner's panel. */
-export const GetInput = z
-  .strictObject({ allProjects: z.literal(true).optional(), ...GetFields })
-  .superRefine((input, ctx) => {
-    if (input.allProjects && !input.sessionID)
-      ctx.addIssue({
-        code: "custom",
-        path: ["sessionID"],
-        message: "An all-projects read names the calling session",
-      })
-  })
+/** The Tasks RPC get: a task of this project; `sessionID` reads only a task linked to it. */
+export const GetInput = z.strictObject(GetFields)
 export const GetInstructionsOutput = z.string()
 /** A task that keeps consuming effort without landing; see `assessConcern`. */
 const TaskConcern = z.strictObject({
@@ -145,16 +136,6 @@ const TaskAttempt = z.strictObject({
   /** Compact activity read; present on the task's latest attempt only. */
   summary: AttemptSummary.optional(),
 })
-export const CurrentActivityInput = z
-  .strictObject({
-    sessionID: z.string().min(1).max(200),
-    scope: z.enum(["session", "project", "all"]),
-    taskIDs: z.array(z.uuid()).min(1).max(40),
-  })
-  .superRefine((input, context) => {
-    if (new Set(input.taskIDs).size !== input.taskIDs.length)
-      context.addIssue({ code: "custom", path: ["taskIDs"], message: "Task IDs must be unique" })
-  })
 const CurrentTaskActivity = z.strictObject({
   /** All-projects scope: the project the task belongs to. */
   project: ProjectRef.optional(),
@@ -177,7 +158,6 @@ const CurrentTaskActivity = z.strictObject({
 export const CurrentActivityOutput = z.strictObject({
   activities: z.array(CurrentTaskActivity).max(40),
 })
-type CurrentActivityInput = z.input<typeof CurrentActivityInput>
 export type CurrentActivityOutput = z.infer<typeof CurrentActivityOutput>
 export type CurrentTaskActivity = z.infer<typeof CurrentTaskActivity>
 export const GetOutput = z.discriminatedUnion("status", [
@@ -230,7 +210,6 @@ export const Tasks = Rpc.define({
   id: "lazers.tasks",
   methods: {
     get: { input: GetInput, output: GetOutput },
-    currentActivity: { input: CurrentActivityInput, output: CurrentActivityOutput },
     start: { input: StartInput, output: StartOutput },
   },
   events: { changed: { schema: Changed } },

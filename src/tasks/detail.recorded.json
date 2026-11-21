@@ -1,0 +1,3679 @@
+{
+  "get": {
+    "loose": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "loose",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "loose",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/loose/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-1"
+    },
+    "retired": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "retired",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "retired",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/retired/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-2",
+      "disposition": {
+        "id": 1,
+        "taskID": "retired",
+        "requestID": "retire-corpus",
+        "disposition": "superseded",
+        "reason": "Replaced by a runner plan.",
+        "evidence": [
+          {
+            "kind": "artifact",
+            "reference": "design/plan.md"
+          }
+        ],
+        "relatedTaskIDs": [],
+        "sessionID": "architect",
+        "agent": "architect",
+        "createdAt": "<time>"
+      }
+    },
+    "advised": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "advised",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "advised",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/advised/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 2,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "documentation"
+        },
+        "provenance": {
+          "kind": "annotation",
+          "requestID": "classify-corpus",
+          "sessionID": "architect",
+          "agent": "architect",
+          "reason": "The outcome is documentation.",
+          "createdAt": "<time>"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        {
+          "revision": 2,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "documentation"
+          },
+          "provenance": {
+            "kind": "annotation",
+            "requestID": "classify-corpus",
+            "sessionID": "architect",
+            "agent": "architect",
+            "reason": "The outcome is documentation.",
+            "createdAt": "<time>"
+          }
+        }
+      ],
+      "advice": {
+        "current": {
+          "projectDirectory": "/project",
+          "taskID": "advised",
+          "specRevision": 1,
+          "requestID": "advice-2",
+          "revision": 2,
+          "findings": ["Keep attachments separate."],
+          "implementationAdvice": ["Use the stored read."],
+          "references": [],
+          "provenance": {
+            "sessionID": "architect",
+            "agent": "architect",
+            "createdAt": "<time>"
+          }
+        },
+        "history": [
+          {
+            "projectDirectory": "/project",
+            "taskID": "advised",
+            "specRevision": 1,
+            "requestID": "advice-1",
+            "revision": 1,
+            "findings": ["Read the boundary first."],
+            "implementationAdvice": ["Use the stored read."],
+            "references": [],
+            "provenance": {
+              "sessionID": "architect",
+              "agent": "architect",
+              "createdAt": "<time>"
+            }
+          },
+          {
+            "projectDirectory": "/project",
+            "taskID": "advised",
+            "specRevision": 1,
+            "requestID": "advice-2",
+            "revision": 2,
+            "findings": ["Keep attachments separate."],
+            "implementationAdvice": ["Use the stored read."],
+            "references": [],
+            "provenance": {
+              "sessionID": "architect",
+              "agent": "architect",
+              "createdAt": "<time>"
+            }
+          }
+        ],
+        "historyCount": 2,
+        "historyTruncated": false
+      },
+      "auditHistory": {
+        "runCount": 2,
+        "latestRunID": "audit run"
+      },
+      "reference": "LZ-3"
+    },
+    "other": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "other-session",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_b",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "other-session",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/other-session/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_b",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_b",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-4"
+    },
+    "first": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "first",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "first",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/first/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-5",
+      "recordedState": "queued",
+      "execution": {
+        "planID": "plan first",
+        "taskID": "first",
+        "state": "blocked",
+        "version": 1,
+        "reason": "Waiting for checkout or write scope: LZ-9, LZ-8",
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [],
+      "activity": []
+    },
+    "waiting": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "waiting",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "waiting",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/waiting/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-6",
+      "recordedState": "queued",
+      "execution": {
+        "planID": "plan waiting",
+        "taskID": "waiting",
+        "state": "blocked",
+        "version": 1,
+        "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "waitingOn": [],
+        "waitingOnPlans": [
+          {
+            "planID": "plan first",
+            "title": "first",
+            "state": "running",
+            "version": 1,
+            "reason": null
+          }
+        ],
+        "waitingOnPlansCount": 1,
+        "waitingOnPlansComplete": true
+      },
+      "architectSessionID": "architect",
+      "attempts": [],
+      "activity": []
+    },
+    "held": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "held",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "held",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/held/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-7",
+      "recordedState": "queued",
+      "execution": {
+        "dispatchPause": {
+          "reason": "hold",
+          "untilPlans": []
+        },
+        "planID": "plan held",
+        "taskID": "held",
+        "state": "queued",
+        "version": 1,
+        "reason": null,
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [],
+      "activity": []
+    },
+    "grind": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "grind",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "grind",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/grind/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-8",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan grind",
+        "taskID": "grind",
+        "state": "running",
+        "version": 1,
+        "reason": null,
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of grind",
+          "number": 1,
+          "state": "failed",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10
+        },
+        {
+          "id": "attempt 2 of grind",
+          "number": 2,
+          "state": "running",
+          "startedAt": 2000,
+          "artifact": null,
+          "tokenCount": 2000000,
+          "toolCount": 20,
+          "model": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "summary": {
+            "lastActivityAt": 2700,
+            "ticks": [
+              {
+                "at": 2100
+              },
+              {
+                "at": 2400,
+                "failed": true
+              }
+            ],
+            "files": 2
+          }
+        }
+      ],
+      "activity": [
+        {
+          "id": 7,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 1
+        },
+        {
+          "id": 8,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 2
+        },
+        {
+          "id": 9,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 3
+        },
+        {
+          "id": 10,
+          "taskID": "grind",
+          "event": "REPAIR",
+          "payload": "{\"from\":\"verifying\",\"to\":\"ready\"}",
+          "createdAt": 4
+        },
+        {
+          "id": 11,
+          "taskID": "grind",
+          "event": "SCOPE_REPORTED",
+          "payload": "{\"divergences\":[{\"path\":\"src/x.ts\"}],\"accepted\":[{\"path\":\"src/y.ts\"}]}",
+          "createdAt": 5
+        },
+        {
+          "id": 12,
+          "taskID": "grind",
+          "event": "SCOPE_AMENDED",
+          "payload": "{\"reason\":\"widened\"}",
+          "createdAt": 5
+        }
+      ]
+    },
+    "calm": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "calm",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "calm",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/calm/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-9",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan grind",
+        "taskID": "calm",
+        "state": "running",
+        "version": 1,
+        "reason": null,
+        "waitingOn": ["grind"]
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of calm",
+          "number": 1,
+          "state": "running",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10,
+          "takeover": true,
+          "summary": {
+            "ticks": []
+          }
+        }
+      ],
+      "activity": []
+    },
+    "stuck": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "stuck",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "stuck",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/stuck/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-10",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan stuck",
+        "taskID": "stuck",
+        "state": "running",
+        "version": 1,
+        "reason": "reconcile hold",
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of stuck",
+          "number": 1,
+          "state": "accepted",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10,
+          "summary": {
+            "ticks": []
+          }
+        }
+      ],
+      "activity": []
+    },
+    "byReference": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "grind",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "grind",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/grind/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-8",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan grind",
+        "taskID": "grind",
+        "state": "running",
+        "version": 1,
+        "reason": null,
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of grind",
+          "number": 1,
+          "state": "failed",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10
+        },
+        {
+          "id": "attempt 2 of grind",
+          "number": 2,
+          "state": "running",
+          "startedAt": 2000,
+          "artifact": null,
+          "tokenCount": 2000000,
+          "toolCount": 20,
+          "model": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "summary": {
+            "lastActivityAt": 2700,
+            "ticks": [
+              {
+                "at": 2100
+              },
+              {
+                "at": 2400,
+                "failed": true
+              }
+            ],
+            "files": 2
+          }
+        }
+      ],
+      "activity": [
+        {
+          "id": 7,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 1
+        },
+        {
+          "id": 8,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 2
+        },
+        {
+          "id": 9,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 3
+        },
+        {
+          "id": 10,
+          "taskID": "grind",
+          "event": "REPAIR",
+          "payload": "{\"from\":\"verifying\",\"to\":\"ready\"}",
+          "createdAt": 4
+        },
+        {
+          "id": 11,
+          "taskID": "grind",
+          "event": "SCOPE_REPORTED",
+          "payload": "{\"divergences\":[{\"path\":\"src/x.ts\"}],\"accepted\":[{\"path\":\"src/y.ts\"}]}",
+          "createdAt": 5
+        },
+        {
+          "id": 12,
+          "taskID": "grind",
+          "event": "SCOPE_AMENDED",
+          "payload": "{\"reason\":\"widened\"}",
+          "createdAt": 5
+        }
+      ]
+    },
+    "unknown": {
+      "status": "not_found"
+    },
+    "revisionUnavailable": {
+      "status": "revision_unavailable",
+      "revision": 1
+    },
+    "classificationAt1": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "advised",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "advised",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/advised/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 2,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "documentation"
+        },
+        "provenance": {
+          "kind": "annotation",
+          "requestID": "classify-corpus",
+          "sessionID": "architect",
+          "agent": "architect",
+          "reason": "The outcome is documentation.",
+          "createdAt": "<time>"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        {
+          "revision": 2,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "documentation"
+          },
+          "provenance": {
+            "kind": "annotation",
+            "requestID": "classify-corpus",
+            "sessionID": "architect",
+            "agent": "architect",
+            "reason": "The outcome is documentation.",
+            "createdAt": "<time>"
+          }
+        }
+      ],
+      "classificationAtRevision": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "advice": {
+        "current": {
+          "projectDirectory": "/project",
+          "taskID": "advised",
+          "specRevision": 1,
+          "requestID": "advice-2",
+          "revision": 2,
+          "findings": ["Keep attachments separate."],
+          "implementationAdvice": ["Use the stored read."],
+          "references": [],
+          "provenance": {
+            "sessionID": "architect",
+            "agent": "architect",
+            "createdAt": "<time>"
+          }
+        },
+        "history": [
+          {
+            "projectDirectory": "/project",
+            "taskID": "advised",
+            "specRevision": 1,
+            "requestID": "advice-1",
+            "revision": 1,
+            "findings": ["Read the boundary first."],
+            "implementationAdvice": ["Use the stored read."],
+            "references": [],
+            "provenance": {
+              "sessionID": "architect",
+              "agent": "architect",
+              "createdAt": "<time>"
+            }
+          },
+          {
+            "projectDirectory": "/project",
+            "taskID": "advised",
+            "specRevision": 1,
+            "requestID": "advice-2",
+            "revision": 2,
+            "findings": ["Keep attachments separate."],
+            "implementationAdvice": ["Use the stored read."],
+            "references": [],
+            "provenance": {
+              "sessionID": "architect",
+              "agent": "architect",
+              "createdAt": "<time>"
+            }
+          }
+        ],
+        "historyCount": 2,
+        "historyTruncated": false
+      },
+      "auditHistory": {
+        "runCount": 2,
+        "latestRunID": "audit run"
+      },
+      "reference": "LZ-3"
+    },
+    "classificationAt9": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "advised",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "advised",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/advised/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 2,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "documentation"
+        },
+        "provenance": {
+          "kind": "annotation",
+          "requestID": "classify-corpus",
+          "sessionID": "architect",
+          "agent": "architect",
+          "reason": "The outcome is documentation.",
+          "createdAt": "<time>"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        {
+          "revision": 2,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "documentation"
+          },
+          "provenance": {
+            "kind": "annotation",
+            "requestID": "classify-corpus",
+            "sessionID": "architect",
+            "agent": "architect",
+            "reason": "The outcome is documentation.",
+            "createdAt": "<time>"
+          }
+        }
+      ],
+      "classificationAtRevision": null,
+      "advice": {
+        "current": {
+          "projectDirectory": "/project",
+          "taskID": "advised",
+          "specRevision": 1,
+          "requestID": "advice-2",
+          "revision": 2,
+          "findings": ["Keep attachments separate."],
+          "implementationAdvice": ["Use the stored read."],
+          "references": [],
+          "provenance": {
+            "sessionID": "architect",
+            "agent": "architect",
+            "createdAt": "<time>"
+          }
+        },
+        "history": [
+          {
+            "projectDirectory": "/project",
+            "taskID": "advised",
+            "specRevision": 1,
+            "requestID": "advice-1",
+            "revision": 1,
+            "findings": ["Read the boundary first."],
+            "implementationAdvice": ["Use the stored read."],
+            "references": [],
+            "provenance": {
+              "sessionID": "architect",
+              "agent": "architect",
+              "createdAt": "<time>"
+            }
+          },
+          {
+            "projectDirectory": "/project",
+            "taskID": "advised",
+            "specRevision": 1,
+            "requestID": "advice-2",
+            "revision": 2,
+            "findings": ["Keep attachments separate."],
+            "implementationAdvice": ["Use the stored read."],
+            "references": [],
+            "provenance": {
+              "sessionID": "architect",
+              "agent": "architect",
+              "createdAt": "<time>"
+            }
+          }
+        ],
+        "historyCount": 2,
+        "historyTruncated": false
+      },
+      "auditHistory": {
+        "runCount": 2,
+        "latestRunID": "audit run"
+      },
+      "reference": "LZ-3"
+    },
+    "creatorMatches": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "other-session",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_b",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "other-session",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/other-session/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_b",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_b",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-4"
+    },
+    "creatorDiffers": {
+      "status": "not_found"
+    },
+    "linkedAttempt": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "grind",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "grind",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/grind/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-8",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan grind",
+        "taskID": "grind",
+        "state": "running",
+        "version": 1,
+        "reason": null,
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of grind",
+          "number": 1,
+          "state": "failed",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10
+        },
+        {
+          "id": "attempt 2 of grind",
+          "number": 2,
+          "state": "running",
+          "startedAt": 2000,
+          "artifact": null,
+          "tokenCount": 2000000,
+          "toolCount": 20,
+          "model": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "summary": {
+            "lastActivityAt": 2700,
+            "ticks": [
+              {
+                "at": 2100
+              },
+              {
+                "at": 2400,
+                "failed": true
+              }
+            ],
+            "files": 2
+          }
+        }
+      ],
+      "activity": [
+        {
+          "id": 7,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 1
+        },
+        {
+          "id": 8,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 2
+        },
+        {
+          "id": 9,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 3
+        },
+        {
+          "id": 10,
+          "taskID": "grind",
+          "event": "REPAIR",
+          "payload": "{\"from\":\"verifying\",\"to\":\"ready\"}",
+          "createdAt": 4
+        },
+        {
+          "id": 11,
+          "taskID": "grind",
+          "event": "SCOPE_REPORTED",
+          "payload": "{\"divergences\":[{\"path\":\"src/x.ts\"}],\"accepted\":[{\"path\":\"src/y.ts\"}]}",
+          "createdAt": 5
+        },
+        {
+          "id": 12,
+          "taskID": "grind",
+          "event": "SCOPE_AMENDED",
+          "payload": "{\"reason\":\"widened\"}",
+          "createdAt": 5
+        }
+      ]
+    },
+    "linkedOwner": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "grind",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "grind",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/grind/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-8",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan grind",
+        "taskID": "grind",
+        "state": "running",
+        "version": 1,
+        "reason": null,
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of grind",
+          "number": 1,
+          "state": "failed",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10
+        },
+        {
+          "id": "attempt 2 of grind",
+          "number": 2,
+          "state": "running",
+          "startedAt": 2000,
+          "artifact": null,
+          "tokenCount": 2000000,
+          "toolCount": 20,
+          "model": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "summary": {
+            "lastActivityAt": 2700,
+            "ticks": [
+              {
+                "at": 2100
+              },
+              {
+                "at": 2400,
+                "failed": true
+              }
+            ],
+            "files": 2
+          }
+        }
+      ],
+      "activity": [
+        {
+          "id": 7,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 1
+        },
+        {
+          "id": 8,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 2
+        },
+        {
+          "id": 9,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 3
+        },
+        {
+          "id": 10,
+          "taskID": "grind",
+          "event": "REPAIR",
+          "payload": "{\"from\":\"verifying\",\"to\":\"ready\"}",
+          "createdAt": 4
+        },
+        {
+          "id": 11,
+          "taskID": "grind",
+          "event": "SCOPE_REPORTED",
+          "payload": "{\"divergences\":[{\"path\":\"src/x.ts\"}],\"accepted\":[{\"path\":\"src/y.ts\"}]}",
+          "createdAt": 5
+        },
+        {
+          "id": 12,
+          "taskID": "grind",
+          "event": "SCOPE_AMENDED",
+          "payload": "{\"reason\":\"widened\"}",
+          "createdAt": 5
+        }
+      ]
+    },
+    "linkedNot": {
+      "status": "not_found"
+    },
+    "linkedReference": {
+      "status": "found",
+      "task": {
+        "schemaVersion": 1,
+        "id": "grind",
+        "revision": 1,
+        "status": "submitted",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "provenance": {
+          "projectID": "global",
+          "projectDirectory": "/project",
+          "workspaceDirectory": "/worktree",
+          "sessionID": "ses_a",
+          "startingRevision": {
+            "kind": "unborn"
+          }
+        },
+        "proposal": {
+          "objective": "grind",
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "exclusions": ["Do not dispatch workers"],
+          "constraints": ["Use plugin-owned SQLite storage"],
+          "assumptions": [],
+          "writeScope": ["src/grind/**"],
+          "context": [
+            {
+              "reference": "README.md",
+              "revision": null
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reopen",
+              "assertion": "A task can be retrieved after reopening the database",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "tests"
+                }
+              ]
+            }
+          ],
+          "requirements": {
+            "capabilities": ["sqlite"],
+            "skills": [],
+            "risk": "low",
+            "policyReference": "AGENTS.md"
+          },
+          "verification": [
+            {
+              "id": "tests",
+              "command": "bun test",
+              "timeoutMs": 60000
+            }
+          ],
+          "limits": {
+            "maxTokens": 20000,
+            "maxEstimatedCostUsd": 2,
+            "maxElapsedMs": 1200000,
+            "maxToolCalls": 40,
+            "maxProviderRetries": 0,
+            "maxRepairAttempts": 1
+          }
+        }
+      },
+      "classification": {
+        "revision": 1,
+        "classification": {
+          "taxonomy": "task-kind/v1",
+          "primaryKind": "feature-implementation"
+        },
+        "provenance": {
+          "kind": "embedded",
+          "sessionID": "ses_a",
+          "createdAt": "2026-10-31T00:00:00.000Z"
+        }
+      },
+      "classificationHistory": [
+        {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "ses_a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      ],
+      "advice": null,
+      "reference": "LZ-8",
+      "recordedState": "running",
+      "execution": {
+        "planID": "plan grind",
+        "taskID": "grind",
+        "state": "running",
+        "version": 1,
+        "reason": null,
+        "waitingOn": []
+      },
+      "architectSessionID": "architect",
+      "attempts": [
+        {
+          "id": "attempt 1 of grind",
+          "number": 1,
+          "state": "failed",
+          "startedAt": 1000,
+          "artifact": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tokenCount": 1000000,
+          "toolCount": 10
+        },
+        {
+          "id": "attempt 2 of grind",
+          "number": 2,
+          "state": "running",
+          "startedAt": 2000,
+          "artifact": null,
+          "tokenCount": 2000000,
+          "toolCount": 20,
+          "model": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "summary": {
+            "lastActivityAt": 2700,
+            "ticks": [
+              {
+                "at": 2100
+              },
+              {
+                "at": 2400,
+                "failed": true
+              }
+            ],
+            "files": 2
+          }
+        }
+      ],
+      "activity": [
+        {
+          "id": 7,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 1
+        },
+        {
+          "id": 8,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 2
+        },
+        {
+          "id": 9,
+          "taskID": "grind",
+          "event": "VERIFY",
+          "payload": "{}",
+          "createdAt": 3
+        },
+        {
+          "id": 10,
+          "taskID": "grind",
+          "event": "REPAIR",
+          "payload": "{\"from\":\"verifying\",\"to\":\"ready\"}",
+          "createdAt": 4
+        },
+        {
+          "id": 11,
+          "taskID": "grind",
+          "event": "SCOPE_REPORTED",
+          "payload": "{\"divergences\":[{\"path\":\"src/x.ts\"}],\"accepted\":[{\"path\":\"src/y.ts\"}]}",
+          "createdAt": 5
+        },
+        {
+          "id": 12,
+          "taskID": "grind",
+          "event": "SCOPE_AMENDED",
+          "payload": "{\"reason\":\"widened\"}",
+          "createdAt": 5
+        }
+      ]
+    }
+  },
+  "search": {
+    "objective": {
+      "tasks": [
+        {
+          "taskID": "grind",
+          "reference": "LZ-8",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "startedAt": 2000,
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "grind",
+          "objective": "grind",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "objective",
+              "snippet": "grind"
+            },
+            {
+              "field": "scope",
+              "snippet": "src/grind/**"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    },
+    "scope": {
+      "tasks": [
+        {
+          "taskID": "held",
+          "reference": "LZ-7",
+          "dispatchPause": {
+            "reason": "hold",
+            "untilPlans": []
+          },
+          "dispatchPausePlanID": "plan held",
+          "revision": 1,
+          "status": "queued",
+          "recordedState": "queued",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "held",
+          "objective": "held",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "scope",
+              "snippet": "src/held/**"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    },
+    "acceptance": {
+      "tasks": [
+        {
+          "taskID": "stuck",
+          "reference": "LZ-10",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "reason": "reconcile hold",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "stuck",
+          "objective": "stuck",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "calm",
+          "reference": "LZ-9",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "startedAt": 1000,
+          "takeover": true,
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "calm",
+          "objective": "calm",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "grind",
+          "reference": "LZ-8",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "startedAt": 2000,
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "grind",
+          "objective": "grind",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "held",
+          "reference": "LZ-7",
+          "dispatchPause": {
+            "reason": "hold",
+            "untilPlans": []
+          },
+          "dispatchPausePlanID": "plan held",
+          "revision": 1,
+          "status": "queued",
+          "recordedState": "queued",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "held",
+          "objective": "held",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "waiting",
+          "reference": "LZ-6",
+          "revision": 1,
+          "status": "blocked",
+          "recordedState": "queued",
+          "waitingOnPlans": [
+            {
+              "planID": "plan first",
+              "title": "first",
+              "state": "running",
+              "version": 1,
+              "reason": null
+            }
+          ],
+          "waitingOnPlansCount": 1,
+          "waitingOnPlansComplete": true,
+          "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "waiting",
+          "objective": "waiting",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "first",
+          "reference": "LZ-5",
+          "revision": 1,
+          "status": "blocked",
+          "recordedState": "queued",
+          "reason": "Waiting for checkout or write scope: LZ-9, LZ-8",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "first",
+          "objective": "first",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "other-session",
+          "reference": "LZ-4",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_b",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "other-session",
+          "objective": "other-session",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_b",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "advised",
+          "reference": "LZ-3",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 2,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "documentation"
+            },
+            "provenance": {
+              "kind": "annotation",
+              "requestID": "classify-corpus",
+              "sessionID": "architect",
+              "agent": "architect",
+              "reason": "The outcome is documentation.",
+              "createdAt": "<time>"
+            }
+          },
+          "title": "advised",
+          "objective": "advised",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        },
+        {
+          "taskID": "loose",
+          "reference": "LZ-1",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "loose",
+          "objective": "loose",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "acceptance",
+              "snippet": "A task can be retrieved after reopening the database"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    },
+    "context": {
+      "tasks": [
+        {
+          "taskID": "stuck",
+          "reference": "LZ-10",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "reason": "reconcile hold",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "stuck",
+          "objective": "stuck",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "calm",
+          "reference": "LZ-9",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "startedAt": 1000,
+          "takeover": true,
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "calm",
+          "objective": "calm",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "grind",
+          "reference": "LZ-8",
+          "revision": 1,
+          "status": "running",
+          "recordedState": "running",
+          "startedAt": 2000,
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "grind",
+          "objective": "grind",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "held",
+          "reference": "LZ-7",
+          "dispatchPause": {
+            "reason": "hold",
+            "untilPlans": []
+          },
+          "dispatchPausePlanID": "plan held",
+          "revision": 1,
+          "status": "queued",
+          "recordedState": "queued",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "held",
+          "objective": "held",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "waiting",
+          "reference": "LZ-6",
+          "revision": 1,
+          "status": "blocked",
+          "recordedState": "queued",
+          "waitingOnPlans": [
+            {
+              "planID": "plan first",
+              "title": "first",
+              "state": "running",
+              "version": 1,
+              "reason": null
+            }
+          ],
+          "waitingOnPlansCount": 1,
+          "waitingOnPlansComplete": true,
+          "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "waiting",
+          "objective": "waiting",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "first",
+          "reference": "LZ-5",
+          "revision": 1,
+          "status": "blocked",
+          "recordedState": "queued",
+          "reason": "Waiting for checkout or write scope: LZ-9, LZ-8",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "first",
+          "objective": "first",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "other-session",
+          "reference": "LZ-4",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_b",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "other-session",
+          "objective": "other-session",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_b",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "advised",
+          "reference": "LZ-3",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 2,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "documentation"
+            },
+            "provenance": {
+              "kind": "annotation",
+              "requestID": "classify-corpus",
+              "sessionID": "architect",
+              "agent": "architect",
+              "reason": "The outcome is documentation.",
+              "createdAt": "<time>"
+            }
+          },
+          "title": "advised",
+          "objective": "advised",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        },
+        {
+          "taskID": "loose",
+          "reference": "LZ-1",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "loose",
+          "objective": "loose",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "context",
+              "snippet": "README.md"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    },
+    "reference": {
+      "tasks": [
+        {
+          "taskID": "advised",
+          "reference": "LZ-3",
+          "revision": 1,
+          "status": "submitted",
+          "reason": null,
+          "classification": {
+            "revision": 2,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "documentation"
+            },
+            "provenance": {
+              "kind": "annotation",
+              "requestID": "classify-corpus",
+              "sessionID": "architect",
+              "agent": "architect",
+              "reason": "The outcome is documentation.",
+              "createdAt": "<time>"
+            }
+          },
+          "title": "advised",
+          "objective": "advised",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "reference",
+              "snippet": "LZ-3"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    },
+    "none": {
+      "tasks": [],
+      "nextCursor": null
+    },
+    "scopePath": {
+      "tasks": [
+        {
+          "taskID": "first",
+          "reference": "LZ-5",
+          "revision": 1,
+          "status": "blocked",
+          "recordedState": "queued",
+          "reason": "Waiting for checkout or write scope: LZ-9, LZ-8",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "first",
+          "objective": "first",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "scope candidate",
+              "snippet": "src/first/**"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    },
+    "both": {
+      "tasks": [
+        {
+          "taskID": "first",
+          "reference": "LZ-5",
+          "revision": 1,
+          "status": "blocked",
+          "recordedState": "queued",
+          "reason": "Waiting for checkout or write scope: LZ-9, LZ-8",
+          "classification": {
+            "revision": 1,
+            "classification": {
+              "taxonomy": "task-kind/v1",
+              "primaryKind": "feature-implementation"
+            },
+            "provenance": {
+              "kind": "embedded",
+              "sessionID": "ses_a",
+              "createdAt": "2026-10-31T00:00:00.000Z"
+            }
+          },
+          "title": "first",
+          "objective": "first",
+          "createdAt": "2026-10-31T00:00:00.000Z",
+          "sessionID": "ses_a",
+          "matches": [
+            {
+              "field": "objective",
+              "snippet": "first"
+            },
+            {
+              "field": "scope",
+              "snippet": "src/first/**"
+            },
+            {
+              "field": "scope candidate",
+              "snippet": "src/first/**"
+            }
+          ]
+        }
+      ],
+      "nextCursor": null
+    }
+  },
+  "activity": {
+    "project": {
+      "activities": [
+        {
+          "taskID": "loose",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "retired",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "advised",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "other-session",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "first",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": "queued",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "waiting",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": "queued",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "held",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": "queued",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "grind",
+          "workerSessionID": "ses_w2_grind",
+          "attemptID": "attempt 2 of grind",
+          "foreground": "active",
+          "archived": false,
+          "unknownReason": null,
+          "recordedState": "running",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": true,
+          "pendingPermissions": 1,
+          "pendingForms": 0,
+          "outcome": null
+        },
+        {
+          "taskID": "calm",
+          "workerSessionID": "ses_w1_calm",
+          "attemptID": "attempt 1 of calm",
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": "running",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "stuck",
+          "workerSessionID": "ses_stuck_worker",
+          "attemptID": "attempt 1 of stuck",
+          "foreground": "inactive",
+          "archived": true,
+          "unknownReason": null,
+          "recordedState": "running",
+          "waiting": true,
+          "holdReason": "reconcile hold",
+          "pendingInput": false,
+          "pendingPermissions": 0,
+          "pendingForms": 0,
+          "outcome": "succeeded"
+        }
+      ]
+    },
+    "session": {
+      "activities": [
+        {
+          "taskID": "loose",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "retired",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "advised",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "other-session",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "first",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": "queued",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "waiting",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": "queued",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "held",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "no-current-attempt",
+          "recordedState": "queued",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "grind",
+          "workerSessionID": "ses_w2_grind",
+          "attemptID": "attempt 2 of grind",
+          "foreground": "active",
+          "archived": false,
+          "unknownReason": null,
+          "recordedState": "running",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": true,
+          "pendingPermissions": 1,
+          "pendingForms": 0,
+          "outcome": null
+        },
+        {
+          "taskID": "calm",
+          "workerSessionID": "ses_w1_calm",
+          "attemptID": "attempt 1 of calm",
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": "running",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "stuck",
+          "workerSessionID": "ses_stuck_worker",
+          "attemptID": "attempt 1 of stuck",
+          "foreground": "inactive",
+          "archived": true,
+          "unknownReason": null,
+          "recordedState": "running",
+          "waiting": true,
+          "holdReason": "reconcile hold",
+          "pendingInput": false,
+          "pendingPermissions": 0,
+          "pendingForms": 0,
+          "outcome": "succeeded"
+        }
+      ]
+    },
+    "worker": {
+      "activities": [
+        {
+          "taskID": "loose",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "retired",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "advised",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "other-session",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "first",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "waiting",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "held",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "grind",
+          "workerSessionID": "ses_w2_grind",
+          "attemptID": "attempt 2 of grind",
+          "foreground": "active",
+          "archived": false,
+          "unknownReason": null,
+          "recordedState": "running",
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": true,
+          "pendingPermissions": 1,
+          "pendingForms": 0,
+          "outcome": null
+        },
+        {
+          "taskID": "calm",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        },
+        {
+          "taskID": "stuck",
+          "attemptID": null,
+          "foreground": "unknown",
+          "unknownReason": "unavailable",
+          "recordedState": null,
+          "waiting": false,
+          "holdReason": null,
+          "pendingInput": null,
+          "pendingPermissions": null,
+          "pendingForms": null,
+          "outcome": null
+        }
+      ]
+    }
+  }
+}

@@ -4,7 +4,6 @@ import { Effect } from "effect"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { Tasks } from "../tasks/contract.ts"
-import { TaskReads } from "../tasks/read.ts"
 import { registerTaskReads } from "../tasks/rpc.ts"
 import type { WorkerPersona, PlanInput } from "./schema.ts"
 import type { TaskRuntime as ProductionTaskRuntime } from "./runtime.ts"
@@ -47,11 +46,7 @@ async function registeredStart(f: ReturnType<typeof fixture>, input: StartTaskIn
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        yield* registerTaskReads(
-          ctx,
-          new TaskReads(f.repository),
-          f.runtime as unknown as ProductionTaskRuntime,
-        )
+        yield* registerTaskReads(ctx, f.repository, f.runtime as unknown as ProductionTaskRuntime)
       }),
     ),
   )

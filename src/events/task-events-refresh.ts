@@ -50,6 +50,8 @@ type Row = {
   route_model: string | null
   route_variant: string | null
   detail: string | null
+  /** A transition's own payload text, unchanged; NULL for every other kind. */
+  payload: string | null
 }
 
 const COLUMNS = [
@@ -73,6 +75,7 @@ const COLUMNS = [
   "route_model",
   "route_variant",
   "detail",
+  "payload",
 ] as const
 const UPDATED = COLUMNS.filter((column) => column !== "origin")
 /** Writes only a row that differs: a refresh that changes nothing changes no page and wakes no stream. */
@@ -106,6 +109,7 @@ function write(db: Database, row: Row) {
     row.route_model,
     row.route_variant,
     row.detail,
+    row.payload,
   )
 }
 
@@ -116,6 +120,7 @@ const empty = {
   route_provider: null,
   route_model: null,
   route_variant: null,
+  payload: null,
 }
 const str = (value: unknown) => (typeof value === "string" ? value : null)
 const num = (value: unknown) => (typeof value === "number" ? value : null)
@@ -175,6 +180,7 @@ function refreshTransition(db: Database, id: number) {
     from_state: str(event.from),
     to_state: str(event.to),
     detail: JSON.stringify({ event }),
+    payload: row.payload,
   })
 }
 
@@ -319,6 +325,7 @@ function refreshProgress(db: Database, seq: number) {
     route_variant: display.route_variant,
     // The display row (`pg:<seq>`) holds source, ids, agent, result and error: not copied.
     detail: null,
+    payload: null,
   })
 }
 

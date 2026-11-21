@@ -905,6 +905,15 @@ per-hit `repository.get`. Parity: every `TaskDetail` field the panel renders
 (`panel.tsx:681-711,1106-1111,1198-1236,1597-1710,2143-2285`) equals the old `get` on the
 task-schedule corpus. Commit `feat(tasks): selected task detail and activity read streams`.
 
+★ As built (branch `feat/panels-tasks`): `tasks.history` is not a source: classification history,
+advice and audit history are cold columns of `tasks.detail`. Activity is `tasks.activity` (raw
+payload cold) and `tasks.activityPayloads` (payload a list column, for `lz-get-task` and the
+scope review) over `task_events` transitions, which keep `runner_transitions.payload` byte for
+byte (task-events generation 1, amended). The attempt summary is `tasks.attemptCalls` over
+`runner_progress_display`; its 1,000-tick cap is gone. No blocker `kind` column: same-plan
+`waitingOn` is part of the stored `execution`. `task_schedule_sessions(session_id, task_id)` needs
+no index: its primary key leads with those columns. `Tasks.get` stays for the Models panel only.
+
 ### Task 13: Trajectory sources, GUI, tool (L) — 2.3–2.4; demo `trajectory-streams.ts`.
 
 ### Task 14: Delete the old reads; show-read source check (M)
