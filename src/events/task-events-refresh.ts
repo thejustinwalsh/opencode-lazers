@@ -36,6 +36,8 @@ type Row = {
   attempt_id: string | null
   session_id: string | null
   at: number | null
+  /** The old event id: the trajectory read's tie-break. */
+  sort_key: string
   kind: "transition" | "effect" | "check" | "progress"
   origin: string
   event: string | null
@@ -57,6 +59,8 @@ const COLUMNS = [
   "attempt_id",
   "session_id",
   "at",
+  "sort_at",
+  "sort_key",
   "kind",
   "origin",
   "event",
@@ -77,6 +81,9 @@ const UPSERT = `INSERT INTO task_events(${COLUMNS.join(",")}) VALUES(${COLUMNS.m
   WHERE ${UPDATED.map((column) => `task_events.${column} IS NOT excluded.${column}`).join(" OR ")}`
 
 /** Upsert by origin: the row keeps its id (a stream updates it in place); unchanged rows are not written. */
+/** Where the trajectory read puts an event with no time: after every timed one. */
+const UNTIMED = Number.MAX_SAFE_INTEGER
+
 function write(db: Database, row: Row) {
   db.query(UPSERT).run(
     row.project_directory,
@@ -85,6 +92,8 @@ function write(db: Database, row: Row) {
     row.attempt_id,
     row.session_id,
     row.at,
+    row.at ?? UNTIMED,
+    row.sort_key,
     row.kind,
     row.origin,
     row.event,
@@ -159,6 +168,7 @@ function refreshTransition(db: Database, id: number) {
     attempt_id: event.attemptID,
     session_id: event.sessionID,
     at: event.at,
+    sort_key: event.id,
     kind: "transition",
     origin,
     event: event.event,
@@ -230,6 +240,7 @@ function refreshEffect(db: Database, id: string) {
         attempt_id: str(event!.attemptID),
         session_id: str(event!.sessionID),
         at: num(event!.at),
+        sort_key: String(event!.id),
         kind: check ? "check" : "effect",
         origin,
         event: check ? check.id : str(event!.effect),
@@ -294,6 +305,7 @@ function refreshProgress(db: Database, seq: number) {
     attempt_id: display.attempt_id,
     session_id: display.session_id,
     at: display.at,
+    sort_key: `progress:${seq}`,
     kind: "progress",
     origin,
     event: display.kind,

@@ -339,8 +339,11 @@ CREATE TABLE task_events_dirty (ref TEXT PRIMARY KEY, next_at INTEGER NOT NULL D
   progress → `event` = display kind, `status`, `tool`, route. `detail` holds `{ event }` (the old
   read's event object exactly, plus `check`, the old `CheckView`, for checks) or, for progress,
   `{ source, messageID, callID, agent, result, error }`.
-- For Task 13: the old read breaks `at` ties by event id string and sorts NULL `at` last; a
-  stream orders `at, id` (SQLite sorts NULL first). The parity test compares by event id.
+- For Task 13: ★ `sort_at` (`at`, or the largest safe integer when `at` is NULL) and `sort_key`
+  (the old event id) carry the old read's order (NULL `at` last, ties by event id); a timeline
+  orders `sort_at, sort_key, id` through `task_events_task (project_directory, task_id, sort_at,
+sort_key, id)`, which replaces the `at`-ordered index. A parity test checks the order with tied
+  times and an untimed plan cleanup.
 - Writers: guarded triggers queue the source key on `runner_transitions` INSERT
   `WHEN NEW.task_id IS NOT NULL` (and UPDATE OF its displayed columns, never `plan_n`), on
   `runner_effects` INSERT/DELETE/UPDATE OF ★ `plan_id,task_id,attempt_id,kind,state,receipt`,

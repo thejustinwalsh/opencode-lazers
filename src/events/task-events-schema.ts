@@ -37,13 +37,14 @@ const TABLES_SQL = `
     project_directory TEXT NOT NULL, task_id TEXT NOT NULL, plan_id TEXT,
     attempt_id TEXT, session_id TEXT,
     at REAL,
+    sort_at REAL NOT NULL, sort_key TEXT NOT NULL,
     kind TEXT NOT NULL,
     origin TEXT NOT NULL UNIQUE,
     event TEXT, from_state TEXT, to_state TEXT, status TEXT, tool TEXT, title TEXT,
     route_provider TEXT, route_model TEXT, route_variant TEXT,
     detail TEXT
   );
-  CREATE INDEX task_events_task ON task_events(project_directory, task_id, at, id);
+  CREATE INDEX task_events_task ON task_events(project_directory, task_id, sort_at, sort_key, id);
   CREATE INDEX task_events_plan ON task_events(project_directory, plan_id, kind, id);
   CREATE INDEX task_events_attempt ON task_events(project_directory, attempt_id, at, id);
   ${queueTableSQL(TASK_EVENTS_QUEUE)}
