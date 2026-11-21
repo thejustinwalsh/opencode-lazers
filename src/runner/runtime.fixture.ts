@@ -1890,6 +1890,7 @@ export async function prepareIdleArchitect(
   f: ReturnType<typeof fixture>,
   now: number,
   idleFor: number,
+  notice = true,
 ) {
   await runPlan(f)
   await drive(f.runtime, 2)
@@ -1908,7 +1909,24 @@ export async function prepareIdleArchitect(
     decisions: ["Keep the existing approved implementation direction."],
     unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
   })
+  // Renewal is decided when news waits for the Architect: queue the hold's notice.
+  if (notice) queueArchitectNotice(f)
   return f.store.attempts(f.receipt.planID)[0]!
+}
+
+let architectNotices = 0
+/** A new pending notice for the fixture plan's Architect, as a fresh hold would queue. */
+export function queueArchitectNotice(f: ReturnType<typeof fixture>, planID = f.receipt.planID) {
+  const plan = f.store.plan(planID)!
+  ;(
+    Reflect.get(f.runtime, "journal") as {
+      outcome(id: string, payload: unknown, resume: boolean): void
+    }
+  ).outcome(
+    planID,
+    { status: plan.state, reason: `${plan.reason ?? "update"} (${++architectNotices})` },
+    true,
+  )
 }
 
 export function withoutDraft<T extends { draft?: unknown }>(input: T): Omit<T, "draft"> {

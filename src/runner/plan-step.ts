@@ -43,7 +43,6 @@ export type PlanStepDeps = {
   cancelReservedAttempt: Cancellation["cancelReservedAttempt"]
   cancelWorkers: Cancellation["cancelWorkers"]
   command: TaskRuntime["command"]
-  considerArchitectRenewal: ArchitectRenewal["considerArchitectRenewal"]
   continueArchitectRenewal: ArchitectRenewal["continueArchitectRenewal"]
   dispatch: Dispatch["dispatch"]
   integratedPrerequisiteBaseline: Dispatch["integratedPrerequisiteBaseline"]
@@ -84,7 +83,6 @@ export class PlanStep {
   private readonly cancelReservedAttempt: PlanStepDeps["cancelReservedAttempt"]
   private readonly cancelWorkers: PlanStepDeps["cancelWorkers"]
   private readonly command: PlanStepDeps["command"]
-  private readonly considerArchitectRenewal: PlanStepDeps["considerArchitectRenewal"]
   private readonly continueArchitectRenewal: PlanStepDeps["continueArchitectRenewal"]
   private readonly dispatch: PlanStepDeps["dispatch"]
   private readonly integratedPrerequisiteBaseline: PlanStepDeps["integratedPrerequisiteBaseline"]
@@ -122,7 +120,6 @@ export class PlanStep {
     this.cancelReservedAttempt = (...args) => deps.cancelReservedAttempt(...args)
     this.cancelWorkers = (...args) => deps.cancelWorkers(...args)
     this.command = (...args) => deps.command(...args)
-    this.considerArchitectRenewal = (...args) => deps.considerArchitectRenewal(...args)
     this.continueArchitectRenewal = (...args) => deps.continueArchitectRenewal(...args)
     this.dispatch = (...args) => deps.dispatch(...args)
     this.integratedPrerequisiteBaseline = (...args) => deps.integratedPrerequisiteBaseline(...args)
@@ -367,16 +364,6 @@ export class PlanStep {
           this.continueArchitectRenewal(renewal, fence),
         )
         return
-      }
-      // Only work that needs judgement routes; a cold, large Architect is replaced.
-      if (["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) {
-        this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-        if (
-          await this.timed("step:considerArchitectRenewal", () =>
-            this.considerArchitectRenewal(plan!, owner, fence),
-          )
-        )
-          return
       }
     }
     // An owner read can overlap an authorized resume, cancellation, or reassignment.

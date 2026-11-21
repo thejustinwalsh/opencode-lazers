@@ -441,6 +441,9 @@ export class TaskRuntime {
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
       ensureArchitectOwner: (...args) => this.ownership.ensureArchitectOwner(...args),
+      architectRoute: (...args) => this.ownership.architectRoute(...args),
+      recordArchitectRoute: (...args) => this.ownership.recordArchitectRoute(...args),
+      considerArchitectRenewal: (...args) => this.renewal.considerArchitectRenewal(...args),
       host: this.host,
       owner: this.owner,
       projectID: this.projectID,
@@ -676,7 +679,6 @@ export class TaskRuntime {
       cancelReservedAttempt: (...args) => this.cancellation.cancelReservedAttempt(...args),
       cancelWorkers: (...args) => this.cancellation.cancelWorkers(...args),
       command: (...args) => this.command(...args),
-      considerArchitectRenewal: (...args) => this.renewal.considerArchitectRenewal(...args),
       continueArchitectRenewal: (...args) => this.renewal.continueArchitectRenewal(...args),
       dispatch: (...args) => this.dispatchModule.dispatch(...args),
       integratedPrerequisiteBaseline: (...args) =>

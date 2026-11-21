@@ -82,12 +82,10 @@ test("a missing owner is replaced by a fresh Architect and the routing reason is
   await runPlan(f)
   f.sessions.get("owner")!.archived = true
   await drive(f.runtime, 2)
-  const routed = f.store.latestTransition<{ reason: string; action: string }>(
-    planID,
-    null,
-    "ARCHITECT_ROUTED",
-  )
-  expect(routed).toMatchObject({ reason: "missing", action: "fresh" })
+  const routed = (f.store.detail(planID).activity as { event: string; payload: string }[])
+    .filter((row) => row.event === "ARCHITECT_ROUTED")
+    .map((row) => JSON.parse(row.payload) as { reason: string; action: string })
+  expect(routed).toContainEqual(expect.objectContaining({ reason: "missing", action: "fresh" }))
   expect(f.store.plan(planID)!.owner).not.toBe("owner")
 })
 
