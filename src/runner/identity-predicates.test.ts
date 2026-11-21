@@ -117,3 +117,57 @@ test("the check sees the shapes it is meant to", () => {
     ),
   ).toEqual([])
 })
+
+/**
+ * A stream source's `filter()` gets no database handle, so it cannot choose between the text ids
+ * and the integer keys (`planIs` and friends need the connection). No source reads
+ * `runner_transitions` or `runner_progress` at all: a source reads a projection of them
+ * (`task_events`, `runner_progress_display`), which stores `plan_id`/`attempt_id` with its own
+ * indexes. The rule covers what a source names anywhere in `src/streams/sources/`: its table, its
+ * tables list and the SQL its filter and counts return.
+ */
+const SOURCES = join(ROOT, "src/streams/sources")
+
+export function historyTablesNamed(text: string): string[] {
+  const found = new Set<string>()
+  for (const { sql } of literals(text))
+    for (const m of sql.matchAll(/\b(runner_transitions|runner_progress)\b(?!_)/g)) found.add(m[1]!)
+  return [...found]
+}
+
+test("source rules: no stream source names runner_transitions or runner_progress", async () => {
+  const found: string[] = []
+  for (const path of walk(SOURCES).sort()) {
+    const tables = historyTablesNamed(readFileSync(path, "utf8"))
+    if (tables.length) found.push(`${relative(ROOT, path)} ${tables.join(",")}`)
+  }
+  expect(found).toEqual([])
+  // The registered set too: a table name built at run time is still a declared table.
+  await import("../streams/sources/index.ts")
+  const registry = (
+    globalThis as unknown as Record<
+      symbol,
+      Map<string, { name: string; readsTables: readonly string[] }>
+    >
+  )[Symbol.for("lazers.streams.sources.v1")]!
+  const declared = [...registry.values()].flatMap((source) =>
+    source.readsTables
+      .filter((table) => table === "runner_transitions" || table === "runner_progress")
+      .map((table) => `${source.name} ${table}`),
+  )
+  expect(registry.size).toBeGreaterThan(0)
+  expect(declared).toEqual([])
+})
+
+test("source rules: a source whose filter names runner_transitions or runner_progress fails", () => {
+  const source = `defineSource({
+    name: "bad", table: "task_events",
+    filter(input) {
+      return { where: "id IN (SELECT id FROM runner_transitions WHERE task_id = ?)", params: [input.task] }
+    },
+  })`
+  expect(historyTablesNamed(source)).toEqual(["runner_transitions"])
+  expect(historyTablesNamed('const table = "runner_progress"')).toEqual(["runner_progress"])
+  // Its projections are fine.
+  expect(historyTablesNamed('table: "runner_progress_display"')).toEqual([])
+})

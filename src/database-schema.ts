@@ -237,6 +237,16 @@ export const schemaModules = {
       "task_schedule_state",
     ],
   },
+  projections: {
+    generation: 1,
+    source: "src/projections/lifecycle.ts",
+    tables: ["projection_state"],
+  },
+  "task-events": {
+    generation: 1,
+    source: "src/events/task-events-schema.ts",
+    tables: ["task_events", "task_events_dirty"],
+  },
   observability: {
     generation: 1,
     source: "src/observability/source-revision.ts",

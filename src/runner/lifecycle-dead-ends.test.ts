@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { transition } from "xstate"
-import { lifecycleMachines } from "./lifecycle-machines.ts"
+import { lifecycleMachines, lifecycleTransition } from "./lifecycle-machines.ts"
 
 /**
  * Every transition event is classified as either a directly observable event
@@ -149,6 +149,8 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     architect: [],
     terminal: ["text-retired"],
   },
+  // The backfill passes the last source row; a newer derivation generation starts it again.
+  projection: { observable: ["backfilling", "ready"], architect: [], terminal: [] },
 }
 
 type StateConfig = { on?: Record<string, unknown>; type?: string }
@@ -205,4 +207,10 @@ test("a state declared terminal really has no exit", () => {
       expect(leaves, `${domain}.${state} is declared terminal but has exits`).toEqual([])
     }
   }
+})
+
+test("projection: the backfill ends ready, and a generation bump returns ready to backfilling", () => {
+  expect(lifecycleTransition("projection", "backfilling", "ready")).toBe("ready")
+  expect(lifecycleTransition("projection", "ready", "backfilling")).toBe("backfilling")
+  expect(() => lifecycleTransition("projection", "backfilling", "indexing")).toThrow()
 })

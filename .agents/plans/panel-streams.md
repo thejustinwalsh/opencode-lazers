@@ -626,19 +626,56 @@ Sizes: S ≤ 1 day, M 2–3 days, L 4–6 days, XL > 6 days of one implementer.
 ### Task 0: Shared projection owner, `projection` lifecycle, source rules (S)
 
 **Files:** `src/runner/lifecycle-machines.ts` (add `projection: backfilling → ready`,
-`ready → backfilling`), `src/projections/owner.ts`, `src/projections/lifecycle.ts`,
-`src/runner/identity-predicates.test.ts` (scan `src/streams/sources/`),
-`src/streams/sources/rowid.test.ts` (assert every registered source's `tables` are rowid).
+`ready → backfilling`), `src/projections/owner.ts`, `src/projections/lifecycle.ts`
+(`projection_state`, module `projections` generation 1), `src/projections/queue.ts` (dirty queue
+with parking), `src/projections/hook.ts` (per-connection drain hook, called from `atomic` and
+`atomicAsync` in `src/storage.ts`), `src/runner/identity-predicates.test.ts` (scan
+`src/streams/sources/`). `src/streams/sources/rowid.test.ts` already asserts every registered
+source's `tables` are rowid; nothing to add there until a source reads a new table.
+
+As built (replaces the sketch this section first had: one `backfillPage` could not cover a
+projection with several source tables, and an owner per database, not per core, is what the
+schedule owner already does):
 
 ```ts
-export type ProjectionSpec = {
+// src/projections/owner.ts
+export type BackfillPage = { next: number; done: boolean }
+export type BackfillPhase = {
   name: string
-  generation: number
-  backfillPage(db: Database, project: string, after: number): { next: number; done: boolean }
-  drain(db: Database, budget: number): { handled: number; remaining: number }
+  page(db: Database, scope: string, after: number): BackfillPage // one write transaction
 }
-export function startProjection(core: ProjectCore, spec: ProjectionSpec): { close(): void }
+export type ProjectionSpec = {
+  name: string // projection_state.name
+  generation: number // derivation generation; raising it rewrites every row
+  backfill: readonly BackfillPhase[] // ready when the last phase is done
+  queue?: { table: string; drain(db: Database): QueueDrain }
+}
+export function startProjection(
+  path: string,
+  projectDirectory: string,
+  spec: ProjectionSpec,
+  options?: { scope?: string; pacing?: BackfillPacing; onError?(e: unknown): void },
+): { owner: ProjectionOwner; release(): void } // one owner per (database, name, scope)
+// ProjectionOwner: settle(), drain(), status(), idle(), backfillPage(), close()
+
+// src/projections/queue.ts — queue table (ref TEXT PRIMARY KEY, next_at, attempts, error)
+export function queueTableSQL(table: string): string
+export const queueRef: (table: string, refExpr: string) => string // trigger body statement
+export function drainQueue(db, table, refresh: (db, ref) => void, { budget, now? }): QueueDrain
+// src/projections/hook.ts
+export function registerProjectionDrain(name: string, queue: string, drain: (db) => void): void
+export function enrollProjectionConnection(db: Database, name: string): void
+// src/projections/lifecycle.ts
+export function ensureProjectionStateSchema(repository: TaskRepository): void
+export function projectionStatus(db, name, scope?): ProjectionStatus | undefined
+export function resetProjectionState(db, name): void // a schema reinstall rebuilt the tables
 ```
+
+A throwing refresh stays queued with its error and an exponential `next_at` (1 s to 5 min); the
+hook's probe reads only due entries, so later writes skip it, and the owner holds one timer at
+the earliest `next_at`. Idle (ready, nothing due or parked) the owner holds one table-change
+subscription and no timer. The existing schedule owner and progress display backfill keep their
+own owners; moving them onto this one is not part of this plan.
 
 - [ ] Test `projection lifecycle: every state has an exit; generation bump returns ready → backfilling` (extend `lifecycle-dead-ends.test.ts`).
 - [ ] Test `owner: resumes at the stored watermark after a kill; idle when clean holds no timer`.
