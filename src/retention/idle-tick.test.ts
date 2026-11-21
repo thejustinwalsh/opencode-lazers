@@ -43,6 +43,9 @@ test("an idle auto-retention tick reads settings rows, no history and no host", 
       ).run(fixture.receipt.planID, n)
   })
 
+  // Keying the history written before the integer key columns is a one-time upgrade step.
+  await service.backfillKeys(10_000)
+
   for (const setting of ["off", "on and ran an hour ago"]) {
     fixture.repository.atomic((db) => {
       if (setting === "off") {
