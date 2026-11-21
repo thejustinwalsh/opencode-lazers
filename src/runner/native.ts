@@ -895,12 +895,14 @@ export function nativeHost(
             )
           : false
       const active = reportedActive && !contradicted
+      // The host ends an interrupted turn with an `interrupted` idle marker after the input; the
+      // reply it cut off is completed (finish "error"), so the marker is the turn's own record.
       const interrupted =
         !active &&
         !pendingInput &&
         !pendingInteraction &&
         !observationUnstable &&
-        (busyAt > idleAt || unfinishedAssistant)
+        (busyAt > idleAt || unfinishedAssistant || terminalMarker?.outcome === "interrupted")
       // Provider admission can fail before OpenCode creates an assistant message.
       const failedBeforeResponse =
         response === undefined &&
