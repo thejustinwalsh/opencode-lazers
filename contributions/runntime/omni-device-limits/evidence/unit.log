@@ -1,0 +1,10 @@
+$ vitest run --project unit
+
+ RUN  v5.0.4 /Users/tjw/Documents/ChatGPT/runntime.worktrees/omni-trim/packages/runntime
+
+
+ Test Files  61 passed (61)
+      Tests  1199 passed (1199)
+   Start at  10:22:06
+   Duration  2.90s (import 59%, tests 27%, transform 12%, worker 1%)
+

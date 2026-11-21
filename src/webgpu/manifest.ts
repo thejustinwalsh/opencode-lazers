@@ -1,6 +1,6 @@
 export const MODEL_REPOSITORY = "LiquidAI/LFM3-Omni-2B-GGUF"
 export const MODEL_REVISION = "3d29af2ad166f8299c2d820937e47dc0add20ffc"
-export const RUNNTIME_REVISION = "70ab1be9c16571b777b0321073e230e1873b1a4b"
+export const RUNNTIME_REVISION = "625c05e0834753302aef41a122e7121f6c6e3276"
 export const LFM3_TOKENIZER_REVISION = "21d75123f86c1f7ffb4bef1ea202710c4e7ebe67"
 export const LFM3_TOKENIZER_URL = `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/${LFM3_TOKENIZER_REVISION}/tokenizer.json`
 
