@@ -21,6 +21,7 @@ import {
   type RadarProjectFilter,
   type RadarScope,
 } from "./radar-ref.ts"
+import { assertOwnOrChild } from "./radar-flow.ts"
 
 /**
  * The Radar's sources, over stored rows only (`.agents/plans/panel-streams.md`, Panel 1): active
@@ -138,8 +139,10 @@ export const radarNativeCallsSource = defineSource({
     ],
   },
   async authorize(input: RadarNativeCallsFilter, context) {
-    ownSession(input)
-    return scoped(input, context)
+    const checked = await scoped(input, context)
+    // A subagent's calls belong to its parent's view, as the old live read listed them.
+    assertOwnOrChild(context, input.scope, [input.sessionID])
+    return checked
   },
   filter(input: RadarNativeCallsFilter) {
     return {

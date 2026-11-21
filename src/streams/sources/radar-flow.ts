@@ -16,6 +16,30 @@ import type { RadarScope } from "./radar-ref.ts"
  * directory whatever the caller sent, and a session view reads only its own session and that
  * session's children (as `radar.sessions` lists them).
  */
+/**
+ * A session view reads only its own session and that session's children (as `radar.sessions`
+ * lists them): one point read per other session on the unique key of `host_session_state`.
+ */
+export function assertOwnOrChild(
+  context: StreamContext,
+  scope: RadarScope,
+  sessionIDs: readonly string[],
+) {
+  if (scope.kind !== "session") return
+  const child = (id: string) =>
+    context.read?.(
+      (db) =>
+        db
+          .query<{ one: number }, [string, string, string]>(
+            `SELECT 1 AS one FROM host_session_state
+             WHERE project_directory=? AND session_id=? AND parent_session_id=?`,
+          )
+          .get(context.projectDirectory, id, scope.sessionID) !== null,
+    ) === true
+  if (!sessionIDs.every((id) => id === scope.sessionID || child(id)))
+    throw new Error("Selected session is unavailable in this project scope")
+}
+
 async function checked<F extends { scope: RadarScope; projectDirectory: string }>(
   input: F,
   context: StreamContext,
@@ -25,24 +49,8 @@ async function checked<F extends { scope: RadarScope; projectDirectory: string }
   if (!scope?.sessionID || !["session", "project", "all"].includes(scope.kind))
     throw new Error("A Radar read names its scope")
   await context.assertRead(scope.sessionID)
-  const projectDirectory = context.projectDirectory
-  if (scope.kind === "session") {
-    const others = sessionIDs.filter((id) => id !== scope.sessionID)
-    // One point read per other session (the unique key): is it a child of the viewed session?
-    const child = (id: string) =>
-      context.read?.(
-        (db) =>
-          db
-            .query<{ one: number }, [string, string, string]>(
-              `SELECT 1 AS one FROM host_session_state
-               WHERE project_directory=? AND session_id=? AND parent_session_id=?`,
-            )
-            .get(projectDirectory, id, scope.sessionID) !== null,
-      ) === true
-    if (!others.every(child))
-      throw new Error("Selected session is unavailable in this project scope")
-  }
-  return { ...input, projectDirectory }
+  assertOwnOrChild(context, scope, sessionIDs)
+  return { ...input, projectDirectory: context.projectDirectory }
 }
 
 /** One session's steps, newest first, through `transcript_steps_order`. */

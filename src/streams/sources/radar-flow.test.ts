@@ -7,6 +7,13 @@ import { base64ToBytes } from "../gui.ts"
 import { readerPool, type ReaderPool } from "../pool.ts"
 import { createStreamsService } from "../rpc.ts"
 import { radarStepColumns, radarTranscriptColumns } from "./radar-flow-ref.ts"
+import { radarNativeCallColumns } from "./radar-ref.ts"
+import { radarSessionColumns } from "./host-sessions-ref.ts"
+import { ensureNativeCallDisplaySchema } from "../../progress/native-call-display.ts"
+import { assembleLive } from "../../radar/live-view.ts"
+import { sessionCallLines } from "../../radar/monitor-model.ts"
+import "./radar.ts"
+import "./host-sessions.ts"
 import "./radar-flow.ts"
 
 let fixture: ReturnType<typeof makeFixture>
@@ -26,6 +33,7 @@ beforeAll(() => {
   project = fixture.directory
   ensureHostSessionStateSchema(fixture.repository)
   ensureTranscriptMetaSchema(fixture.repository)
+  ensureNativeCallDisplaySchema(fixture.repository)
   const fresh = { cursor: null, base: 0, messageCount: 0, state: "not-read" as const }
   fixture.repository.atomic((db) => {
     writeTranscriptPage(db, project, "ses-worker", fresh, [step("m1", 1), step("m2", 2)], undefined)
@@ -55,6 +63,35 @@ beforeAll(() => {
         createdAt: 1,
         updatedAt: 1,
       })
+  })
+  // A subagent of ses-worker makes a call; another session makes one too.
+  fixture.repository.atomic((db) => {
+    const call = db.query(
+      `INSERT INTO native_tool_calls(project_directory,project_id,session_id,identity_kind,
+         invocation_id,native_call_id,context_call_id,message_id,agent,tool,first_observed_at,
+         last_observed_at,sources_json,event_ids_json,payload)
+       VALUES(?,'project',?,'native-call',?,?,?,'m','explore','read',?,?,'[]','[]',?)`,
+    )
+    call.run(
+      project,
+      "ses-child",
+      "c-child",
+      "c-child",
+      "c-child",
+      100,
+      200,
+      '{"status":"succeeded","detail":"read src/a.ts"}',
+    )
+    call.run(
+      project,
+      "ses-other",
+      "c-other",
+      "c-other",
+      "c-other",
+      100,
+      200,
+      '{"status":"succeeded"}',
+    )
   })
   pool = readerPool(fixture.repository.path, { workers: 1 })
 })
@@ -88,10 +125,15 @@ async function open(
     source,
     filter: { projectDirectory: "/elsewhere", ...filter },
     order,
-    window: 18,
+    window: 40,
   })
   const bytes = base64ToBytes(frame.data)
-  const columns = source === "radar.steps" ? radarStepColumns : radarTranscriptColumns
+  const columns = {
+    "radar.steps": radarStepColumns,
+    "radar.transcripts": radarTranscriptColumns,
+    "radar.nativeCalls": radarNativeCallColumns,
+    "radar.sessions": radarSessionColumns,
+  }[source]!
   const read = readFrame(bytes.buffer, bytes.byteOffset, columns)
   return Array.from({ length: read.header.count }, (_, i) => read.row(i) as Record<string, unknown>)
 }
@@ -146,6 +188,71 @@ test("authorize: a session view reads its own session and its children, not anot
     await expect(
       open(streams, "radar.transcripts", { scope, sessionIDs: ["ses-worker", "ses-other"] }, "key"),
     ).rejects.toThrow("unavailable")
+  } finally {
+    streams.dispose()
+  }
+})
+
+test("radar.nativeCalls: a session view reads its subagent child's calls, not another session's", async () => {
+  const streams = service()
+  const scope = { kind: "session", sessionID: "ses-worker" }
+  try {
+    const child = await open(
+      streams,
+      "radar.nativeCalls",
+      { scope, sessionID: "ses-child" },
+      "recent",
+    )
+    expect(child.map((row) => row.call_id)).toEqual(["c-child"])
+    await expect(
+      open(streams, "radar.nativeCalls", { scope, sessionID: "ses-other" }, "recent"),
+    ).rejects.toThrow("unavailable")
+  } finally {
+    streams.dispose()
+  }
+})
+
+test("parity: a session view lists its subagent child with the child's calls, as the old read did", async () => {
+  const streams = service()
+  const scope = { kind: "session" as const, sessionID: "ses-worker" }
+  try {
+    const sessions = await open(streams, "radar.sessions", { scope }, "recent")
+    expect(sessions.map((row) => row.session_id).sort()).toEqual(["ses-child", "ses-worker"])
+    const nativeCalls = new Map<string, Record<string, unknown>[]>()
+    for (const row of sessions) {
+      const id = String(row.session_id)
+      nativeCalls.set(
+        id,
+        await open(streams, "radar.nativeCalls", { scope, sessionID: id }, "recent"),
+      )
+    }
+    const live = assembleLive({
+      scope,
+      projectDirectory: project,
+      now: 1_000,
+      includeUnmanagedSessions: false,
+      sessions,
+      assignments: [],
+      calls: new Map(),
+      nativeCalls,
+      steps: new Map(),
+      phasesLoading: new Set(),
+    })
+    expect(live.sessions.find((item) => item.sessionID === "ses-child")?.parentSessionID).toBe(
+      "ses-worker",
+    )
+    // The old read's native call line: status from the payload, ended at its last observation.
+    expect(sessionCallLines(live, "ses-child")).toMatchObject([
+      {
+        callID: "c-child",
+        tool: "read",
+        status: "completed",
+        current: false,
+        detail: "read src/a.ts",
+        startedAt: 100,
+        endedAt: 200,
+      },
+    ])
   } finally {
     streams.dispose()
   }
