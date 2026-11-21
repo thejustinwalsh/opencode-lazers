@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { RadarLive } from "./live-view.ts"
-import type { RadarMonitorData } from "./monitor-state.ts"
+import type { RadarMonitorData } from "./monitor-streams.ts"
 import {
   connectionStatus,
   formatAge,
@@ -303,7 +303,6 @@ test("summary segments, coverage gaps and the three connection words", () => {
     live: response,
     loading: false,
     stale: false,
-    resynchronizing: false,
     error: "",
     connection: "connected",
     selectedSessionID: null,
@@ -311,7 +310,7 @@ test("summary segments, coverage gaps and the three connection words", () => {
   })
   const words = [
     connectionStatus(data({})),
-    connectionStatus(data({ stale: true, resynchronizing: true })),
+    connectionStatus(data({ stale: true })),
     connectionStatus(data({ connection: "reconnecting" })),
     connectionStatus(data({ connection: "disconnected" })),
     connectionStatus(data({ live: undefined, loading: true, connection: "connecting" })),

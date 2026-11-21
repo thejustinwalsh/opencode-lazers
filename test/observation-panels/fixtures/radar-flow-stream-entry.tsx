@@ -1,7 +1,7 @@
 import { createComponent, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import { RadarMonitorView } from "../../../src/radar/monitor-view.tsx"
-import type { RadarMonitorData } from "../../../src/radar/monitor-state.ts"
+import type { RadarMonitorData } from "../../../src/radar/monitor-streams.ts"
 import { createTestUI } from "../../models-panel/fixtures/dom-host.ts"
 import { mockupFlowLive } from "../../radar/flow-fixture.ts"
 
@@ -54,7 +54,6 @@ export function mountStream(container: HTMLElement, intervalMs = 400) {
     live: live(at),
     loading: false,
     stale: false,
-    resynchronizing: false,
     error: "",
     connection: "connected",
     selectedSessionID: null,

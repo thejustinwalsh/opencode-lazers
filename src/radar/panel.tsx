@@ -2,7 +2,6 @@ import { Store, bindPlugin, createLatest, createKeyed, usePanel } from "@opencod
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js"
-import { Observability } from "../observability/contract.ts"
 import { Streams } from "../streams/contract.ts"
 import { rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
 import type { HistorySource } from "./history-list.tsx"
@@ -15,9 +14,7 @@ import { statechartLayout } from "./statechart.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
 import { radarLocationGuard, resolveRadarProject } from "./project.ts"
-import { RadarMonitorState } from "./monitor-state.ts"
-import type { RadarMonitorData } from "./monitor-state.ts"
-import { createRadarMonitorTransport } from "./monitor-transport.ts"
+import { openMonitorStreams, type RadarMonitorData } from "./monitor-streams.ts"
 import { RadarMonitorView } from "./monitor-view.tsx"
 import type { MonitorScopeChoice } from "./monitor-view.tsx"
 import { panelErrorMessage } from "../panel-error.ts"
@@ -839,7 +836,6 @@ function emptyRadarMonitorData(key = ""): RadarMonitorData {
     key,
     loading: true,
     stale: true,
-    resynchronizing: true,
     error: "",
     connection: "connecting",
     selectedSessionID: null,
@@ -869,8 +865,9 @@ function RadarLiveMonitorPanel(
 ) {
   const ctx = props.ctx
   const frame = usePanel()
-  const [stateData, setStateData] = createSignal<RadarMonitorData>(emptyRadarMonitorData())
-  const state = new RadarMonitorState(setStateData)
+  const [monitor, setMonitor] = createSignal<() => RadarMonitorData>()
+  /** The session the person picked; kept while the stream still lists it. */
+  const [chosen, setChosen] = createSignal<string | null>(null)
   const { location, current } = props.radarLocation
   const projectKey = radarProjectKey(current)
   const prefs = () => {
@@ -881,9 +878,8 @@ function RadarLiveMonitorPanel(
   }
   const save = (change: Partial<typeof initial>) =>
     saveRadarView(ctx, props.session, projectKey(), change)
-  onCleanup(() => state.close())
 
-  // The selected worker's older calls are a stream of the project's service, one per viewed location.
+  // Every Monitor read is a stream of the project's service, one set per viewed location.
   const [historySource, setHistorySource] = createSignal<HistorySource>()
   createKeyed(
     radarKeyedSource(
@@ -893,46 +889,55 @@ function RadarLiveMonitorPanel(
     ),
     ({ value, key, view }) => {
       const observationScope: ObservationScope = { kind: view.scope, sessionID: value.session }
-      const transport = createRadarMonitorTransport(
-        () => props.session.server.client.rpc(Observability),
-        value.directory,
-        () => props.session.server.connected,
-        value.projectID,
-        radarLocationGuard(value.client, value.directory, () => props.session.directory),
-      )
       const streams = new AbortController()
-      setHistorySource({
-        transport: rpcStreamsTransport(
-          () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
-          streams.signal,
-          {
-            location: { directory: value.directory },
-            ready: radarLocationGuard(value.client, value.directory, () => props.session.directory),
-          },
-        ),
+      const transport = rpcStreamsTransport(
+        () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
+        streams.signal,
+        {
+          location: { directory: value.directory },
+          ready: radarLocationGuard(value.client, value.directory, () => props.session.directory),
+        },
+      )
+      setHistorySource({ transport, projectDirectory: value.directory, scope: observationScope })
+      setChosen(view.monitorSessionID ?? null)
+      // Their own owner: every stream closes when this key changes or the panel closes.
+      const opened = openMonitorStreams({
+        key,
+        transport,
         projectDirectory: value.directory,
-        scope: observationScope,
+        scope: {
+          kind: observationScope.kind === "session" ? "session" : "project",
+          sessionID: value.session,
+        },
+        includeUnmanagedSessions: view.includeUnmanagedSessions,
+        online: () => props.session.server.connected,
       })
+      setMonitor(() => opened.data)
       onCleanup(() => {
+        opened.dispose()
         streams.abort()
         setHistorySource(undefined)
+        setMonitor(undefined)
       })
-      state.connect(
-        key,
-        value.projectID,
-        observationScope,
-        transport,
-        view.includeUnmanagedSessions,
-        view.monitorSessionID ?? null,
-      )
-      onCleanup(() => state.close())
     },
     {
       equals: (left, right) => left.key === right.key && left.value.client === right.value.client,
-      otherwise: () => state.close(),
+      otherwise: () => setMonitor(undefined),
     },
   )
 
+  const stateData = (): RadarMonitorData => {
+    const data = monitor()?.() ?? emptyRadarMonitorData()
+    const picked = chosen()
+    const sessions = data.live?.sessions
+    return {
+      ...data,
+      selectedSessionID:
+        picked && (!sessions || sessions.some((session) => session.sessionID === picked))
+          ? picked
+          : null,
+    }
+  }
   const expectedKey = radarExpectedKey(current, prefs)
   const visibleData = () => {
     const data = stateData()
@@ -992,10 +997,11 @@ function RadarLiveMonitorPanel(
         onDetailsChange={(change) => save(detailsChange(prefs(), props.view, change))}
         onScopeChange={changeScope}
         onSelectSession={(sessionID) => {
-          state.selectSession(sessionID)
+          setChosen(sessionID)
           save({ monitorSessionID: sessionID })
         }}
-        onRefresh={() => state.refreshNow()}
+        // Streams push every change of their rows: there is nothing to re-read.
+        onRefresh={() => {}}
         history={historySource()}
         showIdle={prefs().showIdle === true}
         onShowIdleChange={(showIdle) => save({ showIdle })}

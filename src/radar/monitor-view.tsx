@@ -2,7 +2,7 @@ import { For, Index, untrack, Show, createMemo, createSignal, onCleanup, onMount
 import type { Accessor, JSX } from "solid-js"
 import type { Ui } from "@opencode/plugin/gui"
 import type { ObservationScope } from "../observability/contract.ts"
-import type { RadarMonitorData } from "./monitor-state.ts"
+import type { RadarMonitorData } from "./monitor-streams.ts"
 import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
 import { TaskRing } from "../tasks/state-glyph.tsx"
 import { isRingGlyph } from "../tasks/row-presentation.ts"
@@ -1007,7 +1007,7 @@ export function RadarMonitorView(props: Props) {
                           when={flowModel() && !flowModel()!.quiet}
                           fallback={
                             <div class="lazers-radar-idle">
-                              <h3>Nothing is flowing</h3>
+                              <h3>{quietSentences(response()).heading}</h3>
                               <p>{quietSentences(response()).line}</p>
                               <Show when={quietSentences(response()).state}>
                                 <p>{quietSentences(response()).state}</p>
@@ -1270,6 +1270,11 @@ export function RadarMonitorView(props: Props) {
                     </ul>
                   </Disclosure>
                   <Disclosure label="Messages" count={sessionMessages().length}>
+                    <Show when={session().phasesLoading}>
+                      <p class="lazers-radar-reading">
+                        This session's model steps are still being read.
+                      </p>
+                    </Show>
                     <ol class="lazers-radar-messages" aria-label="Messages">
                       <For each={sessionMessages()}>{(item) => <FlowRow id={item.id} />}</For>
                     </ol>

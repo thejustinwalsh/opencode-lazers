@@ -1,7 +1,7 @@
 import type { IconName } from "@opencode/plugin/gui"
 import type { LiveCall, LiveFlow, LiveRoute, LiveSession, RadarLive } from "./live-view.ts"
 import type { TaskRingGlyph } from "../tasks/row-presentation.ts"
-import type { RadarMonitorData } from "./monitor-state.ts"
+import type { RadarMonitorData } from "./monitor-streams.ts"
 import { isHeldWorker } from "./worker-hold.ts"
 
 type Live = RadarLive

@@ -287,10 +287,22 @@ test("a quiet read says so, with clauses only where data exists", () => {
   expect(model.quiet).toBe(true)
   expect(model.destinations).toEqual([])
   expect(quietSentences(response)).toEqual({
+    heading: "Nothing is flowing",
     line: "No session has called a model or a tool in the last two minutes.",
     state: "Architect is idle · 6 tasks are queued.",
   })
   expect(quietSentences(live({ sessions: [session("lz-1")] })).state).toBe("")
+})
+
+test("a worker whose model steps are still being read is not shown as quiet and final", () => {
+  const reading = { ...session("lz-1"), phasesLoading: true as const }
+  const response = live({ sessions: [architect, reading] })
+  expect(createFlowModel(response, NOW).quiet).toBe(true)
+  expect(quietSentences(response)).toMatchObject({
+    heading: "Reading model steps",
+    line: "One session's model steps are still being read; Flow fills in as they arrive.",
+  })
+  expect(JSON.stringify(quietSentences(response))).not.toMatch(/nknown|Nothing/)
 })
 
 test("sessions keep the Monitor grouping: Architect first, workers indented under it", () => {
