@@ -158,7 +158,10 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   const get = await Effect.runPromise(
     tools.get("lz-get-task")!.execute({ taskID: submitted.taskID, format: "structured" }, context),
   )
-  expect(JSON.parse(String(get.content)).task.provenance.sessionID).toBe("session")
+  expect(JSON.parse(String(get.content))).toMatchObject({
+    task: { provenance: { sessionID: "session" } },
+  })
+  expect(JSON.parse(String(get.content)).task.proposal).not.toHaveProperty("persona")
   const byReference = await Effect.runPromise(
     tools
       .get("lz-get-task")!
@@ -220,10 +223,13 @@ test("native task submission round-trips all task-kind/v1 values through effecti
     "documentation",
     "maintenance",
   ] as const
-  for (const primaryKind of kinds) {
+  const personas = ["ui", "systems", "small-refactoring"] as const
+  for (const [index, primaryKind] of kinds.entries()) {
+    const persona = personas[index % personas.length]!
     const input = {
       ...keyedProposal(`native-kind-${primaryKind}`),
       classification: { taxonomy: "task-kind/v1", primaryKind },
+      persona,
     }
     const submitted = JSON.parse(
       String(
@@ -240,7 +246,7 @@ test("native task submission round-trips all task-kind/v1 values through effecti
     )
     expect(detail.output).toMatchObject({
       status: "found",
-      task: { proposal: { classification: input.classification } },
+      task: { proposal: { classification: input.classification, persona } },
       classification: {
         revision: 1,
         classification: input.classification,
@@ -937,6 +943,7 @@ test("registered Code Mode implementor fetch yields readable instructions before
     ...keyedProposal(),
     guidance:
       "Reuse `TaskRepository` in src/storage.ts. Keep advice separate from required outcomes.",
+    persona: "systems" as const,
   }
   const receipt = await Effect.runPromise(tools.get("lz-submit-task")!.execute(proposal, context))
   const { taskID } = JSON.parse(String(receipt.content))
@@ -963,6 +970,8 @@ test("registered Code Mode implementor fetch yields readable instructions before
   expect(prose).toContain("## Write scope")
   expect(prose).toContain("## Exclusions")
   expect(prose).toContain("## Context references")
+  expect(prose).toContain("## Explicit task persona\n- systems")
+  expect(prose).toContain("manual Start only")
   expect(prose).not.toContain('"proposal"')
   expect(result.output).toBe(prose)
   expect(resultValue({ ...result, content: "This fallback must not override output" })).toBe(
@@ -981,6 +990,7 @@ test("registered Code Mode implementor fetch yields readable instructions before
   expect(structuredValue).toHaveProperty("task.id", taskID)
   expect(structuredValue).toHaveProperty("task.proposal.objective", validProposal().objective)
   expect(structuredValue).toHaveProperty("task.proposal.guidance", proposal.guidance)
+  expect(structuredValue).toHaveProperty("task.proposal.persona", "systems")
 })
 
 test("readable task fetch handles missing and unavailable revisions", async () => {
@@ -1019,6 +1029,8 @@ test("native schema/runtime require keys, validate before database access, and l
   try {
     for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)])
       await expect(call("lz-submit-task", { ...validProposal(), idempotencyKey })).rejects.toThrow()
+    for (const persona of ["auditor", "Systems", null])
+      await expect(call("lz-submit-task", { ...keyedProposal(), persona })).rejects.toThrow()
     await expect(call("lz-submit-task", { ...keyedProposal(), verification: [] })).rejects.toThrow()
     expect(query).not.toHaveBeenCalled()
     expect(exec).not.toHaveBeenCalled()
