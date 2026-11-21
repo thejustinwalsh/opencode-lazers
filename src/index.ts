@@ -237,8 +237,19 @@ export default Plugin.define({
               )
             },
             // The Models sources carry over their RPC's check: an eligible session and the
-            // RPC's own permission on this project (`src/models/server.ts`).
+            // RPC's own permission on this project (`src/models/server.ts`); the Trajectory
+            // sources carry over the observability RPC's (`authorize`, resources `["*"]`).
             assertAction: async (sessionID, action) => {
+              if (action === "lz-inspect-trajectory") {
+                await authorizeRead(
+                  ctx,
+                  { sessionID },
+                  projectID,
+                  repository.projectDirectory,
+                  action,
+                )
+                return
+              }
               await authorizeModels(
                 ctx,
                 sessionID,
