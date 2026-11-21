@@ -96,20 +96,16 @@ function currentIn(db: Database, key: MappingKey): ModelMappingRecord | null {
 export class ModelMappingStore {
   constructor(readonly repository: TaskRepository) {}
 
-  private tablesPresent = false
-  /** Reads run on a deferred read transaction; only a missing table takes the write lock, once. */
+  /** Reads run on a deferred read transaction; only a missing table takes the write lock. */
   private view<T>(run: (db: Database) => T): T {
-    if (!this.tablesPresent) {
-      const exists = this.repository.read(
-        (db) =>
-          db
-            .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='model_mappings'")
-            .get() !== null,
-      )
-      if (!exists) this.repository.atomic(ensureTables)
-      this.tablesPresent = true
+    try {
+      return this.repository.read(run)
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("no such table: model_mappings"))
+        throw error
+      this.repository.atomic(ensureTables)
+      return this.repository.read(run)
     }
-    return this.repository.read(run)
   }
 
   /** GUI path: guarded by the revision the editor last read. */
