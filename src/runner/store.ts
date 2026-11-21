@@ -1827,6 +1827,11 @@ export class RunnerStore {
         .get(planID, this.repository.projectDirectory, this.repository.projectDirectory, planID),
     )
   }
+  /**
+   * Plans whose accepted (or cleanup-blocked) artifact the Architect has not been told about.
+   * Keyed on what the reminder says, status plus artifact, never on plan version: an
+   * ownership-only version bump (an Architect renewal) does not re-arm it.
+   */
   closeoutReviewPlanIDs(): string[] {
     return this.read((db) =>
       db
@@ -1840,7 +1845,7 @@ export class RunnerStore {
            AND NOT EXISTS (
              SELECT 1 FROM runner_outbox o WHERE o.plan_id=p.id
              AND json_extract(o.payload,'$.status')=p.state
-             AND json_extract(o.payload,'$.version')=p.version
+             AND json_extract(o.payload,'$.artifact')=p.artifact
              AND (o.state IN ('pending','delivered')
                OR json_extract(o.payload,'$.closeoutReminder')=1)
            )

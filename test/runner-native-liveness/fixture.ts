@@ -33,6 +33,8 @@ export type NativeLivenessFixtureOptions = {
     id: string
     status: string
     cwd: string
+    /** The shell's output file, as the host's shell record names it. */
+    file?: string
     time: { started: number; completed?: number }
   }>
   /** Other native sessions by ID, e.g. children of the worker. */

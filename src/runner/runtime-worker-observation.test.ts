@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { git } from "./artifacts.ts"
+import { TaskRuntime } from "./runtime.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
 import {
   cancelRunningPlan,
@@ -555,13 +556,31 @@ test("a contradicted active entry counts as idle: cancel finishes and the diagno
 })
 
 test("a turn with no progress past the window is interrupted exactly once", async () => {
-  let clock = 1_000_000
+  const { f, clock, interrupts, attempt } = await stallFixture(60_000)
+  await f.runtime.tick()
+  clock.now += 59_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([])
+  clock.now += 2_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+  // Still busy, still no progress: the follow-up is a hold, never a second interrupt.
+  clock.now += 600_000
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+  expect(countTransitions(f, f.receipt.planID, "WORKER_NO_PROGRESS_INTERRUPT")).toBe(1)
+})
+
+/** A busy worker under a wall clock the test moves, with interrupts captured instead of sent. */
+async function stallFixture(windowMs: number) {
+  const clock = { now: Date.now() }
   const f = fixture({
     shared: true,
     delayed: true,
     taskFiles: [{ name: "a", path: "a.txt" }],
-    now: () => clock,
-    workerNoProgressWindowMs: 60_000,
+    now: () => clock.now,
+    workerNoProgressWindowMs: windowMs,
   })
   await runPlan(f)
   const interrupts: string[] = []
@@ -570,16 +589,104 @@ test("a turn with no progress past the window is interrupted exactly once", asyn
   }
   await f.runtime.tick()
   const attempt = f.store.attempts(f.receipt.planID)[0]!
-  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  const worker = f.sessions.get(attempt.session_id)!
+  expect(worker.busy).toBe(true)
+  return { f, clock, interrupts, attempt, worker }
+}
+
+test("a turn held open only by a shell that never ends is interrupted after the window", async () => {
+  const { f, clock, interrupts, attempt, worker } = await stallFixture(60_000)
+  // The live LZ-216 stall: a hung `bun test` shell stays running while the turn streams nothing.
+  worker.runningShells = 1
   await f.runtime.tick()
-  clock += 59_000
+  clock.now += 30_000
   await f.runtime.tick()
   expect(interrupts).toEqual([])
-  clock += 2_000
+  clock.now += 31_000
   await f.runtime.tick()
   expect(interrupts).toEqual([attempt.session_id])
-  clock += 600_000
+  expect(countTransitions(f, f.receipt.planID, "WORKER_NO_PROGRESS_INTERRUPT")).toBe(1)
+})
+
+test("a shell whose output keeps advancing is progress past the window", async () => {
+  const { f, clock, interrupts, worker } = await stallFixture(60_000)
+  // A long gate that prints a line now and then: its output file keeps growing.
+  worker.runningShells = 1
+  for (let minute = 0; minute < 5; minute++) {
+    clock.now += 40_000
+    worker.shellOutputAt = clock.now - 5_000
+    await f.runtime.tick()
+  }
+  expect(interrupts).toEqual([])
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+})
+
+test("output that stops restarts the window from its last advance", async () => {
+  const { f, clock, interrupts, attempt, worker } = await stallFixture(60_000)
+  worker.runningShells = 1
+  clock.now += 50_000
+  const lastOutput = clock.now
+  worker.shellOutputAt = lastOutput
   await f.runtime.tick()
+  clock.now = lastOutput + 59_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([])
+  clock.now = lastOutput + 61_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+})
+
+test("the stall window runs from durable facts, so a fresh runtime interrupts a worker already past it", async () => {
+  const { f, clock, interrupts, attempt } = await stallFixture(60_000)
+  clock.now += 61_000
+  // A new runtime has no in-memory history of this worker: the attempt and progress rows decide.
+  const fresh = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+    now: () => clock.now,
+    workerNoProgressWindowMs: 60_000,
+  })
+  try {
+    await f.runtime.stop()
+    f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+    await fresh.tick()
+    expect(interrupts).toEqual([attempt.session_id])
+  } finally {
+    await fresh.stop()
+  }
+})
+
+test("a recorded tool call is progress: the window restarts from the newest progress row", async () => {
+  const { f, clock, interrupts, attempt } = await stallFixture(60_000)
+  clock.now += 50_000
+  await f.runtime.tick()
+  f.runtime.progress.recordToolBefore({
+    agent: "lazers-implementor",
+    sessionID: attempt.session_id,
+    callID: "call-progress",
+    messageID: "msg-progress",
+    tool: "shell",
+  })
+  const recordedAt = Date.now()
+  clock.now = recordedAt + 59_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([])
+  clock.now = recordedAt + 61_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+})
+
+test("a stalled turn that an interrupt does not stop holds the plan after another window", async () => {
+  const { f, clock, interrupts, attempt } = await stallFixture(60_000)
+  clock.now += 61_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+  clock.now += 30_000
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+  clock.now += 31_000
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.plan(f.receipt.planID)?.reason).toMatch(/did not stop when interrupted/)
   await f.runtime.tick()
   expect(interrupts).toEqual([attempt.session_id])
   expect(countTransitions(f, f.receipt.planID, "WORKER_NO_PROGRESS_INTERRUPT")).toBe(1)
