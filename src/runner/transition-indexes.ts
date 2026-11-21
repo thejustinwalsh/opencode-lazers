@@ -173,7 +173,11 @@ function spawnIndexBuild(path: string, options: Options, keyTable?: KeyTable): P
   return build
 }
 
-type IndexRepository = { readonly path: string; atomic<T>(run: (db: Database) => T): T }
+type IndexRepository = {
+  readonly path: string
+  read<T>(run: (db: Database) => T): T
+  atomic<T>(run: (db: Database) => T): T
+}
 
 /**
  * Ensure the indexes exist. Small tables are indexed inline in one write transaction; large
@@ -186,6 +190,13 @@ export function ensureTransitionIndexes(
   repository: IndexRepository,
   options: Options = {},
 ): Promise<void> {
+  // Indexes already in place (every start after the first) need no write lock.
+  if (
+    repository.read(
+      (db) => keysTaken(db, "runner_transitions") || !missingTransitionIndexes(db).length,
+    )
+  )
+    return Promise.resolve()
   const needsWorker = repository.atomic((db) => planTransitionIndexes(db, repository.path, options))
   return needsWorker ? spawnIndexBuild(repository.path, options) : Promise.resolve()
 }
@@ -202,6 +213,7 @@ export function ensureKeyIndexes(
   table: KeyTable,
   options: Options = {},
 ): Promise<void> {
+  if (!repository.read((db) => missingKeyIndexes(db, table).length)) return Promise.resolve()
   const needsWorker = repository.atomic((db) => {
     if (!missingKeyIndexes(db, table).length) return false
     const rowid = table === "runner_transitions" ? "id" : "seq"

@@ -164,6 +164,199 @@ function historyPaging(
  * exact review reservations/results; review scoring and round progression stay
  * with the shared reviewer that calls this adapter.
  */
+/** Idempotent `CREATE ... IF NOT EXISTS` statements. */
+const HANDOFF_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS recovery_handoff_requests (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+    attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+    request_generation INTEGER NOT NULL CHECK(request_generation > 0),
+    payload TEXT NOT NULL,
+    PRIMARY KEY(project_directory, request_id),
+    UNIQUE(project_directory, attempt_id, request_generation)
+  );
+  CREATE INDEX IF NOT EXISTS recovery_handoff_requests_attempt
+    ON recovery_handoff_requests(project_directory, attempt_id, request_generation);
+  CREATE TABLE IF NOT EXISTS recovery_handoff_drafts (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    draft_id TEXT NOT NULL,
+    draft_version INTEGER NOT NULL CHECK(draft_version > 0),
+    payload TEXT NOT NULL,
+    PRIMARY KEY(project_directory, request_id, draft_version),
+    UNIQUE(project_directory, draft_id),
+    FOREIGN KEY(project_directory, request_id)
+      REFERENCES recovery_handoff_requests(project_directory, request_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_handoff_reviews (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    owner_json TEXT NOT NULL,
+    contract_version TEXT NOT NULL,
+    contract_json TEXT NOT NULL,
+    check_version TEXT NOT NULL,
+    checks_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, review_id),
+    FOREIGN KEY(project_directory, request_id)
+      REFERENCES recovery_handoff_requests(project_directory, request_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_handoff_rounds (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    round INTEGER NOT NULL CHECK(round > 0),
+    draft_version INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    outcome_json TEXT,
+    completed_at TEXT,
+    PRIMARY KEY(project_directory, review_id, round),
+    FOREIGN KEY(project_directory, review_id)
+      REFERENCES recovery_handoff_reviews(project_directory, review_id),
+    FOREIGN KEY(project_directory, request_id, draft_version)
+      REFERENCES recovery_handoff_drafts(project_directory, request_id, draft_version)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_handoff_reports (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    report_version INTEGER NOT NULL CHECK(report_version > 0),
+    finalization_id TEXT NOT NULL,
+    draft_version INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY(project_directory, report_id),
+    UNIQUE(project_directory, finalization_id),
+    UNIQUE(project_directory, request_id, report_version),
+    UNIQUE(project_directory, request_id, draft_version),
+    FOREIGN KEY(project_directory, request_id, draft_version)
+      REFERENCES recovery_handoff_drafts(project_directory, request_id, draft_version)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_handoff_notifications (
+    project_directory TEXT NOT NULL,
+    intent_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    recipient_session_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY(project_directory, intent_id),
+    UNIQUE(project_directory, report_id),
+    FOREIGN KEY(project_directory, report_id)
+      REFERENCES recovery_handoff_reports(project_directory, report_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_handoff_dispositions (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    disposition_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY(project_directory, disposition_id),
+    FOREIGN KEY(project_directory, report_id)
+      REFERENCES recovery_handoff_reports(project_directory, report_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_handoff_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(project_directory, request_id)
+      REFERENCES recovery_handoff_requests(project_directory, request_id)
+  );
+  CREATE INDEX IF NOT EXISTS recovery_handoff_events_request
+    ON recovery_handoff_events(project_directory, request_id, sequence DESC);
+  CREATE TABLE IF NOT EXISTS recovery_concern_versions (
+    project_directory TEXT NOT NULL,
+    concern_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version > 0),
+    request_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+    attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+    source_session_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, concern_id, version),
+    UNIQUE(project_directory, request_id)
+  );
+  CREATE INDEX IF NOT EXISTS recovery_concerns_attempt
+    ON recovery_concern_versions(project_directory, attempt_id, concern_id, version DESC);
+  CREATE TABLE IF NOT EXISTS recovery_concern_dispositions (
+    project_directory TEXT NOT NULL,
+    disposition_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    concern_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version > 0),
+    attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, disposition_id),
+    UNIQUE(project_directory, request_id),
+    UNIQUE(project_directory, concern_id, version),
+    FOREIGN KEY(project_directory, concern_id, version)
+      REFERENCES recovery_concern_versions(project_directory, concern_id, version)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_checkpoint_commands (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+    attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+    source_session_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, request_id),
+    UNIQUE(project_directory, source_session_id, message_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_checkpoint_delivery (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('prepared','admitted','unknown')),
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, request_id),
+    FOREIGN KEY(project_directory, request_id)
+      REFERENCES recovery_checkpoint_commands(project_directory, request_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_checkpoint_responses (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    response_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, request_id),
+    UNIQUE(project_directory, response_id),
+    FOREIGN KEY(project_directory, request_id)
+      REFERENCES recovery_checkpoint_commands(project_directory, request_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_checkpoint_consumptions (
+    project_directory TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_directory, request_id),
+    FOREIGN KEY(project_directory, request_id)
+      REFERENCES recovery_checkpoint_commands(project_directory, request_id)
+  );
+  CREATE TABLE IF NOT EXISTS recovery_control_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_directory TEXT NOT NULL,
+    attempt_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_directory, kind, record_id)
+  );
+  CREATE INDEX IF NOT EXISTS recovery_control_events_attempt
+    ON recovery_control_events(project_directory, attempt_id, sequence DESC);
+`
+
 export class HandoffStore {
   readonly repository: TaskRepository
   private readonly now: () => string
@@ -173,201 +366,9 @@ export class HandoffStore {
     this.now = now
     // RunnerStore owns the runner tables this adapter joins for source ownership.
     new RunnerStore(repository)
-    repository.atomic((db) => {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS recovery_handoff_requests (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          task_id TEXT NOT NULL REFERENCES tasks(id),
-          plan_id TEXT NOT NULL REFERENCES runner_plans(id),
-          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
-          request_generation INTEGER NOT NULL CHECK(request_generation > 0),
-          payload TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id),
-          UNIQUE(project_directory, attempt_id, request_generation)
-        );
-        CREATE INDEX IF NOT EXISTS recovery_handoff_requests_attempt
-          ON recovery_handoff_requests(project_directory, attempt_id, request_generation);
-        CREATE TABLE IF NOT EXISTS recovery_handoff_drafts (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          draft_id TEXT NOT NULL,
-          draft_version INTEGER NOT NULL CHECK(draft_version > 0),
-          payload TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id, draft_version),
-          UNIQUE(project_directory, draft_id),
-          FOREIGN KEY(project_directory, request_id)
-            REFERENCES recovery_handoff_requests(project_directory, request_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_handoff_reviews (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          review_id TEXT NOT NULL,
-          owner_json TEXT NOT NULL,
-          contract_version TEXT NOT NULL,
-          contract_json TEXT NOT NULL,
-          check_version TEXT NOT NULL,
-          checks_json TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, review_id),
-          FOREIGN KEY(project_directory, request_id)
-            REFERENCES recovery_handoff_requests(project_directory, request_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_handoff_rounds (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          review_id TEXT NOT NULL,
-          round INTEGER NOT NULL CHECK(round > 0),
-          draft_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
-          outcome_json TEXT,
-          completed_at TEXT,
-          PRIMARY KEY(project_directory, review_id, round),
-          FOREIGN KEY(project_directory, review_id)
-            REFERENCES recovery_handoff_reviews(project_directory, review_id),
-          FOREIGN KEY(project_directory, request_id, draft_version)
-            REFERENCES recovery_handoff_drafts(project_directory, request_id, draft_version)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_handoff_reports (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          report_id TEXT NOT NULL,
-          report_version INTEGER NOT NULL CHECK(report_version > 0),
-          finalization_id TEXT NOT NULL,
-          draft_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
-          PRIMARY KEY(project_directory, report_id),
-          UNIQUE(project_directory, finalization_id),
-          UNIQUE(project_directory, request_id, report_version),
-          UNIQUE(project_directory, request_id, draft_version),
-          FOREIGN KEY(project_directory, request_id, draft_version)
-            REFERENCES recovery_handoff_drafts(project_directory, request_id, draft_version)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_handoff_notifications (
-          project_directory TEXT NOT NULL,
-          intent_id TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          report_id TEXT NOT NULL,
-          recipient_session_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          PRIMARY KEY(project_directory, intent_id),
-          UNIQUE(project_directory, report_id),
-          FOREIGN KEY(project_directory, report_id)
-            REFERENCES recovery_handoff_reports(project_directory, report_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_handoff_dispositions (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          report_id TEXT NOT NULL,
-          disposition_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          PRIMARY KEY(project_directory, disposition_id),
-          FOREIGN KEY(project_directory, report_id)
-            REFERENCES recovery_handoff_reports(project_directory, report_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_handoff_events (
-          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          kind TEXT NOT NULL,
-          record_id TEXT NOT NULL,
-          data TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          FOREIGN KEY(project_directory, request_id)
-            REFERENCES recovery_handoff_requests(project_directory, request_id)
-        );
-        CREATE INDEX IF NOT EXISTS recovery_handoff_events_request
-          ON recovery_handoff_events(project_directory, request_id, sequence DESC);
-        CREATE TABLE IF NOT EXISTS recovery_concern_versions (
-          project_directory TEXT NOT NULL,
-          concern_id TEXT NOT NULL,
-          version INTEGER NOT NULL CHECK(version > 0),
-          request_id TEXT NOT NULL,
-          task_id TEXT NOT NULL REFERENCES tasks(id),
-          plan_id TEXT NOT NULL REFERENCES runner_plans(id),
-          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
-          source_session_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, concern_id, version),
-          UNIQUE(project_directory, request_id)
-        );
-        CREATE INDEX IF NOT EXISTS recovery_concerns_attempt
-          ON recovery_concern_versions(project_directory, attempt_id, concern_id, version DESC);
-        CREATE TABLE IF NOT EXISTS recovery_concern_dispositions (
-          project_directory TEXT NOT NULL,
-          disposition_id TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          concern_id TEXT NOT NULL,
-          version INTEGER NOT NULL CHECK(version > 0),
-          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
-          payload TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, disposition_id),
-          UNIQUE(project_directory, request_id),
-          UNIQUE(project_directory, concern_id, version),
-          FOREIGN KEY(project_directory, concern_id, version)
-            REFERENCES recovery_concern_versions(project_directory, concern_id, version)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_checkpoint_commands (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          task_id TEXT NOT NULL REFERENCES tasks(id),
-          plan_id TEXT NOT NULL REFERENCES runner_plans(id),
-          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
-          source_session_id TEXT NOT NULL,
-          message_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id),
-          UNIQUE(project_directory, source_session_id, message_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_checkpoint_delivery (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          state TEXT NOT NULL CHECK(state IN ('prepared','admitted','unknown')),
-          payload TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id),
-          FOREIGN KEY(project_directory, request_id)
-            REFERENCES recovery_checkpoint_commands(project_directory, request_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_checkpoint_responses (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          response_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id),
-          UNIQUE(project_directory, response_id),
-          FOREIGN KEY(project_directory, request_id)
-            REFERENCES recovery_checkpoint_commands(project_directory, request_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_checkpoint_consumptions (
-          project_directory TEXT NOT NULL,
-          request_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id),
-          FOREIGN KEY(project_directory, request_id)
-            REFERENCES recovery_checkpoint_commands(project_directory, request_id)
-        );
-        CREATE TABLE IF NOT EXISTS recovery_control_events (
-          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          project_directory TEXT NOT NULL,
-          attempt_id TEXT NOT NULL,
-          kind TEXT NOT NULL,
-          record_id TEXT NOT NULL,
-          data TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          UNIQUE(project_directory, kind, record_id)
-        );
-        CREATE INDEX IF NOT EXISTS recovery_control_events_attempt
-          ON recovery_control_events(project_directory, attempt_id, sequence DESC);
-      `)
-      // The schedule projection queues a task when its concerns change.
-      installScheduleTriggers(db)
-    })
+    // Only when an object is missing: a current database loads without the write lock.
+    // The schedule projection queues a task when its concerns change.
+    if (repository.installMissing(HANDOFF_SCHEMA)) repository.atomic(installScheduleTriggers)
   }
 
   /** An Architect authorizes a request against an attempt in a currently owned plan. */

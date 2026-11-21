@@ -274,10 +274,39 @@ function sameCoverage(left: RecoveryCoverage, right: RecoveryCoverage): boolean 
  */
 export class RecoveryJournal {
   constructor(readonly repository: TaskRepository) {
-    // The install is idempotent and runs for every store, so a plugin reload upgrades it as well.
-    repository.atomic((db) => this.install(db))
+    // The install is idempotent and runs for every store, so a plugin reload upgrades it as well;
+    // it takes the write lock only when something is missing, so a current database loads without.
+    if (!repository.read((db) => this.current(db))) repository.atomic((db) => this.install(db))
     const module = schemaModules["recovery-progress"]
     repository.installSchema("recovery-progress", module.generation, module.tables, () => {})
+  }
+
+  /** True when `install` would change nothing: every object exists, the triggers carry the window. */
+  private current(db: Database): boolean {
+    const rows = db
+      .query<{ name: string; sql: string }, []>(
+        `SELECT name,sql FROM sqlite_master WHERE name IN (
+           'recovery_progress_facts','recovery_progress_facts_project_cursor','recovery_progress_coverage',
+           'recovery_progress_consumers','recovery_progress_facts_project_source',
+           'recovery_progress_inserted','recovery_progress_modified')`,
+      )
+      .all()
+    const byName = new Map(rows.map((row) => [row.name, row]))
+    if (byName.has("recovery_progress_facts_project_source")) return false
+    for (const name of [
+      "recovery_progress_facts",
+      "recovery_progress_facts_project_cursor",
+      "recovery_progress_coverage",
+      "recovery_progress_consumers",
+    ])
+      if (!byName.has(name)) return false
+    for (const name of ["recovery_progress_inserted", "recovery_progress_modified"])
+      if (!byName.get(name)?.sql.includes(WINDOW_MARKER)) return false
+    return (
+      db
+        .query("SELECT 1 FROM recovery_progress_coverage WHERE project_directory=?")
+        .get(this.repository.projectDirectory) !== null
+    )
   }
 
   private install(db: Database) {

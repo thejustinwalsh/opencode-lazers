@@ -64,8 +64,14 @@ import {
 } from "./models/server.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
-import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
-import { acquireLazersCore } from "./core/core.ts"
+import {
+  section,
+  sectionAsync,
+  sectionEffect,
+  stallProbe,
+  timedHooks,
+} from "./diagnostics/stall-probe.ts"
+import { loadLazersCore } from "./core/load.ts"
 import { nativeEventSubscriptions } from "./core/event-hub.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
 import { registerProjects } from "./projects/rpc.ts"
@@ -105,9 +111,9 @@ export default Plugin.define({
         cores: () => coreSnapshot().length,
       })
       const handle = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          section("core:acquire", () =>
-            acquireLazersCore(ctx, {
+        Effect.promise(() =>
+          sectionAsync("core:acquire", () =>
+            loadLazersCore(ctx, {
               ...(dataDirectory !== undefined ? { dataDirectory } : {}),
               projectID: ctx.location.project.id,
               projectDirectory: ctx.location.project.canonical,

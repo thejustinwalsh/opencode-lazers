@@ -101,6 +101,7 @@ test("the worker is spawned only after the requesting transaction has committed"
   let db: import("bun:sqlite").Database | undefined
   const wrapped = {
     path: repository.path,
+    read: <T>(run: (database: import("bun:sqlite").Database) => T): T => repository.read(run),
     atomic: <T>(run: (database: import("bun:sqlite").Database) => T): T =>
       repository.atomic((database) => {
         db = database
