@@ -9,6 +9,8 @@ import { startHostSessionFold } from "../host-sessions/fold.ts"
 import { startTaskEffortFold } from "../trajectory/effort-store.ts"
 import { startTranscriptMetaFold } from "../transcript-meta/fold.ts"
 import { workerTaskEffort } from "../trajectory/effort-worker-client.ts"
+import { bindHostRuntime } from "../streams/host-source.ts"
+import type { TrajectoryHostRuntime } from "../streams/sources/trajectory-host.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
 import {
   ensureProjectOverviewSchema,
@@ -33,11 +35,9 @@ import {
   createModelsTaskValuationProvider,
   createPriceSourceSettingsStore,
 } from "../models/server.ts"
-import { historyCacheBytes } from "../trajectory/history.ts"
-import { trajectoryCachePair } from "../trajectory/cache-pair.ts"
 import { ObservationReads } from "../observability/read.ts"
 import { projectKeyFor, registerProject } from "../project-key.ts"
-import { globalSettings, spendCeilingFor } from "../projects/settings.ts"
+import { spendCeilingFor } from "../projects/settings.ts"
 import { startProgressDisplayBackfill } from "../progress/display-backfill.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { nativeHost } from "../runner/native.ts"
@@ -333,14 +333,15 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
-  // Sized once at load; a value set in Settings wins over the plugin option on the next load.
-  const historyBytes = historyCacheBytes(
-    globalSettings(repository, {
-      ...(typeof info.options.historyCacheMB === "number"
-        ? { historyCacheMB: info.options.historyCacheMB }
-        : {}),
-    }).historyCacheMB,
-  )
+  // The host access the Trajectory host sources (`trajectory.transcript`, `trajectory.effort`) read.
+  const unbindHostRuntime = bindHostRuntime(repository.projectDirectory, {
+    messages: nativeRunnerHost.messages,
+    events: host,
+    databasePath: repository.path,
+    read: (run) => repository.read(run),
+    effortDetail: effortCompute.detail,
+    touchEffort: (taskID) => taskEffort.fold.touch(taskID),
+  } satisfies TrajectoryHostRuntime)
   const observationSecret = crypto.getRandomValues(new Uint8Array(32))
   const reads = new ObservationReads(
     runnerStore,
@@ -348,9 +349,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     projectID,
     observationSecret,
     taskValuationProvider,
-    undefined,
-    // One cache pair under one budget, owned by this per-project core.
-    trajectoryCachePair(observationSecret, historyBytes),
   )
   built("observationReads")
   const usageCache = new UsageCache()
@@ -423,6 +421,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   }
   const disposeCore = async () => {
     scheduler = undefined
+    unbindHostRuntime()
     displayBackfill.stop()
     taskEventsLease.release()
     nativeCallLease.release()

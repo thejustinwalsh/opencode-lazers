@@ -147,34 +147,6 @@ test("snapshot and live radar page by project with the same stamp", async () => 
     for (const plan of page.plans) expect(plan.project).toEqual(page.project)
 })
 
-test("a task and an attempt of another project resolve under all", async () => {
-  const { three, reads, tracker, units } = await fixture(() => [])
-  const signal = new AbortController().signal
-  const [, b] = three.projects
-  const taskID = b!.taskIDs[0]!
-  const reference = b!.repository.referenceFor(taskID)!
-  expect(reference.startsWith("BBB-")).toBe(true)
-  const attemptID = addAttempt(b!.repository, b!.planIDs[0]!, taskID, "ses-beta-worker")
-  const access = { units: units() }
-
-  for (const request of [{ reference }, { taskID }, { attemptID }]) {
-    const out = await reads.trajectoryAll(
-      { scope: all, limit: 5, ...request },
-      tracker,
-      signal,
-      access,
-    )
-    expect(out.scope).toEqual({ kind: "all" })
-    expect(out.project).toMatchObject({ code: "BBB", loaded: false })
-  }
-  const status = await reads.trajectoryStatusAll({ scope: all, taskID }, tracker, access)
-  expect(status.project?.code).toBe("BBB")
-  // An unknown task or worker session is refused plainly.
-  await expect(
-    reads.trajectoryAll({ scope: all, limit: 5, reference: "BBB-9999" }, tracker, signal, access),
-  ).rejects.toThrow("No observation in this scope")
-})
-
 test("a reference resolves in its own project, and an old code resolves only where it was", async () => {
   const { three, units } = await fixture(() => [])
   const [a, b] = three.projects
@@ -276,24 +248,6 @@ test("rpc: all from a session of another OpenCode project is refused", async () 
   )
 })
 
-test("rpc: trajectory by reference resolves across projects", async () => {
-  const f = await rpcFixture()
-  const [, b] = f.three.projects
-  const taskID = b!.taskIDs[0]!
-  const reference = b!.repository.referenceFor(taskID)!
-  addAttempt(b!.repository, b!.planIDs[0]!, taskID, "ses-beta-worker")
-  const trajectory = await f.call<{ project: { code: string }; scope: unknown }>("trajectory", {
-    scope: all,
-    reference,
-    limit: 5,
-  })
-  expect(trajectory).toMatchObject({ project: { code: "BBB" }, scope: { kind: "all" } })
-  await expect(
-    f.call("trajectory", { scope: all, reference: "BBB-9999", limit: 5 }),
-  ).rejects.toThrow("No observation in this scope")
-  expect(f.asserts).toEqual([])
-})
-
 test("all-projects pages are reads: they take no write lock, so a writer elsewhere does not stop them", async () => {
   const f = await rpcFixture()
   const [a, b] = f.three.projects
@@ -306,7 +260,6 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
   try {
     for (const [method, extra] of [["snapshot", {}]] as const)
       expect((await f.walk(method, extra)).length).toBe(3)
-    await f.call("trajectory", { scope: all, reference, limit: 5 })
   } finally {
     writer.exec("ROLLBACK")
     writer.close()

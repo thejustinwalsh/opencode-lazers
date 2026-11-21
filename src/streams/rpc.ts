@@ -4,8 +4,10 @@ import { timedRpc } from "../diagnostics/stall-probe.ts"
 import { openStream, type Stream } from "./client.ts"
 import { STREAM_LEASE_MS, Streams, type StreamAnchorInput, type StreamFrame } from "./contract.ts"
 import { acquireReaderPool, type ReaderPool } from "./pool.ts"
+import { findHostSource, hostRuntime, openHostStream } from "./host-source.ts"
 import { findSource, type StreamContext } from "./source.ts"
 import "./sources/index.ts"
+import "./sources/host-index.ts"
 import type { Columns } from "./frame.ts"
 
 /**
@@ -107,7 +109,7 @@ export function createStreamsService(options: {
       anchor?: StreamAnchorInput
     }) {
       drop(input.stream)
-      const source = findSource(input.source)
+      const source = findSource(input.source) ?? findHostSource(input.source)
       if (!source) throw new StreamFailedError(input.stream, `Unknown source ${input.source}`)
       let filter = input.filter
       if (source.authorize) {
@@ -126,13 +128,24 @@ export function createStreamsService(options: {
         source.authorize && source.release ? () => source.release!(admitted as never) : undefined
       let stream: Stream<Columns>
       try {
-        stream = openStream(options.pool, source, {
-          filter: filter as never,
-          order: input.order,
-          window: input.window,
-          transport: "copy",
-          ...(input.anchor ? { anchor: input.anchor as never } : {}),
-        })
+        const anchor = input.anchor ? { anchor: input.anchor as never } : {}
+        if ("kind" in source) {
+          const runtime = hostRuntime(options.context?.projectDirectory ?? "")
+          if (!runtime) throw new Error("The host is unavailable for this project")
+          stream = openHostStream(source, {
+            filter: filter as never,
+            window: input.window,
+            runtime: runtime as never,
+            ...anchor,
+          })
+        } else
+          stream = openStream(options.pool, source, {
+            filter: filter as never,
+            order: input.order,
+            window: input.window,
+            transport: "copy",
+            ...anchor,
+          })
       } catch (error) {
         release?.()
         throw error

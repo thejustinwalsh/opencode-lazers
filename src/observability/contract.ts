@@ -1,4 +1,4 @@
-import { TaskReferenceSchema, TaskSourcePlanSchema } from "../task.ts"
+import { TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { ProjectRef } from "../projects/scope.ts"
@@ -249,76 +249,6 @@ const ProgressDiagnosticsOutput = z.strictObject({
   processSchedulerTotals: ProcessSchedulerTotals,
 })
 
-const TrajectoryInput = z
-  .strictObject({
-    scope: ObservationScope,
-    taskID: z.uuid().optional(),
-    attemptID: z.uuid().optional(),
-    /** All-projects scope only: a task of any readable project by its `<CODE>-<n>` reference. */
-    reference: TaskReferenceSchema.optional(),
-    limit: z.int().min(1).max(50).default(20),
-    cursor: z.string().min(1).max(4096).optional(),
-  })
-  .superRefine((input, ctx) => {
-    if (input.reference && input.scope.kind !== "all")
-      ctx.addIssue({
-        code: "custom",
-        path: ["reference"],
-        message: "A reference applies to the all-projects scope only",
-      })
-    if ([input.taskID, input.attemptID, input.reference].filter(Boolean).length !== 1)
-      ctx.addIssue({
-        code: "custom",
-        path: ["taskID"],
-        message: "Provide exactly one taskID or attemptID in this observation scope",
-      })
-  })
-
-export const TrajectoryOutput = z.strictObject({
-  schemaVersion: z.literal(1),
-  projectID: z.string().min(1),
-  scope: ObservationScopeView,
-  /** All-projects scope: the project the task belongs to. */
-  project: ProjectRef.optional(),
-  boundary: Boundary,
-  report: z.record(z.string(), z.unknown()),
-  live: z
-    .strictObject({
-      mode: z.enum(["reset", "patch"]),
-      baseCursor: z.string().nullable(),
-      cursor: z.string().nullable(),
-      removed: z.array(z.string()),
-    })
-    .optional(),
-})
-
-const TrajectoryHistoryInput = z.strictObject({
-  scope: ObservationScope,
-  taskID: z.uuid(),
-  limit: z.int().min(1).max(50).default(20),
-  cursor: z.string().min(1).max(4096).optional(),
-})
-const TrajectoryHistoryOutput = z.strictObject({
-  schemaVersion: z.literal(1),
-  projectID: z.string().min(1),
-  scope: ObservationScopeView,
-  project: ProjectRef.optional(),
-  boundary: Boundary,
-  capturedAt: z.number().finite(),
-  expiresAt: z.number().finite(),
-  eventIDs: z.array(z.string()).optional(),
-  report: z.record(z.string(), z.unknown()),
-})
-const TrajectoryHistoryErrorData = z.strictObject({
-  reason: z.enum(["expired", "evicted", "invalid-cursor"]),
-  recovery: z.literal("recapture"),
-})
-const TrajectoryStatusInput = z.strictObject({
-  scope: ObservationScope,
-  taskID: z.uuid(),
-  live: z.strictObject({ cursor: z.uuid().optional() }).optional(),
-})
-
 export const ObservabilityChanged = z.strictObject({
   projectID: z.string().min(1),
   sequence: z.int().positive(),
@@ -337,13 +267,6 @@ export const Observability = Rpc.define({
       input: ProgressDiagnosticsInput,
       output: ProgressDiagnosticsOutput,
     },
-    trajectory: { input: TrajectoryInput, output: TrajectoryOutput },
-    trajectoryHistory: {
-      input: TrajectoryHistoryInput,
-      output: TrajectoryHistoryOutput,
-      errors: { trajectory_history_unavailable: TrajectoryHistoryErrorData },
-    },
-    trajectoryStatus: { input: TrajectoryStatusInput, output: TrajectoryOutput },
   },
   events: { changed: { schema: ObservabilityChanged } },
 })
@@ -358,10 +281,4 @@ export function singleScope(scope: ObservationScope): SingleScope {
 }
 export type ObservationScopeView = z.infer<typeof ObservationScopeView>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>
-export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
-export type TrajectoryResponse = z.infer<typeof TrajectoryOutput>
-export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
-export type TrajectoryHistoryResponse = z.infer<typeof TrajectoryHistoryOutput>
-export type TrajectoryHistoryErrorReason = z.infer<typeof TrajectoryHistoryErrorData>["reason"]
-export type TrajectoryStatusRequest = z.infer<typeof TrajectoryStatusInput>
 export type ObservationChange = z.infer<typeof ObservabilityChanged>

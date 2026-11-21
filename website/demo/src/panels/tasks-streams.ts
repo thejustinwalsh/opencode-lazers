@@ -65,7 +65,7 @@ const rankOfBucket = (bucket: Bucket) =>
 
 const pad = (value: number) => String(value).padStart(6, "0")
 
-function scheduleRows(data: TasksData, project: string): DemoRow[] {
+export function scheduleRows(data: TasksData, project: string): DemoRow[] {
   const plans = new Map(
     [...new Set(data.tasks.map((task) => task.plan))].map((title, index) => [title, index + 1]),
   )

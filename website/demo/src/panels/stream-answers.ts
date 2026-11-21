@@ -16,7 +16,7 @@ export type Open = {
 }
 
 export function streamAnswers(
-  sources: Record<string, { columns: Columns; key: string[] }>,
+  sources: Record<string, { columns: Columns; key: string[]; detail?: Columns }>,
   rowsOf: (open: Open) => DemoRow[],
 ) {
   const streams = new Map<string, Open>()
@@ -25,7 +25,11 @@ export function streamAnswers(
   const frame = (id: string) => {
     const open = streams.get(id)
     if (!open) throw new Error(`Unknown stream ${id}`)
-    const { columns } = sources[open.source] ?? { columns: {} as Columns }
+    const source = sources[open.source]
+    const columns: Columns =
+      open.window === 1 && source?.detail
+        ? { ...source.columns, ...source.detail }
+        : (source?.columns ?? {})
     const all = rowsOf(open)
     const top = Math.max(0, all.length - open.window)
     open.position = Math.min(top, Math.max(0, open.position))
