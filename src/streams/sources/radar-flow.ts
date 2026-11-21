@@ -28,27 +28,25 @@ async function checked<F extends { scope: RadarScope; projectDirectory: string }
   const projectDirectory = context.projectDirectory
   if (scope.kind === "session") {
     const others = sessionIDs.filter((id) => id !== scope.sessionID)
-    const children = new Set(
-      others.length && context.read
-        ? context.read((db) =>
-            db
-              .query<{ session_id: string }, [string, string]>(
-                `SELECT session_id FROM host_session_state
-                 WHERE project_directory=? AND parent_session_id=?`,
-              )
-              .all(projectDirectory, scope.sessionID)
-              .map((row) => row.session_id),
-          )
-        : [],
-    )
-    if (others.some((id) => !children.has(id)))
+    // One point read per other session (the unique key): is it a child of the viewed session?
+    const child = (id: string) =>
+      context.read?.(
+        (db) =>
+          db
+            .query<{ one: number }, [string, string, string]>(
+              `SELECT 1 AS one FROM host_session_state
+               WHERE project_directory=? AND session_id=? AND parent_session_id=?`,
+            )
+            .get(projectDirectory, id, scope.sessionID) !== null,
+      ) === true
+    if (!others.every(child))
       throw new Error("Selected session is unavailable in this project scope")
   }
   return { ...input, projectDirectory }
 }
 
 /** One session's steps, newest first, through `transcript_steps_order`. */
-export const radarStepsSource = defineSource({
+defineSource({
   name: RADAR_FLOW_SOURCES.steps,
   table: "transcript_steps",
   key: ["id"],
@@ -70,7 +68,7 @@ export const radarStepsSource = defineSource({
  * The read state of the listed sessions (the unique key's index): one row per session the fold has
  * seen. A session with no row is not read yet.
  */
-export const radarTranscriptsSource = defineSource({
+defineSource({
   name: RADAR_FLOW_SOURCES.transcripts,
   table: "transcript_sessions",
   key: ["id"],

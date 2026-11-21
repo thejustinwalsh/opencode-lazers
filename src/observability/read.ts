@@ -18,10 +18,7 @@ import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { sourceStampFromDatabase } from "./changes.ts"
 import { projectAssociations, sessionAssociations } from "./associations.ts"
 import type { TaskValuationProvider } from "../models/task-valuation.ts"
-import { LiveRadarReader } from "./live-read.ts"
 import type {
-  LiveRadarRequestInput,
-  LiveRadarResponse,
   ObservationScope,
   SingleScope,
   ObservationScopeView,
@@ -42,7 +39,6 @@ import { ReadOnlyTaskRepository } from "../storage.ts"
 import type { TaskRepository } from "../storage.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
-import type { RadarSessionHost } from "./native.ts"
 import { planIn } from "../runner/identity-read.ts"
 
 type PlanRecord = {
@@ -562,12 +558,6 @@ export type UnitReads = {
 
 const unavailable = () =>
   Promise.reject(new Error("Native sessions of this project are not loaded here"))
-/** Native reads for a checkout that belongs to another OpenCode location: every call fails. */
-const UNAVAILABLE_SESSION_HOST: RadarSessionHost = {
-  get: unavailable,
-  project: unavailable,
-  descendants: unavailable,
-}
 const UNAVAILABLE_TRAJECTORY_HOST: TrajectoryHost = { session: unavailable, status: unavailable }
 
 /** The OpenCode project id recorded for a LAZERS project, when one is. */
@@ -586,14 +576,12 @@ export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly history: TrajectoryHistoryCache
   private readonly live: TrajectoryLiveCache
-  private readonly liveRadarReader: LiveRadarReader
 
   constructor(
     readonly store: RunnerStore,
     private readonly host: TrajectoryHost,
     private readonly projectID: string,
     readonly secret: Uint8Array,
-    private readonly nativeSessions?: RadarSessionHost,
     private readonly taskValuationProvider?: TaskValuationProvider,
     /** `historyCacheMB` plugin option, in bytes. */
     historyCacheLimitBytes?: number,
@@ -611,17 +599,6 @@ export class ObservationReads {
       new TrajectoryLiveCache(
         historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
       )
-    this.liveRadarReader = new LiveRadarReader(store, nativeSessions, projectID, secret)
-  }
-
-  liveRadar(
-    input: LiveRadarRequestInput,
-    tracker: ObservationChangeTracker,
-    signal: AbortSignal,
-    streamEpoch: string,
-  ) {
-    singleScope(input.scope)
-    return this.liveRadarReader.radar(input, tracker, signal, streamEpoch)
   }
 
   /**
@@ -642,7 +619,6 @@ export class ObservationReads {
       UNAVAILABLE_TRAJECTORY_HOST,
       projectID,
       this.secret,
-      UNAVAILABLE_SESSION_HOST,
       this.taskValuationProvider,
       undefined,
       { history: this.history, live: this.live },
@@ -773,27 +749,6 @@ export class ObservationReads {
       plans: page.plans.map((plan) => ({ ...plan, project: page.project })),
       unplannedTasks: page.unplannedTasks.map((task) => ({ ...task, project: page.project })),
     }
-  }
-
-  async liveRadarAll(
-    input: {
-      scope: { kind: "all"; sessionID: string }
-      includeUnmanagedSessions: boolean
-      cursor?: string
-    },
-    tracker: ObservationChangeTracker,
-    signal: AbortSignal,
-    access: UnitAccess,
-  ): Promise<LiveRadarResponse> {
-    const page = await this.allPage(input, tracker, access, async (unit, scope) =>
-      unit.reads.liveRadar(
-        { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
-        unit.tracker,
-        signal,
-        unit.tracker.streamEpoch,
-      ),
-    )
-    return { ...page, scope: { kind: "all" } }
   }
 
   snapshot(

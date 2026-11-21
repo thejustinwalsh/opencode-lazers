@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { RadarLive } from "./live-view.ts"
 import { layoutMap } from "./map-layout.ts"
 import { createRadarMap, mapFacts, relatedNodes, MAP_ITEMS_PER_GROUP } from "./map-model.ts"
 import type { LiveSession } from "./monitor-model.ts"
@@ -36,16 +36,13 @@ function session(sessionID: string, change: Partial<LiveSession> = {}): LiveSess
   } as LiveSession
 }
 
-function live(
-  sessions: LiveSession[],
-  workload?: LiveRadarResponse["workload"],
-): LiveRadarResponse {
+function live(sessions: LiveSession[], workload?: RadarLive["workload"]): RadarLive {
   return {
     sessions,
     scope: { kind: "project" },
     scheduler: { status: "scheduled", participants: 2 },
     ...(workload ? { workload } : {}),
-  } as unknown as LiveRadarResponse
+  } as unknown as RadarLive
 }
 
 const architect = session("arch", {

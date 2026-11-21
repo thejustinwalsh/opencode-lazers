@@ -5,7 +5,6 @@ import { makeFixture } from "../../test/trajectory/fixture.ts"
 import { associatedSessionIDs, projectSessionIDs } from "./associations.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
-import type { RadarSessionHost } from "./native.ts"
 
 /** The read before this change: every task, plan, attempt and continuation row, ids repeated. */
 function legacyAssociatedSessionIDs(db: Database, projectDirectory: string) {

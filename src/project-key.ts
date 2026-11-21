@@ -200,11 +200,6 @@ export function sameProject(a: string | undefined, b: string | undefined): boole
   return key !== undefined && key === idToKey.get(b)
 }
 
-/** SQL helper: bind as one parameter to `col IN (SELECT value FROM json_each(?))`. */
-export function projectIdsJSON(id: string): string {
-  return JSON.stringify(projectIdsFor(id))
-}
-
 function hydrateProjectAliases(repository: TaskRepository): void {
   for (const row of repository.read((db) =>
     db

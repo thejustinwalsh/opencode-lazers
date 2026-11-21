@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { RadarLive } from "./live-view.ts"
 import { layoutFlow } from "./flow-layout.ts"
 import {
   FEED_CAP,
@@ -77,9 +77,9 @@ function live(parts: {
   sessions: LiveSession[]
   calls?: LiveCall[]
   flow?: LiveFlow[]
-  routes?: LiveRadarResponse["routes"]
-  workload?: LiveRadarResponse["workload"]
-}): LiveRadarResponse {
+  routes?: RadarLive["routes"]
+  workload?: RadarLive["workload"]
+}): RadarLive {
   return {
     sessions: parts.sessions,
     calls: parts.calls ?? [],
@@ -88,7 +88,7 @@ function live(parts: {
     scope: { kind: "project" },
     scheduler: { status: "scheduled", participants: 1 },
     ...(parts.workload ? { workload: parts.workload } : {}),
-  } as unknown as LiveRadarResponse
+  } as unknown as RadarLive
 }
 
 const architect = session("arch", {

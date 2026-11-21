@@ -91,6 +91,8 @@ export function streamAnswers(
       return frame(input.stream)
     },
     read: (input: { stream: string }) => frame(input.stream),
+    /** The `changed` event of every open stream after the data moved: each re-reads its window. */
+    changes: () => [...streams.keys()].map((stream) => ({ stream, seq: sequence + 1 })),
     touch: () => ({ alive: true }),
     close: (input: { stream: string }) => ({ closed: streams.delete(input.stream) }),
   }

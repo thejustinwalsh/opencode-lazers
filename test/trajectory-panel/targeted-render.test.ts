@@ -185,7 +185,6 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       host,
       "project",
       cursorSecret,
-      undefined,
       taskValuationProvider,
     )
     // Broad history volume does not change the panel's targeted-only reads.

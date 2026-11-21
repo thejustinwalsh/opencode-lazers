@@ -32,7 +32,6 @@ import {
   createPriceSourceSettingsStore,
 } from "../models/server.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
-import { nativeRadarSessionHost } from "../observability/native.ts"
 import { historyCacheBytes } from "../trajectory/history.ts"
 import { trajectoryCachePair } from "../trajectory/cache-pair.ts"
 import { ObservationReads } from "../observability/read.ts"
@@ -273,7 +272,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     (directory) => ownsRecordedWorkspace(directory, repository.projectDirectory),
     nativeRunnerHost.messages,
   )
-  const radarSessionHost = nativeRadarSessionHost(host)
   // Live session facts for the Radar and task activity: a fold of host reads, hinted by native
   // events and resynced by cursor on every subscription attach; idle it holds no timer.
   const hostSessions = startHostSessionFold(
@@ -345,7 +343,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     trajectoryHost,
     projectID,
     observationSecret,
-    radarSessionHost,
     taskValuationProvider,
     undefined,
     // One cache pair under one budget, owned by this per-project core.

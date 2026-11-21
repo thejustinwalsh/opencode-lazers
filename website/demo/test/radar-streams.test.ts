@@ -5,8 +5,16 @@ import {
   radarAssignmentColumns,
   radarAttemptDetail,
   radarGroupColumns,
+  radarNativeCallColumns,
   radarWorkloadColumns,
 } from "../../../src/streams/sources/radar-ref.ts"
+import { radarSessionColumns } from "../../../src/streams/sources/host-sessions-ref.ts"
+import {
+  radarStepColumns,
+  radarTranscriptColumns,
+} from "../../../src/streams/sources/radar-flow-ref.ts"
+import { assembleLive } from "../../../src/radar/live-view.ts"
+import { createFlowModel } from "../../../src/radar/flow-model.ts"
 import { radarStreams } from "../src/panels/radar-streams.ts"
 import type { RadarData } from "../src/panels/radar-answers.ts"
 
@@ -41,6 +49,7 @@ const uid = (kind: number, n: number) =>
   `${kind.toString(16).padStart(8, "0")}-0000-4000-8000-${n.toString(16).padStart(12, "0")}`
 const server = radarStreams(() => data, {
   project: "/demo",
+  architect: "ses-demo",
   taskID: (n) => uid(1, n),
   attemptID: (n) => uid(2, n),
   ref: (n) => `LZ-${n}`,
@@ -101,4 +110,47 @@ test("the demo answers a Map group and the workload; the workload is indexed, ne
   expect(queued.rows.map((row) => row.reference)).toEqual(["LZ-12", "LZ-11"])
   const workload = decode(open("radar.workload", {}, 1, "key"), radarWorkloadColumns)
   expect(workload.rows[0]).toMatchObject({ ready: true, queued: 2, needs_you: 1, failed: 0 })
+})
+
+test("the demo answers the Monitor's sessions, calls and model steps; Flow draws them", () => {
+  const sessions = decode(open("radar.sessions", {}, 40), radarSessionColumns)
+  expect(sessions.rows.map((row) => [row.session_id, row.role, row.parent_session_id])).toEqual([
+    ["ses-worker-204", "worker", "ses-demo"],
+    ["ses-demo", "architect", null],
+  ])
+  const steps = decode(open("radar.steps", { sessionID: "ses-worker-204" }, 18), radarStepColumns)
+  expect(steps.rows).toHaveLength(3)
+  expect(steps.rows[0]).toMatchObject({ model_id: "gpt-6-luna", input_tokens: 27_000 })
+  const transcripts = decode(
+    open("radar.transcripts", { sessionIDs: ["ses-worker-204"] }, 1, "key"),
+    radarTranscriptColumns,
+  )
+  expect(transcripts.rows[0]).toMatchObject({ read_state: "available" })
+  const native = decode(
+    open("radar.nativeCalls", { sessionID: "ses-worker-204" }, 18),
+    radarNativeCallColumns,
+  )
+  expect(native.rows[0]).toMatchObject({ tool: "bash", status: "failed", error: "exit 1" })
+  const assignments = decode(open("radar.assignments", {}, 40), radarAssignmentColumns)
+  const calls = decode(
+    open("observability.liveHistory", { sessionID: "ses-worker-204", toolsOnly: true }, 18),
+    liveHistoryColumns,
+  )
+  const scope = { kind: "project" as const, sessionID: "ses-demo" }
+  const live = assembleLive({
+    scope,
+    projectDirectory: "/demo",
+    now: 1_000_000 + 3_500,
+    includeUnmanagedSessions: false,
+    sessions: sessions.rows,
+    assignments: assignments.rows,
+    calls: new Map([["ses-worker-204", calls.rows]]),
+    nativeCalls: new Map([["ses-worker-204", native.rows]]),
+    steps: new Map([["ses-worker-204", steps.rows]]),
+    phasesLoading: new Set(),
+  })
+  const flow = createFlowModel(live, 1_000_000 + 3_500)
+  expect(flow.quiet).toBe(false)
+  expect(flow.models[0]).toMatchObject({ name: "gpt-6-luna", calls: 3 })
+  expect(flow.feed.some((row) => row.kind === "model")).toBe(true)
 })

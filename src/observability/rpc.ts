@@ -176,31 +176,6 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
-      liveRadar: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all")
-              return reads.liveRadarAll(
-                {
-                  scope: input.scope,
-                  includeUnmanagedSessions: input.includeUnmanagedSessions,
-                  ...(input.cursor ? { cursor: input.cursor } : {}),
-                },
-                tracker,
-                signal,
-                await accessFor(input.scope),
-              )
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            return reads.liveRadar(input, tracker, signal, tracker.streamEpoch)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
       trajectory: (input) =>
         Effect.tryPromise({
           try: async (signal) => {

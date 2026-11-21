@@ -5,7 +5,6 @@ import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { AssociationTaskReads } from "../../src/observability/task-reads.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
 import { registerObservability } from "../../src/observability/rpc.ts"
-import type { RadarNativeSession, RadarSessionHost } from "../../src/observability/native.ts"
 import { Tasks } from "../../src/tasks/contract.ts"
 import { openStream } from "../../src/streams/client.ts"
 import { acquireReaderPool } from "../../src/streams/pool.ts"
@@ -117,26 +116,6 @@ test("registered observation RPC resolves scope through native sessions and enfo
   let denied = false
   let foreign = false
   let archived = false
-  const nativeMetadataReads: string[] = []
-  const radarSessions: RadarSessionHost = {
-    get: async (id): Promise<RadarNativeSession> => {
-      nativeMetadataReads.push(id)
-      return {
-        id,
-        projectID: "project",
-        parentID: id === "ses-failed" ? "ses-owner" : null,
-        directory: fixture.directory,
-        agent: "architect",
-        model: { providerID: "openai", id: "gpt-6-luna", variant: null },
-        archived: false,
-        busy: false,
-        createdAt: 1_000,
-        updatedAt: 2_000,
-      }
-    },
-    project: async () => ({ sessions: [], truncated: false }),
-    descendants: async () => ({ sessions: [], truncated: false }),
-  }
   let handlers:
     | {
         snapshot(input: unknown): Effect.Effect<unknown>
@@ -178,7 +157,6 @@ test("registered observation RPC resolves scope through native sessions and enfo
               fixture.host,
               "project",
               new Uint8Array(32).fill(4),
-              radarSessions,
             ),
             "project",
           )

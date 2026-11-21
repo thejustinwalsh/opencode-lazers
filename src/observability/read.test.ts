@@ -30,7 +30,6 @@ test("trajectory projection preserves unique-session effort and refuses out-of-s
       fixture.host,
       "project",
       secret,
-      undefined,
       async (input) => {
         valuationReads += 1
         return unavailableTaskValuation(input)

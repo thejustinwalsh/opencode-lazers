@@ -478,12 +478,7 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
   const secret = new Uint8Array(32).fill(5)
   const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
   tracker.initialize()
-  const sessions = {
-    get: async () => null,
-    project: async () => ({ sessions: [], truncated: false }),
-    descendants: async () => ({ sessions: [], truncated: false }),
-  }
-  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, sessions)
+  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
   const before = await reads.trajectory(
     { scope: { kind: "session", sessionID: "ses-failed" }, taskID, limit: 20 },
     tracker,

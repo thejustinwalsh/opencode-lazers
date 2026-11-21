@@ -5,7 +5,6 @@ import {
   secondAttemptID,
   taskID,
 } from "../../../test/trajectory/fixture.ts"
-import { LiveReadStore } from "../../observability/live-store.ts"
 import { meterRepository } from "../../runner/read-meter.fixture.ts"
 import { insertTask } from "../../tasks/schedule/fixture.ts"
 import { storedGroupHead, storedWorkload } from "../../tasks/schedule/stored.ts"
@@ -101,10 +100,46 @@ async function rows<F, C extends Columns>(
   return items
 }
 
-test("radar.assignments parity: equals readCurrent's active assignments for project and session scope", async () => {
-  const live = new LiveReadStore(fixture.repository.path, project, "project")
+/**
+ * What the old live read (`LiveReadStore.readCurrent`, deleted with it) built per active attempt:
+ * the attempt row, the task's reference and objective, and its plan node's recorded state.
+ */
+function recordedAssignments(session: string | null) {
+  return fixture.repository.read((db) =>
+    db
+      .query<
+        {
+          session_id: string
+          id: string
+          plan_id: string
+          task_id: string
+          state: string
+          started_at: number
+          number: number
+          title: string
+          node_state: string
+          node_reason: string | null
+          plan_state: string
+          plan_reason: string | null
+        },
+        [string | null, string | null]
+      >(
+        `SELECT a.session_id,a.id,a.plan_id,a.task_id,a.state,a.started_at,a.number,
+           substr(json_extract(t.body,'$.proposal.objective'),1,600) AS title,
+           n.state AS node_state,n.reason AS node_reason,p.state AS plan_state,p.reason AS plan_reason
+         FROM runner_attempts a JOIN tasks t ON t.id=a.task_id
+         JOIN runner_nodes n ON n.plan_id=a.plan_id AND n.task_id=a.task_id
+         JOIN runner_plans p ON p.id=a.plan_id
+         WHERE a.state IN ('preparing','running','verifying') AND (?1 IS NULL OR a.session_id=?2)
+         ORDER BY a.started_at DESC,a.id DESC`,
+      )
+      .all(session, session),
+  )
+}
+
+test("radar.assignments parity: equals the old read's active assignments for project and session scope", async () => {
   for (const session of [null, "ses-failed"] as const) {
-    const old = [...live.readCurrent(session, signal).assignments.values()]
+    const old = recordedAssignments(session)
     const scope: RadarScope = session ? { kind: "session", sessionID: session } : owner
     const filter = {
       projectDirectory: project,
@@ -115,36 +150,22 @@ test("radar.assignments parity: equals readCurrent's active assignments for proj
     expect(old.length).toBe(session ? 1 : 2)
     expect(
       shown.map((row) => ({
-        sessionID: row.session_id,
-        attemptID: row.id,
-        planID: row.plan_id,
-        taskID: row.task_id,
+        session_id: row.session_id,
+        id: row.id,
+        plan_id: row.plan_id,
+        task_id: row.task_id,
         state: row.state,
-        startedAt: row.started_at,
-        attemptNumber: row.number,
-        taskReference: row.reference,
-        task: {
-          state: row.node_state,
-          reason: row.node_reason,
-          planState: row.plan_state,
-          planReason: row.plan_reason,
-        },
+        started_at: row.started_at,
+        number: row.number,
+        title: row.title,
+        node_state: row.node_state,
+        node_reason: row.node_reason,
+        plan_state: row.plan_state,
+        plan_reason: row.plan_reason,
       })),
-    ).toEqual(
-      old.map((item) => ({
-        sessionID: item.sessionID,
-        attemptID: item.attemptID,
-        planID: item.planID,
-        taskID: item.taskID,
-        state: item.state,
-        startedAt: item.startedAt,
-        attemptNumber: item.attemptNumber,
-        taskReference: item.taskReference,
-        task: item.task!,
-      })),
-    )
-    // Titles: the stored title is the task's objective, as the old label read it.
-    for (const [i, item] of old.entries()) expect(shown[i]!.title).toBe(item.taskTitle!)
+    ).toEqual(old)
+    for (const row of shown)
+      expect(row.reference).toBe(fixture.repository.referenceFor(String(row.task_id))!)
   }
 })
 

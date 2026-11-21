@@ -24,9 +24,9 @@ import { assembleLive, type RadarLive, type StreamRow } from "./live-view.ts"
  * session; a lane of 9 shown plus 9 of slop is 18. Monitor shows current calls and the latest
  * finished one; Flow counts the last two minutes.
  */
-export const SESSIONS_WINDOW = 40
-export const CALLS_WINDOW = 18
-export const STEPS_WINDOW = 18
+const SESSIONS_WINDOW = 40
+const CALLS_WINDOW = 18
+const STEPS_WINDOW = 18
 
 export type RadarMonitorData = {
   key: string
@@ -68,7 +68,7 @@ const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((item, index) => item === b[index])
 
 /** The Monitor's streams for one source; the caller disposes them with its owner. */
-export function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData> {
+function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData> {
   const base = { projectDirectory: source.projectDirectory, scope: source.scope }
   const sessions = createStream(source.transport, radarRefs.sessions, () => ({
     filter: base,

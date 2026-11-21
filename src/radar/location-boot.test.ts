@@ -1,56 +1,44 @@
 import { expect, test } from "bun:test"
-import { createRadarMonitorTransport } from "./monitor-transport.ts"
+import { rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
 import {
   isRadarLocationLoaded,
   matchRadarProject,
   radarLocationGuard,
-  RadarLocationNotLoadedError,
   resolveRadarProject,
 } from "./project.ts"
 
-const scope = { kind: "project" } as never
 const signal = new AbortController().signal
+const open = { stream: "s", source: "radar.sessions", filter: {}, order: "recent", window: 40 }
 
 function spyRPC() {
   const calls: string[] = []
   const rpc = {
-    liveRadar: async () => (calls.push("liveRadar"), {}),
+    open: async () => (calls.push("open"), { seq: 1, data: "" }),
     events: { subscribe: async function* () {} },
-  } as never
+  } as unknown as StreamsRpc
   return { calls, rpc }
 }
+
+/** The Monitor's streams transport, guarded as the panel guards it (`panel.tsx`). */
+const monitorTransport = (rpc: StreamsRpc, ready: () => Promise<boolean>) =>
+  rpcStreamsTransport(() => rpc, signal, { location: { directory: "/work/p" }, ready })
 
 test("an unloaded directory yields no location-scoped host call", async () => {
   const { calls, rpc } = spyRPC()
   const client = {
     debug: { location: { list: async () => [{ directory: "/other" }] } },
   }
-  const loaded = () => isRadarLocationLoaded(client, "/work/project.worktrees/idle")
-  const monitor = createRadarMonitorTransport(
-    () => rpc,
-    "/work/project.worktrees/idle",
-    () => true,
-    "p",
-    loaded,
-  )
-  await expect(monitor.liveRadar(scope, false, signal)).rejects.toBeInstanceOf(
-    RadarLocationNotLoadedError,
-  )
+  const guard = radarLocationGuard(client, "/work/project.worktrees/idle", () => "/work/project")
+  await expect(monitorTransport(rpc, guard).open(open)).rejects.toThrow("not loaded")
   expect(calls).toEqual([])
+  await expect(isRadarLocationLoaded(client, "/work/project.worktrees/idle")).resolves.toBe(false)
 })
 
 test("a loaded directory is read, and a host that cannot list locations is never booted", async () => {
   const { calls, rpc } = spyRPC()
   const loadedClient = { debug: { location: { list: async () => [{ directory: "/work/p/" }] } } }
-  const transport = createRadarMonitorTransport(
-    () => rpc,
-    "/work/p",
-    () => true,
-    "p",
-    () => isRadarLocationLoaded(loadedClient, "/work/p"),
-  )
-  await transport.liveRadar(scope, false, signal)
-  expect(calls).toEqual(["liveRadar"])
+  await monitorTransport(rpc, () => isRadarLocationLoaded(loadedClient, "/work/p")).open(open)
+  expect(calls).toEqual(["open"])
   expect(await isRadarLocationLoaded({}, "/work/p")).toBe(false)
 })
 
@@ -79,15 +67,8 @@ test("the viewed session directory proceeds with a GUI client that has no debug 
   const gui = {}
   const viewed = "/work/project"
   const guard = radarLocationGuard(gui, viewed, () => viewed)
-  const monitor = createRadarMonitorTransport(
-    () => rpc,
-    viewed,
-    () => true,
-    "p",
-    guard,
-  )
-  await monitor.liveRadar(scope, false, signal)
-  expect(calls).toEqual(["liveRadar"])
+  await monitorTransport(rpc, guard).open(open)
+  expect(calls).toEqual(["open"])
 
   // Any other directory fails closed: no debug API, or a failing listing.
   const other = "/work/project.worktrees/idle"

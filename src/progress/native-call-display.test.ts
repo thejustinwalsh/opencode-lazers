@@ -2,7 +2,6 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { LiveReadStore } from "../observability/live-store.ts"
 import { startProjection } from "../projections/owner.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
@@ -73,7 +72,6 @@ function insert(repository: TaskRepository, calls: readonly Call[]) {
   })
 }
 
-const signal = new AbortController().signal
 const corpus: Call[] = [
   ...Array.from({ length: 25 }, (_, i) => ({
     session: "ses-architect",
@@ -124,46 +122,79 @@ const display = (repository: TaskRepository) =>
       .all(repository.projectDirectory),
   )
 
-function parity(directory: string, path: string, repository: TaskRepository) {
+/**
+ * What the old live read returned for a call (`LiveReadStore.nativeCalls` and `toolDetails`,
+ * deleted with the read): the stored identity fields, the payload's status, its detail cut to 200
+ * characters and its error message cut to 240. Each display row must carry exactly that.
+ */
+function parity(repository: TaskRepository) {
   const rows = display(repository)
-  const live = new LiveReadStore(path, directory, "project")
-  const sessions = ["ses-architect", "ses-other"]
-  // The old native read: the latest native calls per session, every listed field.
-  const old = live.nativeCalls(sessions, signal)
-  for (const call of old) {
-    const row = rows.find(
-      (candidate) =>
-        candidate.identity_kind === "native-call" &&
-        candidate.session_id === call.session_id &&
-        candidate.call_id === call.call_id,
-    )
-    expect(row).toMatchObject({
+  const stored = repository.read((db) =>
+    db
+      .query<
+        {
+          session_id: string
+          identity_kind: string
+          invocation_id: string
+          native_call_id: string | null
+          context_call_id: string | null
+          message_id: string | null
+          tool: string | null
+          first_observed_at: number
+          last_observed_at: number
+          payload: string
+        },
+        [string]
+      >(
+        `SELECT session_id,identity_kind,invocation_id,native_call_id,context_call_id,message_id,tool,
+           first_observed_at,last_observed_at,payload
+         FROM native_tool_calls WHERE project_directory=?`,
+      )
+      .all(repository.projectDirectory),
+  )
+  let natives = 0
+  for (const call of stored) {
+    const payload = JSON.parse(call.payload) as {
+      status?: string
+      detail?: string
+      error?: { message?: string }
+    }
+    const detailKey = call.native_call_id ?? call.context_call_id ?? call.invocation_id
+    const detail = payload.detail ? Array.from(payload.detail).slice(0, 200).join("") : null
+    // The tool detail of every call, local invocations included, under its detail key.
+    expect(
+      rows.find((row) => row.session_id === call.session_id && row.detail_call_id === detailKey)
+        ?.detail ?? null,
+    ).toBe(detail)
+    if (call.identity_kind !== "native-call") continue
+    natives++
+    expect(
+      rows.find(
+        (row) =>
+          row.identity_kind === "native-call" &&
+          row.session_id === call.session_id &&
+          row.call_id === call.invocation_id,
+      ),
+    ).toMatchObject({
       message_id: call.message_id,
       tool: call.tool,
       first_observed_at: call.first_observed_at,
       last_observed_at: call.last_observed_at,
-      status: call.status,
-      detail: call.detail,
-      error: call.error,
+      status: payload.status ?? null,
+      detail,
+      error: payload.error?.message
+        ? Array.from(payload.error.message).slice(0, 240).join("")
+        : null,
     })
   }
-  // The old tool details: one 200-character detail per session and call key.
-  const details = live.toolDetails(sessions, signal)
-  expect(details.size).toBeGreaterThan(0)
-  for (const [key, detail] of details) {
-    const [session, call] = key.split("\u0000")
-    expect(
-      rows.find((row) => row.session_id === session && row.detail_call_id === call)?.detail,
-    ).toBe(detail)
-  }
-  return old.length
+  return natives
 }
 
 test("parity: display rows carry what the live native-call and tool-detail reads returned, kept by triggers", () => {
-  const { directory, path, repository } = store()
+  const { repository } = store()
   insert(repository, corpus)
   expect(display(repository).length).toBe(corpus.length)
-  expect(parity(directory, path, repository)).toBeGreaterThan(10)
+  expect(parity(repository)).toBeGreaterThan(10)
   // The recorder's merge, an identity promotion and retention keep the rows current.
   repository.atomic((db) => {
     db.query(
@@ -183,7 +214,7 @@ test("parity: display rows carry what the live native-call and tool-detail reads
   expect(rows.find((row) => row.call_id === "native-9")?.identity_kind).toBe("native-call")
   expect(rows.some((row) => row.call_id === "call-2")).toBe(false)
   expect(rows.length).toBe(corpus.length - 1)
-  parity(directory, path, repository)
+  parity(repository)
 })
 
 test("backfill: calls from before the table are displayed newest first, resuming after a kill", async () => {

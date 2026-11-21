@@ -6,7 +6,7 @@ import { projectUnits } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { ObservationChangeTracker } from "./changes.ts"
-import { LiveRadarOutput, SnapshotOutput } from "./contract.ts"
+import { SnapshotOutput } from "./contract.ts"
 import { ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
@@ -20,23 +20,10 @@ afterEach(() => {
 const secret = new Uint8Array(32).fill(7)
 const host = { session: async () => null, status: async () => null }
 
-const emptyInventory = { sessions: [], truncated: false }
-const nativeSessions = {
-  get: async () => null,
-  project: async () => emptyInventory,
-  descendants: async () => emptyInventory,
-}
-
 async function fixture(live: (three: Awaited<ReturnType<typeof threeProjects>>) => string[]) {
   const three = await threeProjects()
   const [a] = three.projects
-  const reads = new ObservationReads(
-    new RunnerStore(a!.repository),
-    host,
-    "project",
-    secret,
-    nativeSessions,
-  )
+  const reads = new ObservationReads(new RunnerStore(a!.repository), host, "project", secret)
   const tracker = new ObservationChangeTracker(a!.repository, secret, "project")
   tracker.initialize()
   const units = () => projectUnits(a!.repository, () => live(three))
@@ -160,19 +147,6 @@ test("snapshot and live radar page by project with the same stamp", async () => 
   expect(snapshots.every((page) => SnapshotOutput.safeParse(page).success)).toBe(true)
   for (const page of snapshots)
     for (const plan of page.plans) expect(plan.project).toEqual(page.project)
-
-  const live = await walk((cursor) =>
-    reads.liveRadarAll(
-      { scope: all, includeUnmanagedSessions: false, ...(cursor ? { cursor } : {}) },
-      tracker,
-      signal,
-      access(),
-    ),
-  )
-  expect(live.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
-  expect(live.every((page) => LiveRadarOutput.safeParse(page).success)).toBe(true)
-  for (const page of live.slice(1))
-    for (const session of page.sessions) expect(session.state).toBe("unknown")
 })
 
 test("a task and an attempt of another project resolve under all", async () => {
@@ -313,7 +287,6 @@ test("rpc: every all-projects read lists every project and asserts no permission
   const f = await rpcFixture()
   for (const [method, extra] of [
     ["snapshot", {}],
-    ["liveRadar", { includeUnmanagedSessions: false }],
     ["progressDiagnostics", {}],
   ] as const) {
     const pages = await f.walk(method, extra)
@@ -360,10 +333,7 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
   const writer = new Database(f.three.path)
   writer.exec("BEGIN IMMEDIATE")
   try {
-    for (const [method, extra] of [
-      ["snapshot", {}],
-      ["liveRadar", { includeUnmanagedSessions: false }],
-    ] as const)
+    for (const [method, extra] of [["snapshot", {}]] as const)
       expect((await f.walk(method, extra)).length).toBe(3)
     await f.call("trajectory", { scope: all, reference, limit: 5 })
     await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
