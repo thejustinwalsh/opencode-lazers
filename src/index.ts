@@ -379,7 +379,7 @@ export default Plugin.define({
           ctx,
           progress,
           projectID,
-          (sessionID) => runtime.observeArchitectSourceEvent(sessionID),
+          (sessionID, type) => runtime.observeArchitectSourceEvent(sessionID, type),
           () => core.wake(),
           core.host.messages,
         ),

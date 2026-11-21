@@ -159,7 +159,7 @@ export class QueueReview {
    * dead-ends on a rule that arrived after it.
    */
   async releaseFallowConfigHolds(fence: number) {
-    const held = this.store.atomic((db) =>
+    const held = this.store.read((db) =>
       db
         .query<{ id: string }, [string]>(
           "SELECT id FROM runner_plans WHERE project_directory=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",

@@ -24,6 +24,12 @@ export type ArchitectSourcesDeps = {
  * continuity records, and the source scan. Owns the epoch, resync and failure state. Moved out
  * of `TaskRuntime` without rewriting; the private aliases below keep the member bodies identical.
  */
+/** Native events that cannot add or change an Architect source input or message. */
+const JOURNAL_NEUTRAL_EVENTS: ReadonlySet<string> = new Set([
+  "session.usage.updated",
+  "session.status",
+])
+
 export class ArchitectSources {
   private readonly validArchitect: ArchitectOwnership["validArchitect"]
   private readonly renewalEvent: ArchitectSourcesDeps["renewalEvent"]
@@ -87,9 +93,11 @@ export class ArchitectSources {
    * sources; for sources the epoch bumps in memory at once and the durable
    * invalidation is coalesced (250ms) off the event path.
    */
-  observeArchitectSourceEvent(sessionID?: string) {
+  observeArchitectSourceEvent(sessionID?: string, eventType?: string) {
     if (sessionID) {
       if (!this.sourceEpochs.has(sessionID)) return
+      // Usage and status events carry no input or message: the journal cannot have changed.
+      if (eventType !== undefined && JOURNAL_NEUTRAL_EVENTS.has(eventType)) return
       this.scheduleSourceInvalidation(sessionID)
       return
     }
@@ -313,13 +321,29 @@ export class ArchitectSources {
     }
   }
   private readonly sourceScanFailures = new Map<string, string>()
+  /**
+   * Sources this process has read to the end and found current: the event epoch and renewal state
+   * it was read at. While neither moved, nothing new can be in the host, so the tick asks nothing.
+   */
+  private readonly sourceVerified = new Map<string, { epoch: number; renewalState: string }>()
   async reconcileArchitectSources(fence: number) {
     if (!this.host.architectInputPage) return
     for (const source of this.store.architectSources()) {
       const renewal = this.store.architectRenewal(source.renewal_id)
       if (!renewal) continue
+      const verified = this.sourceVerified.get(source.session_id)
+      if (
+        verified &&
+        verified.epoch === this.sourceEpochs.get(source.session_id) &&
+        verified.renewalState === renewal.state
+      )
+        continue
       try {
-        await this.inspectArchitectSourcePage(renewal, fence)
+        const epoch = this.sourceEpochs.get(source.session_id) ?? 0
+        const result = await this.inspectArchitectSourcePage(renewal, fence)
+        if (result.nextCursor === null && epoch === this.sourceEpochs.get(source.session_id))
+          this.sourceVerified.set(source.session_id, { epoch, renewalState: renewal.state })
+        else this.sourceVerified.delete(source.session_id)
         this.sourceScanFailures.delete(source.session_id)
       } catch (error) {
         // No live location is the plugin booting or reloading, not a property of the

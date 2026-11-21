@@ -742,14 +742,18 @@ export class DelegatedAgentCapacity {
 
   async cancelRunnerQueue(planID: string, keepTaskIDs: readonly string[] = []) {
     const projectKey = await this.projectKey()
-    this.repository.atomic((db) => {
-      const candidates = db
+    const queued = (db: Database) =>
+      db
         .query<{ id: string; task_id: string }, [string, string]>(
           `SELECT id,task_id FROM delegated_agent_admissions
            WHERE project_key=? AND kind='runner' AND state='queued' AND plan_id=?`,
         )
         .all(projectKey, planID)
-      const keep = new Set(keepTaskIDs)
+    const keep = new Set(keepTaskIDs)
+    // Nothing queued is the idle case: it takes no write lock.
+    if (this.repository.read((db) => queued(db).every((entry) => keep.has(entry.task_id)))) return
+    this.repository.atomic((db) => {
+      const candidates = queued(db)
       for (const candidate of candidates)
         if (!keep.has(candidate.task_id))
           db.query(

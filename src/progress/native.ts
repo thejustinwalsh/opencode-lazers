@@ -380,7 +380,7 @@ export function registerProgress(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
   projectID: string,
-  sourceChanged: ((sessionID?: string) => void) | undefined,
+  sourceChanged: ((sessionID?: string, eventType?: string) => void) | undefined,
   workerIdle: (() => void) | undefined,
   messages: HostMessageClient,
 ) {
@@ -607,7 +607,7 @@ export function registerProgress(
         if (sessionID && observing) {
           sourceStreamGap = false
           try {
-            sourceChanged?.(sessionID)
+            sourceChanged?.(sessionID, type)
           } catch {
             // A later source event or prompt retries without dropping worker facts.
           }
