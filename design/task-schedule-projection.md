@@ -567,9 +567,17 @@ N(plan) upserts, estimated at 0.3 ms per node.
 ## What was deleted, and what moved (status after the migration)
 
 - The old read is gone (`Tasks.query`, `TaskReads.query`/`queryAll`, `readPage`, `stateCounts`, the
-  snapshot cursor, `scheduledTaskPageSQL`, `taskStatePredicate`). `TaskReads.get` still uses
-  `effectiveExecution` for the one-task detail. The old order and chip SQL survive only as the
-  audit oracle in `src/tasks/schedule/live-audit.ts`.
+  snapshot cursor, `scheduledTaskPageSQL`, `taskStatePredicate`). The old order and chip SQL
+  survive only as the audit oracle in `src/tasks/schedule/live-audit.ts`.
+- The detail moved too (generation 5): `TaskReads`, `effectiveExecution`, `AssociationTaskReads`
+  and the `currentActivity` RPC are deleted. `task_schedule` stores `execution`, `node_version`,
+  the latest attempt's id, session and workspace, `classification_history`, `advice`,
+  `audit_history`, and the open concern's `concern_action` and `concern_because`;
+  `task_schedule_search` holds the six search fields as written. Sources `tasks.detail`,
+  `tasks.attempts`, `tasks.activity` / `tasks.activityPayloads` (over `task_events`, which keeps each
+  transition's raw `payload`), `tasks.attemptCalls`, `tasks.currentActivity` (joined to
+  `host_session_state`) and `tasks.searchFields`; `src/tasks/detail-read.ts` composes the old
+  outputs from them, and `detail.recorded.json` holds what the old reads returned.
 - **Recorded parity.** What the old read showed on the test corpora (random differential seeds,
   the golden mix, the real-runtime steps, the agent tool's pages) is committed as
   `recorded-projection.json` and `stream-query.recorded.json`; tests compare the stored list
@@ -617,8 +625,8 @@ Every caller that must move first:
 | `scheduledTaskPageSQL` users           | `storage.ts:987`, `observability/task-reads.ts:178`                                                                                                  | deleted with the callers above                                |
 | Tests that call these                  | `read.test.ts`, `rpc.test.ts`, `read-order.test.ts`, `panel-state.test.ts`, `execution-list.test.ts`, `virtual-rows.test.ts`, `all-projects.test.ts` | rewritten against the sources                                 |
 
-Not moved by this lane: `Tasks.get` (point read by id), `currentActivity` (host reads),
-`start`, and `Tasks.changes`.
+Not moved by this lane: `start` and `Tasks.changes`. `Tasks.get` stays as an RPC composed from
+the detail streams for its last caller, the Models panel's task detail.
 
 ## Review amendments, calls and lead decisions
 

@@ -18,6 +18,7 @@ const entries = [
   ["src/audit/fallow-worker.ts", "fallow-worker.js"],
   ["src/audit/fallow-thread.ts", "fallow-thread.js"],
   ["src/streams/reader-worker.ts", "reader-worker.js"],
+  ["src/trajectory/effort-worker.ts", "effort-worker.js"],
 ] as const
 
 export async function buildServer() {

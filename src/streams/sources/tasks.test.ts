@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { validProposal } from "../../../test/proposal.ts"
 import { meterRepository } from "../../runner/read-meter.fixture.ts"
 import { TaskRepository } from "../../storage.ts"
-import { TaskReads } from "../../tasks/read.ts"
+import { RunnerStore } from "../../runner/store.ts"
 import { bucketsFor } from "../../tasks/schedule/key.ts"
 import { TaskStateFilter } from "../../tasks/state-filter.ts"
 import { openStream } from "../client.ts"
@@ -22,7 +22,7 @@ import type { TaskScheduleFilter } from "./tasks-ref.ts"
 const PROJECT = "/project"
 let directory: string
 let repository: TaskRepository
-let reads: TaskReads
+let reads: { repository: TaskRepository; runner: RunnerStore }
 let pool: ReaderPool
 const ids: Record<string, string> = {}
 
@@ -87,7 +87,7 @@ function plan(
 beforeAll(() => {
   directory = mkdtempSync(join(tmpdir(), "lazers-tasks-schedule-"))
   repository = new TaskRepository(join(directory, "tasks.sqlite"), PROJECT)
-  reads = new TaskReads(repository)
+  reads = { repository, runner: new RunnerStore(repository) }
   const states = ["queued", "running", "accepted", "incorporated", "failed", "cancelled"]
   for (let round = 0; round < 6; round++)
     states.forEach((state, i) =>

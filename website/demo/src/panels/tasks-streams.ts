@@ -1,4 +1,5 @@
-import { frameSize, writeFrame, type Columns } from "../../../../src/streams/frame.ts"
+import type { Columns } from "../../../../src/streams/frame.ts"
+import { streamAnswers, type Open, type DemoRow } from "./stream-answers.ts"
 import {
   TASK_SOURCES,
   taskBucketCountColumns,
@@ -9,7 +10,15 @@ import {
   taskSessionBucketCountColumns,
   taskBlockerColumns,
   taskWaitColumns,
+  taskActivityColumns,
+  taskActivityPayloadColumns,
+  taskAttemptCallColumns,
+  taskAttemptColumns,
+  taskCurrentActivityColumns,
+  taskDetailColdColumns,
+  taskDetailColumns,
 } from "../../../../src/streams/sources/tasks-ref.ts"
+import type { CurrentActivityOutput, TaskDetail } from "../../../../src/tasks/contract.ts"
 import { BUCKETS, type Bucket } from "../../../../src/tasks/schedule/buckets.ts"
 import { bucketsFor } from "../../../../src/tasks/schedule/key.ts"
 import type { TaskState } from "../../../../src/runner/schema.ts"
@@ -20,15 +29,6 @@ import type { DemoTask, TasksData } from "./tasks-answers.ts"
  * writes (the real codec), over rows built from the demo's mock tasks. Windows slide and seek
  * over the sorted rows, so the list scrolls, anchors and counts the way it does live.
  */
-type Row = Record<string, unknown>
-type Anchor = "head" | "tail" | { key: (string | number | null)[]; place?: "center" | "start" }
-type Open = {
-  source: string
-  filter: Record<string, unknown>
-  order: string
-  window: number
-  position: number
-}
 
 const SESSION = "ses-demo"
 const CREATED = "2026-11-19T13:56:00.000Z"
@@ -65,7 +65,7 @@ const rankOfBucket = (bucket: Bucket) =>
 
 const pad = (value: number) => String(value).padStart(6, "0")
 
-function scheduleRows(data: TasksData, project: string): Row[] {
+function scheduleRows(data: TasksData, project: string): DemoRow[] {
   const plans = new Map(
     [...new Set(data.tasks.map((task) => task.plan))].map((title, index) => [title, index + 1]),
   )
@@ -139,9 +139,148 @@ const SOURCES: Record<string, { columns: Columns; key: string[] }> = {
   },
   [TASK_SOURCES.blockers]: { columns: taskBlockerColumns, key: ["task_id", "blocker_task_id"] },
   [TASK_SOURCES.waits]: { columns: taskWaitColumns, key: ["task_id", "ord"] },
+  [TASK_SOURCES.detail]: {
+    columns: { ...taskDetailColumns, ...taskDetailColdColumns },
+    key: ["task_id"],
+  },
+  [TASK_SOURCES.attempts]: { columns: taskAttemptColumns, key: ["id"] },
+  [TASK_SOURCES.activity]: {
+    columns: { ...taskActivityColumns, ...taskActivityPayloadColumns },
+    key: ["transition_id"],
+  },
+  [TASK_SOURCES.activityPayloads]: {
+    columns: { ...taskActivityColumns, ...taskActivityPayloadColumns },
+    key: ["transition_id"],
+  },
+  [TASK_SOURCES.attemptCalls]: { columns: taskAttemptCallColumns, key: ["seq"] },
+  [TASK_SOURCES.currentActivity]: { columns: taskCurrentActivityColumns, key: ["task_id"] },
 }
 
-function rowsOf(data: TasksData, open: Open, project: string): Row[] {
+/** What the demo's mock detail and activity reads answer; the frames are built from them. */
+export type DetailAnswers = {
+  detail(taskID: string): TaskDetail
+  currentActivity(taskIDs: string[]): CurrentActivityOutput
+}
+
+/**
+ * The detail sources' rows, from the mock detail: the same rows the stored projection holds for
+ * it, so `readTaskDetail` and `readCurrentActivity` compose the mock detail back.
+ */
+function detailRowsOf(answers: DetailAnswers, open: Open): DemoRow[] | undefined {
+  const filter = open.filter
+  const found = (id: unknown) => {
+    const detail = answers.detail(String(id))
+    return detail.status === "found" ? detail : undefined
+  }
+  switch (open.source) {
+    case TASK_SOURCES.detail: {
+      const detail = found(filter.task ?? filter.reference)
+      if (!detail) return []
+      return [
+        {
+          task_id: detail.task.id,
+          reference: detail.reference,
+          revision: detail.task.revision,
+          status: detail.execution?.state ?? detail.task.status,
+          node_state: detail.recordedState ?? null,
+          plan_id: detail.execution?.planID ?? null,
+          session_id: detail.task.provenance.sessionID,
+          retired: false,
+          body: detail.task,
+          execution: detail.execution ?? null,
+          classification: detail.classification,
+          classification_history: detail.classificationHistory,
+          advice: detail.advice,
+          audit_history: detail.auditHistory ?? null,
+          disposition: detail.disposition ?? null,
+          architect_session_id: detail.architectSessionID ?? null,
+        },
+      ]
+    }
+    case TASK_SOURCES.attempts:
+      return (found(filter.task)?.attempts ?? []).map((attempt) => ({
+        id: attempt.id,
+        number: attempt.number,
+        state: attempt.state,
+        started_at: attempt.startedAt,
+        artifact: attempt.artifact,
+        token_count: attempt.tokenCount,
+        tool_count: attempt.toolCount,
+        session_id: `ses-worker-${attempt.id}`,
+        takeover: Boolean(attempt.takeover),
+        model: attempt.model ?? null,
+      }))
+    case TASK_SOURCES.attemptCalls: {
+      const latest = found(filter.task)?.attempts?.at(-1)
+      const summary = latest && latest.id === filter.attempt ? latest.summary : undefined
+      if (!summary) return []
+      const calls = summary.ticks.map((tick, index) => ({
+        seq: index + 1,
+        at: tick.at,
+        status: tick.failed ? "failed" : "succeeded",
+        file_targets_json:
+          index < (summary.files ?? 0)
+            ? { operation: "edit", paths: [`src/demo-${index}.ts`] }
+            : null,
+      }))
+      // The newest row: the last activity, a message rather than a call.
+      const newest = summary.lastActivityAt
+        ? [
+            {
+              seq: calls.length + 1,
+              at: summary.lastActivityAt,
+              status: null,
+              file_targets_json: null,
+            },
+          ]
+        : []
+      const rows = filter.toolsOnly ? calls : [...calls, ...newest]
+      return open.order === "recent" ? rows.reverse() : rows
+    }
+    case TASK_SOURCES.activity:
+    case TASK_SOURCES.activityPayloads: {
+      const events = filter.events as string[] | undefined
+      return (found(filter.task)?.activity ?? [])
+        .filter((event) => !events || events.includes(event.event))
+        .map((event) => ({
+          transition_id: event.id,
+          task_id: event.taskID,
+          event: event.event,
+          at: event.createdAt,
+          payload: event.payload,
+        }))
+    }
+    case TASK_SOURCES.currentActivity:
+      return answers
+        .currentActivity((filter.tasks as string[]).toSorted())
+        .activities.map((activity) => ({
+          task_id: activity.taskID,
+          node_state: activity.recordedState,
+          plan_state: activity.recordedState ? "running" : null,
+          node_reason: activity.holdReason,
+          plan_reason: null,
+          attempt_id: activity.attemptID,
+          attempt_session_id: activity.workerSessionID ?? null,
+          attempt_workspace: "/demo/worktree",
+          host_agent: activity.foreground === "unknown" ? null : "lazers-implementor",
+          host_attempt_id: activity.attemptID,
+          host_directory: "/demo/worktree",
+          busy: activity.foreground === "unknown" ? null : activity.foreground === "active",
+          pending_input: activity.pendingInput,
+          pending_permissions: activity.pendingPermissions,
+          pending_forms: activity.pendingForms,
+          outcome: activity.outcome,
+          archived: Boolean(activity.archived),
+          observed_at: activity.observedAt,
+        }))
+    default:
+      return undefined
+  }
+}
+
+function rowsOf(data: TasksData, open: Open, project: string, answers?: DetailAnswers): DemoRow[] {
+  const detailRows = answers ? detailRowsOf(answers, open) : undefined
+  if (detailRows) return detailRows
   const filter = open.filter
   if (open.source === TASK_SOURCES.index) return [{ project_directory: project, ready: true }]
   if (
@@ -174,80 +313,5 @@ function rowsOf(data: TasksData, open: Open, project: string): Row[] {
   )
 }
 
-export function taskStreams(data: () => TasksData, project: string) {
-  const streams = new Map<string, Open>()
-  let sequence = 0
-
-  const frame = (id: string) => {
-    const open = streams.get(id)
-    if (!open) throw new Error(`Unknown stream ${id}`)
-    const { columns } = SOURCES[open.source] ?? { columns: {} as Columns }
-    const all = rowsOf(data(), open, project)
-    const top = Math.max(0, all.length - open.window)
-    open.position = Math.min(top, Math.max(0, open.position))
-    const names = Object.keys(columns)
-    const rows = all
-      .slice(open.position, open.position + open.window)
-      .map((row) => names.map((name) => row[name] ?? null))
-    const bytes = new Uint8Array(frameSize(columns, rows))
-    writeFrame(
-      bytes.buffer,
-      0,
-      columns,
-      {
-        revision: ++sequence,
-        count: rows.length,
-        before: open.position,
-        after: Math.max(0, all.length - open.position - rows.length),
-      },
-      rows,
-    )
-    let binary = ""
-    for (const byte of bytes) binary += String.fromCharCode(byte)
-    return { seq: sequence, data: btoa(binary) }
-  }
-
-  const place = (open: Open, anchor: Anchor | undefined) => {
-    const all = rowsOf(data(), open, project)
-    if (anchor === "tail") open.position = Math.max(0, all.length - open.window)
-    else if (anchor && anchor !== "head") {
-      const key = SOURCES[open.source]?.key ?? []
-      const index = all.findIndex((row) => key.every((name, i) => row[name] === anchor.key[i]))
-      open.position =
-        index < 0 ? 0 : anchor.place === "start" ? index : index - Math.floor(open.window / 2)
-    } else open.position = 0
-  }
-
-  return {
-    open: (input: {
-      stream: string
-      source: string
-      filter: Record<string, unknown>
-      order: string
-      window: number
-      anchor?: Anchor
-    }) => {
-      const open: Open = {
-        source: input.source,
-        filter: (input.filter ?? {}) as Record<string, unknown>,
-        order: input.order,
-        window: input.window,
-        position: 0,
-      }
-      streams.set(input.stream, open)
-      place(open, input.anchor)
-      return frame(input.stream)
-    },
-    slide: (input: { stream: string; delta: number }) => {
-      streams.get(input.stream)!.position += input.delta
-      return frame(input.stream)
-    },
-    seek: (input: { stream: string; anchor: Anchor }) => {
-      place(streams.get(input.stream)!, input.anchor)
-      return frame(input.stream)
-    },
-    read: (input: { stream: string }) => frame(input.stream),
-    touch: () => ({ alive: true }),
-    close: (input: { stream: string }) => ({ closed: streams.delete(input.stream) }),
-  }
-}
+export const taskStreams = (data: () => TasksData, project: string, answers?: DetailAnswers) =>
+  streamAnswers(SOURCES, (open) => rowsOf(data(), open, project, answers))

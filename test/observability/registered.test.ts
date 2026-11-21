@@ -2,10 +2,8 @@ import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
-import { AssociationTaskReads } from "../../src/observability/task-reads.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
 import { registerObservability } from "../../src/observability/rpc.ts"
-import type { RadarNativeSession, RadarSessionHost } from "../../src/observability/native.ts"
 import { Tasks } from "../../src/tasks/contract.ts"
 import { openStream } from "../../src/streams/client.ts"
 import { acquireReaderPool } from "../../src/streams/pool.ts"
@@ -56,7 +54,7 @@ test("registered Tasks reads discover durable worker links without widening proj
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerTaskReads(ctx, new AssociationTaskReads(fixture.repository), runtime)
+          yield* registerTaskReads(ctx, fixture.repository, runtime)
         }),
       ),
     )
@@ -117,30 +115,9 @@ test("registered observation RPC resolves scope through native sessions and enfo
   let denied = false
   let foreign = false
   let archived = false
-  const nativeMetadataReads: string[] = []
-  const radarSessions: RadarSessionHost = {
-    get: async (id): Promise<RadarNativeSession> => {
-      nativeMetadataReads.push(id)
-      return {
-        id,
-        projectID: "project",
-        parentID: id === "ses-failed" ? "ses-owner" : null,
-        directory: fixture.directory,
-        agent: "architect",
-        model: { providerID: "openai", id: "gpt-6-luna", variant: null },
-        archived: false,
-        busy: false,
-        createdAt: 1_000,
-        updatedAt: 2_000,
-      }
-    },
-    project: async () => ({ sessions: [], truncated: false }),
-    descendants: async () => ({ sessions: [], truncated: false }),
-  }
   let handlers:
     | {
         snapshot(input: unknown): Effect.Effect<unknown>
-        radar(input: unknown): Effect.Effect<unknown>
         trajectory(input: unknown): Effect.Effect<unknown>
       }
     | undefined
@@ -179,7 +156,6 @@ test("registered observation RPC resolves scope through native sessions and enfo
               fixture.host,
               "project",
               new Uint8Array(32).fill(4),
-              radarSessions,
             ),
             "project",
           )
@@ -203,49 +179,13 @@ test("registered observation RPC resolves scope through native sessions and enfo
       resources: [fixture.repository.projectDirectory],
     })
 
-    const radar = await Effect.runPromise(handlers!.radar({ scope }))
-    expect((radar as { scope: unknown }).scope).toEqual(scope)
-    expect(
-      (radar as { sessions: Array<{ sessionID: string }> }).sessions
-        .map((session) => session.sessionID)
-        .sort(),
-    ).toEqual(["ses-accepted", "ses-failed", "ses-owner"])
-    expect(
-      (radar as { sessions: Array<{ sessionID: string; availability: string }> }).sessions.find(
-        (session) => session.sessionID === "ses-failed",
-      )?.availability,
-    ).toBe("available")
-    const projectRadar = (await Effect.runPromise(
-      handlers!.radar({ scope: { kind: "project", sessionID: "ses-failed" } }),
-    )) as { sessions: Array<{ sessionID: string }> }
-    expect(projectRadar.sessions.map((session) => session.sessionID).sort()).toEqual([
-      "ses-accepted",
-      "ses-failed",
-      "ses-owner",
-    ])
-    expect(permissionCalls.at(-1)).toMatchObject({
-      sessionID: "ses-failed",
-      action: "read",
-      resources: [fixture.repository.projectDirectory],
-    })
-
     denied = true
     await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow()
-    const readsBeforeDeniedRadar = nativeMetadataReads.length
-    await expect(
-      Effect.runPromise(handlers!.radar({ scope, includeUnmanagedSessions: false })),
-    ).rejects.toThrow()
-    expect(nativeMetadataReads).toHaveLength(readsBeforeDeniedRadar)
     denied = false
     foreign = true
     await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow(
       "Observation scope is unavailable",
     )
-    const readsBeforeForeignRadar = nativeMetadataReads.length
-    await expect(
-      Effect.runPromise(handlers!.radar({ scope, includeUnmanagedSessions: false })),
-    ).rejects.toThrow("Observation scope is unavailable")
-    expect(nativeMetadataReads).toHaveLength(readsBeforeForeignRadar)
     foreign = false
     // Archived sessions stay readable (60ba858c); native permission still gates them.
     archived = true
@@ -340,13 +280,12 @@ test("registered targeted trajectory RPCs remain usable when broad history is ov
       ),
     )
     const scope = { kind: "project" as const, sessionID: "ses-owner" }
-    // S8-2: broad history is bounded; targeted RPCs still read their exact scope.
+    // The snapshot reads no plan-level transition, so broad history truncates nothing; targeted
+    // RPCs still read their exact scope.
     const snapshot = (await Effect.runPromise(handlers!.snapshot({ scope }))) as {
-      transitions: unknown[]
       coverage: { transitionsTruncated: boolean }
     }
-    expect(snapshot.transitions).toHaveLength(10_000)
-    expect(snapshot.coverage.transitionsTruncated).toBe(true)
+    expect(snapshot.coverage.transitionsTruncated).toBe(false)
 
     const maxSequence = fixture.store.atomic(
       (db) =>

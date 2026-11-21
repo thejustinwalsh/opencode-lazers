@@ -1,4 +1,5 @@
 import { drainScheduleHook, enrollScheduleConnection } from "./tasks/schedule/hook.ts"
+import { drainProjections } from "./projections/hook.ts"
 import { taskReferenceFor } from "./task-reference.ts"
 import { Database, SQLiteError } from "bun:sqlite"
 import { timeStorage } from "./diagnostics/storage-timing.ts"
@@ -535,6 +536,7 @@ export class TaskRepository {
         .transaction(() => {
           const result = run(db)
           drainScheduleHook(db)
+          drainProjections(db)
           return result
         })
         .immediate(),
@@ -558,6 +560,7 @@ export class TaskRepository {
         .transaction(() => {
           const result = run(db)
           drainScheduleHook(db)
+          drainProjections(db)
           return result
         })
         .immediate()

@@ -2,10 +2,10 @@ import { panelErrorMessage } from "../panel-error.ts"
 import type {
   StartTaskInput,
   StartTaskReply,
-  TaskDetail,
   CurrentActivityOutput,
   CurrentTaskActivity,
 } from "./contract.ts"
+import type { PanelTaskDetail } from "./detail-read.ts"
 
 export type TaskPanelChange = {
   projectDirectory: string
@@ -15,12 +15,13 @@ export type TaskPanelChange = {
 }
 
 /**
- * What the Tasks panel asks of the server beside its list streams: one task's detail, the current
- * activity of the rows in view, the Start action, and the change feed. The list, its counts and the
- * inspector's relations are stream windows (`panel-streams.ts`).
+ * What the Tasks panel reads beside its list streams: one task's detail and the current activity
+ * of the rows in view (both composed from stream windows, `detail-read.ts`), the Start action, and
+ * the change feed. The list, its counts and the inspector's relations are stream windows
+ * (`panel-streams.ts`).
  */
 export interface TaskTransport {
-  get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
+  get(taskID: string, signal: AbortSignal): Promise<PanelTaskDetail>
   currentActivity?(taskIDs: string[], signal: AbortSignal): Promise<CurrentActivityOutput>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskReply>
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
@@ -30,7 +31,7 @@ export interface TasksPanelData {
   key: string
   currentActivity: Record<string, CurrentTaskActivity>
   activityError: string
-  detail?: TaskDetail
+  detail?: PanelTaskDetail
   selectedID?: string
   stale: boolean
   error: string

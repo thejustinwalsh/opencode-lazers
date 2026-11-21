@@ -65,6 +65,7 @@ import { acquireLazersCore } from "./core/core.ts"
 import { nativeEventSubscriptions } from "./core/event-hub.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
 import { registerProjects } from "./projects/rpc.ts"
+import { projectsDefaultsOf } from "./projects/overview-store.ts"
 import { taskDatabasePath } from "./storage.ts"
 
 /**
@@ -212,11 +213,11 @@ export default Plugin.define({
         }),
       )
       yield* sectionEffect("setup:TaskReads", () =>
-        registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
+        registerTaskReads(ctx, repository, runtime).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Streams", () =>
         registerStreams(ctx, {
-          databasePath: core.taskReads.repository.path,
+          databasePath: repository.path,
           context: {
             projectID,
             projectDirectory: repository.projectDirectory,
@@ -356,17 +357,7 @@ export default Plugin.define({
               }),
             remove: (directory) => runtime.host.removeWorktree(directory),
           },
-          defaults: {
-            global:
-              typeof ctx.options.historyCacheMB === "number"
-                ? { historyCacheMB: ctx.options.historyCacheMB }
-                : {},
-            project:
-              typeof ctx.options.workerSpendCeilingTokens === "number" &&
-              ctx.options.workerSpendCeilingTokens > 0
-                ? { spendCeilingTokens: ctx.options.workerSpendCeilingTokens }
-                : {},
-          },
+          defaults: projectsDefaultsOf(ctx.options),
         }).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:RunnerTools", () =>

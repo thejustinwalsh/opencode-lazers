@@ -72,7 +72,6 @@ function transportFor(
     host,
     "project",
     cursorSecret,
-    undefined,
     taskValuationProvider,
   )
   let deliver: ((event: ObservationChange | null) => void) | undefined

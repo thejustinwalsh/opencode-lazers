@@ -61,7 +61,17 @@ export const TABLES_SQL = `
     blocker_count INTEGER NOT NULL DEFAULT 0,
     dependency_count INTEGER NOT NULL DEFAULT 0,
     decision TEXT NOT NULL,
-    decision_reason TEXT
+    decision_reason TEXT,
+    node_version INTEGER,
+    execution TEXT,
+    attempt_id TEXT,
+    attempt_session_id TEXT,
+    attempt_workspace TEXT,
+    concern_action TEXT,
+    concern_because TEXT,
+    classification_history TEXT NOT NULL DEFAULT '[]',
+    advice TEXT,
+    audit_history TEXT
   );
   CREATE INDEX task_schedule_order ON task_schedule(project_directory, retired, sort_key);
   CREATE INDEX task_schedule_bucket ON task_schedule(project_directory, retired, bucket, sort_key);
@@ -135,6 +145,14 @@ export const TABLES_SQL = `
     PRIMARY KEY(task_id, path)
   );
   CREATE INDEX task_schedule_scopes_path ON task_schedule_scopes(path);
+  CREATE TABLE task_schedule_search (
+    id INTEGER PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    ord INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    text TEXT NOT NULL,
+    UNIQUE(task_id, ord)
+  );
   CREATE TABLE task_schedule_counts (
     project_directory TEXT NOT NULL,
     bucket TEXT NOT NULL,
@@ -283,6 +301,10 @@ export const SCHEDULE_TRIGGERS: readonly TriggerSpec[] = [
   { table: "runner_dispatch_controls", event: "UPDATE", queues: [["plan", "NEW.plan_id"]] },
   { table: "lazers_dispatch_pause", event: "INSERT", queues: [["pause", "NEW.scope"]] },
   { table: "lazers_dispatch_pause", event: "UPDATE", queues: [["pause", "NEW.scope"]] },
+  // The detail pane's advice and audit history.
+  { table: "task_advice", event: "INSERT", queues: [["task", "NEW.task_id"]] },
+  { table: "audit_runs", event: "INSERT", queues: [["task", "NEW.task_id"]] },
+  { table: "audit_runs", event: "DELETE", queues: [["task", "OLD.task_id"]] },
   {
     table: "recovery_concern_versions",
     event: "INSERT",

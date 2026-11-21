@@ -185,13 +185,12 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       host,
       "project",
       cursorSecret,
-      undefined,
       taskValuationProvider,
     )
-    // S8-2: bounded broad history does not change the panel's targeted-only reads.
+    // Broad history volume does not change the panel's targeted-only reads.
     const snapshot = reads.snapshot({ kind: "project", sessionID: "ses-owner" }, tracker)
-    expect(snapshot.transitions).toHaveLength(10_000)
-    expect(snapshot.coverage?.transitionsTruncated).toBe(true)
+    // The snapshot reads no plan-level transition: unrelated volume truncates nothing.
+    expect(snapshot.coverage?.transitionsTruncated).toBe(false)
     const reference = fixture.repository.referenceFor(taskID)!
     const target = {
       requestID: "targeted-render-request",

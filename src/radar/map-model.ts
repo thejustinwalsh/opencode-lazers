@@ -1,4 +1,4 @@
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { RadarLive } from "./live-view.ts"
 import { formatAge, scopedWorkload, sessionState } from "./monitor-model.ts"
 import type { LiveSession } from "./monitor-model.ts"
 import { sessionRole } from "./monitor-model.ts"
@@ -36,7 +36,7 @@ export type RadarMap = {
 /** Items shown per group before the "+N more" node. */
 export const MAP_ITEMS_PER_GROUP = 4
 
-type Live = LiveRadarResponse
+type Live = RadarLive
 type Item = Omit<MapNode, "parent">
 
 const plural = (count: number, one: string) => `${count} ${count === 1 ? one : `${one}s`}`

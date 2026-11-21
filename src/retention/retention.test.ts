@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
 import { ObservationChangeTracker } from "../observability/changes.ts"
 import { ObservationReads } from "../observability/read.ts"
-import { AssociationTaskReads } from "../observability/task-reads.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { ModelEvidenceStore } from "../models/source-store.ts"
 import { PlanningStore } from "../planning/store.ts"
@@ -13,6 +13,7 @@ import {
   firstAttemptID,
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
+import { ensureTranscriptMetaSchema, writeTranscriptPage } from "../transcript-meta/schema.ts"
 import {
   AUDIT_RECEIPTS_KEPT,
   classifyPlans,
@@ -477,12 +478,7 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
   const secret = new Uint8Array(32).fill(5)
   const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
   tracker.initialize()
-  const sessions = {
-    get: async () => null,
-    project: async () => ({ sessions: [], truncated: false }),
-    descendants: async () => ({ sessions: [], truncated: false }),
-  }
-  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, sessions)
+  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
   const before = await reads.trajectory(
     { scope: { kind: "session", sessionID: "ses-failed" }, taskID, limit: 20 },
     tracker,
@@ -496,14 +492,9 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
   )
   expect(before.report).toBeDefined()
   expect(after.report).toBeDefined()
-  const radar = await reads.radar(
-    { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
-    tracker,
-    new AbortController().signal,
-  )
-  expect(radar).toBeDefined()
-  const tasks = new AssociationTaskReads(fixture.repository)
-  expect(tasks.get({ taskID: "LZ-1", sessionID: "ses-failed" })).toMatchObject({
+  expect(
+    await getTaskDetail(fixture.repository, { taskID: "LZ-1", session: "ses-failed" }),
+  ).toMatchObject({
     status: "found",
     reference: "LZ-1",
   })
@@ -699,4 +690,64 @@ test("an abandoned plan older than the age is retirable; a recent one is not", a
   await purge(fixture, 30)
   expect(revisions(db, "dropped")).toEqual([1, 2, 4, 5])
   expect(revisions(db, "fresh")).toEqual([1, 2, 3, 4, 5])
+})
+
+test("transcript metadata follows the finished-plan age; sessions no plan holds go when archived or gone past it", async () => {
+  const fixture = setup()
+  ensureTranscriptMetaSchema(fixture.repository)
+  const old = NOW - 40 * DAY
+  const recent = NOW - DAY
+  // Sessions no plan holds, by host state: [id, host row (archived, last host update), newest step]
+  const others: Array<[string, [number, number] | null, number]> = [
+    ["ses-architect-live", [0, old], old], // unarchived: the Monitor shows it
+    ["ses-architect-archived-old", [1, old], old], // archived past the age: dead
+    ["ses-architect-archived-recent", [1, recent], old], // archived within the age: kept
+    ["ses-gone-old", null, old], // the host no longer has it, past the age: dead
+    ["ses-gone-recent", null, recent], // gone, but within the age: kept
+  ]
+  fixture.repository.atomic((db) => {
+    const write = (session: string, created: number) =>
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        session,
+        { cursor: null, base: 0, messageCount: 0, state: "not-read" },
+        [
+          { id: `u-${session}`, type: "user", text: "hello" },
+          {
+            id: `m-${session}`,
+            type: "assistant",
+            model: { providerID: "openai", id: "gpt-6-luna" },
+            time: { created },
+          },
+        ],
+        undefined,
+      )
+    // The retired plan's two attempt sessions.
+    write("ses-failed", 1_000)
+    write("ses-accepted", 1_000)
+    for (const [session, host, created] of others) {
+      write(session, created)
+      if (host)
+        db.query(
+          `INSERT INTO host_session_state(project_directory,session_id,role,busy,pending_input,
+             pending_permissions,pending_forms,archived,updated_at,host_updated_at)
+           VALUES(?,?,'architect',0,0,0,0,?,?,?)`,
+        ).run(fixture.directory, session, host[0], host[1], host[1])
+    }
+  })
+  const db = handle(fixture)
+  const preview = await previewRetention(db, { now: NOW, days: 30 })
+  // Four dead sessions (two attempt sessions, two others): a step row and a session row each.
+  expect(preview.kinds.find((kind) => kind.id === "transcript-meta")?.rows).toBe(8)
+  const removed = await purge(fixture, 30)
+  expect(removed["transcript-meta"]?.rows).toBe(8)
+  const left = (table: string) =>
+    db
+      .query<{ session_id: string }, []>(`SELECT session_id FROM ${table} ORDER BY session_id`)
+      .all()
+      .map((row) => row.session_id)
+  const kept = ["ses-architect-archived-recent", "ses-architect-live", "ses-gone-recent"]
+  expect(left("transcript_steps")).toEqual(kept)
+  expect(left("transcript_sessions")).toEqual(kept)
 })

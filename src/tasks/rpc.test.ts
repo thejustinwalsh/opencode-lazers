@@ -2,24 +2,20 @@ import { priorityFromHigherFirst } from "../../test/legacy-priority.ts"
 import { expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Location } from "@opencode/plugin/effect"
-import { DateTime, Effect, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { validProposal } from "../../test/proposal.ts"
-import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { git } from "../runner/artifacts.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
-import type { HostSession } from "../runner/host.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { Tasks } from "./contract.ts"
 import type { StartTaskInput, StartTaskResult } from "./contract.ts"
-import { TaskReads } from "./read.ts"
 import { registerTaskReads } from "./rpc.ts"
-import { recordTaskAdvice } from "./advice.ts"
 import { taskInstructions } from "./instructions.ts"
 import { registerTaskTools } from "../tools.ts"
 import { SchedulingOutput, TasksScheduling } from "./scheduling-contract.ts"
@@ -80,8 +76,7 @@ test("fourteen loaded locations publish one project task revision", async () => 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          for (let i = 0; i < 14; i++)
-            yield* registerTaskReads(ctx, new TaskReads(repository), runtime)
+          for (let i = 0; i < 14; i++) yield* registerTaskReads(ctx, repository, runtime)
           repository.insert({
             schemaVersion: 1,
             id: crypto.randomUUID(),
@@ -157,7 +152,7 @@ test("RPC invalidations catch independent connections and retry transient read a
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerTaskReads(ctx, new TaskReads(repository), runtime)
+          yield* registerTaskReads(ctx, repository, runtime)
           failRead = true
           other.insert({
             schemaVersion: 1,
@@ -188,363 +183,6 @@ test("RPC invalidations catch independent connections and retry transient read a
     expect(attempts).toBe(after)
   } finally {
     other.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test("current-activity RPC observes only authorized latest metadata and rejects changed attempts", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "lazers-current-activity-rpc-"))
-  const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/project")
-  const reads = new TaskReads(repository)
-  const taskID = crypto.randomUUID()
-  const foreignTaskID = crypto.randomUUID()
-  const proposal = validProposal()
-  repository.insert({
-    schemaVersion: 1,
-    id: taskID,
-    revision: 1,
-    status: "submitted",
-    createdAt: new Date().toISOString(),
-    proposal,
-    provenance: {
-      projectID: "project",
-      projectDirectory: "/project",
-      workspaceDirectory: "/project",
-      sessionID: "ses_tasks_activity_owner",
-      startingRevision: { kind: "unborn" },
-    },
-  })
-  repository.insert({
-    schemaVersion: 1,
-    id: foreignTaskID,
-    revision: 1,
-    status: "submitted",
-    createdAt: new Date().toISOString(),
-    proposal,
-    provenance: {
-      projectID: "project",
-      projectDirectory: "/project",
-      workspaceDirectory: "/project",
-      sessionID: "ses_tasks_activity_other",
-      startingRevision: { kind: "unborn" },
-    },
-  })
-  const plan = reads.runner.submit(
-    {
-      requestID: "activity-rpc-plan",
-      objective: proposal.objective,
-      baseCommit: "a".repeat(40),
-      nodes: [{ taskID, revision: 1 }],
-      dependencies: [],
-      integrationOrder: [taskID],
-      verification: proposal.verification,
-      acceptance: proposal.acceptance,
-    },
-    "architect",
-  )
-  const attemptID = crypto.randomUUID()
-  const workerID = "ses_activity_worker"
-  repository.atomic((db) => {
-    db.query("UPDATE runner_plans SET state='blocked',reason='reconcile hold' WHERE id=?").run(
-      plan.planID,
-    )
-    db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=?").run(plan.planID)
-    db.query(
-      `INSERT INTO runner_attempts
-        (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).run(
-      attemptID,
-      plan.planID,
-      taskID,
-      1,
-      workerID,
-      "message-worker-1",
-      "/worktree",
-      "a".repeat(40),
-      null,
-      "{}",
-      "accepted",
-      1,
-    )
-  })
-
-  type ActivityEffect = Effect.Effect<unknown, never>
-  let currentActivity: ((input: unknown) => ActivityEffect) | undefined
-  const workerCalls: Array<{ id: string; messages: boolean | undefined }> = []
-  let deferWorker = false
-  let changingMetadata = false
-  let changingMetadataReads = 0
-  let actorDirectory = "/project"
-  let workerBusy = false
-  let sessionMetadataAttemptID: string = attemptID
-  let permissionChecks = 0
-  let resolveWorker!: (session: HostSession | null) => void
-  let workerStartSignal: (() => void) | undefined
-  const ctx = {
-    rpc: {
-      register: (
-        contract: unknown,
-        methods: { currentActivity: (input: unknown) => ActivityEffect },
-      ) => {
-        if ((contract as { id?: string }).id === Tasks.id) currentActivity = methods.currentActivity
-        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
-      },
-    },
-    permission: {
-      assert: () =>
-        Effect.sync(() => {
-          permissionChecks++
-        }),
-    },
-    session: {
-      get: ({ sessionID }: { sessionID: string }) =>
-        Effect.succeed({
-          id: sessionID,
-          projectID: "project",
-          agent: "architect",
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          // S8: archived session views retain native-authorized activity reads.
-          time: { created: Date.now(), updated: Date.now(), archived: DateTime.makeUnsafe(1) },
-          location: { directory: actorDirectory },
-        }),
-    },
-  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session">
-  const nativeWorker = (id: string, boundAttemptID: string): HostSession => ({
-    id,
-    projectID: "project",
-    directory: "/worktree",
-    agent: "lazers-implementor",
-    metadata: { lazersAttemptID: sessionMetadataAttemptID || boundAttemptID },
-    archived: true,
-    busy: workerBusy,
-    pendingInput: true,
-    pendingPermissions: 1,
-    pendingForms: 0,
-    outcome: "succeeded",
-    tokens: null,
-    tools: 0,
-    cost: null,
-    messages: [{ id: "private", text: "PRIVATE_WORKER_CONTEXT" }],
-  })
-  const runtime = {
-    projectID: "project",
-    host: {
-      session: async (id: string, options?: { messages?: boolean }) => {
-        workerCalls.push({ id, messages: options?.messages })
-        workerStartSignal?.()
-        workerStartSignal = undefined
-        if (deferWorker) {
-          deferWorker = false
-          return await new Promise<HostSession | null>((resolve) => {
-            resolveWorker = resolve
-          })
-        }
-        const worker = nativeWorker(id, attemptID)
-        if (changingMetadata) {
-          changingMetadataReads++
-          return { ...worker, busy: changingMetadataReads % 2 === 1 }
-        }
-        return worker
-      },
-    },
-    startTask: async () => ({ status: "started", planID: plan.planID, state: "running" }),
-  } as unknown as TaskRuntime
-
-  try {
-    const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* registerTaskReads(ctx, reads, runtime)
-          return yield* currentActivity!({
-            sessionID: "ses_tasks_activity_owner",
-            scope: "session",
-            taskIDs: [taskID],
-          })
-        }),
-      ),
-    )
-    expect(result).toMatchObject({
-      activities: [
-        {
-          taskID,
-          workerSessionID: workerID,
-          attemptID,
-          // S8: an exactly bound archived worker has known activity, not unknown.
-          foreground: "inactive",
-          archived: true,
-          recordedState: "running",
-          waiting: true,
-          holdReason: "reconcile hold",
-          pendingInput: true,
-          pendingPermissions: 1,
-          outcome: "succeeded",
-        },
-      ],
-    })
-    expect(workerCalls).toEqual([
-      { id: workerID, messages: false },
-      { id: workerID, messages: false },
-    ])
-    expect(JSON.stringify(result)).not.toContain("PRIVATE_WORKER_CONTEXT")
-
-    changingMetadata = true
-    const unstable = await Effect.runPromise(
-      currentActivity!({
-        sessionID: "ses_tasks_activity_owner",
-        scope: "session",
-        taskIDs: [taskID],
-      }),
-    )
-    changingMetadata = false
-    expect(changingMetadataReads).toBe(2)
-    expect(unstable).toMatchObject({
-      activities: [
-        {
-          taskID,
-          workerSessionID: workerID,
-          foreground: "unknown",
-          unknownReason: "unavailable",
-          pendingInput: null,
-          pendingPermissions: null,
-          outcome: null,
-        },
-      ],
-    })
-    expect(workerCalls.slice(2, 4)).toEqual([
-      { id: workerID, messages: false },
-      { id: workerID, messages: false },
-    ])
-
-    sessionMetadataAttemptID = "another-attempt"
-    const mismatched = await Effect.runPromise(
-      currentActivity!({
-        sessionID: "ses_tasks_activity_owner",
-        scope: "session",
-        taskIDs: [taskID],
-      }),
-    )
-    expect(mismatched).toMatchObject({
-      activities: [{ foreground: "unknown", unknownReason: "unavailable", outcome: null }],
-    })
-    sessionMetadataAttemptID = attemptID
-
-    const foreign = await Effect.runPromise(
-      currentActivity!({
-        sessionID: "ses_tasks_activity_owner",
-        scope: "session",
-        taskIDs: [foreignTaskID],
-      }),
-    )
-    expect(foreign).toMatchObject({
-      activities: [{ taskID: foreignTaskID, foreground: "unknown", unknownReason: "unavailable" }],
-    })
-    expect(workerCalls).toHaveLength(5)
-
-    deferWorker = true
-    workerBusy = true
-    let startedMovedScopeWorker!: () => void
-    const movedScopeWorkerStarted = new Promise<void>((resolve) => {
-      startedMovedScopeWorker = resolve
-    })
-    workerStartSignal = startedMovedScopeWorker
-    const movedScope = Effect.runPromise(
-      currentActivity!({
-        sessionID: "ses_tasks_activity_owner",
-        scope: "session",
-        taskIDs: [taskID],
-      }),
-    )
-    await movedScopeWorkerStarted
-    actorDirectory = "/project/other-worktree"
-    resolveWorker(nativeWorker(workerID, attemptID))
-    const changedScope = await movedScope
-    workerBusy = false
-    actorDirectory = "/project"
-    expect(changedScope).toMatchObject({
-      activities: [
-        {
-          foreground: "unknown",
-          unknownReason: "unavailable",
-          pendingInput: null,
-          outcome: null,
-        },
-      ],
-    })
-
-    deferWorker = true
-    let startedRacingWorker!: () => void
-    const racingWorkerStarted = new Promise<void>((resolve) => {
-      startedRacingWorker = resolve
-    })
-    workerStartSignal = startedRacingWorker
-    const racing = Effect.runPromise(
-      currentActivity!({
-        sessionID: "ses_tasks_activity_owner",
-        scope: "session",
-        taskIDs: [taskID],
-      }),
-    )
-    await racingWorkerStarted
-    const newerAttemptID = crypto.randomUUID()
-    repository.atomic((db) => {
-      db.query(
-        `INSERT INTO runner_attempts
-          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(
-        newerAttemptID,
-        plan.planID,
-        taskID,
-        2,
-        "ses_activity_new_worker",
-        "message-worker-2",
-        "/new-worktree",
-        "a".repeat(40),
-        null,
-        "{}",
-        "running",
-        2,
-      )
-    })
-    resolveWorker(nativeWorker(workerID, attemptID))
-    const changed = await racing
-    expect(changed).toMatchObject({
-      activities: [
-        {
-          taskID,
-          attemptID: newerAttemptID,
-          foreground: "unknown",
-          unknownReason: "unavailable",
-          pendingInput: null,
-        },
-      ],
-    })
-    expect(workerCalls.at(-1)).toEqual({ id: workerID, messages: false })
-    expect(permissionChecks).toBe(6)
-
-    deferWorker = true
-    let startedCancelledWorker!: () => void
-    const cancelledWorkerStarted = new Promise<void>((resolve) => {
-      startedCancelledWorker = resolve
-    })
-    workerStartSignal = startedCancelledWorker
-    const controller = new AbortController()
-    const cancelled = Effect.runPromise(
-      currentActivity!({
-        sessionID: "ses_tasks_activity_owner",
-        scope: "session",
-        taskIDs: [taskID],
-      }),
-      { signal: controller.signal },
-    )
-    await cancelledWorkerStarted
-    controller.abort()
-    await expect(cancelled).rejects.toThrow()
-    resolveWorker(null)
-  } finally {
-    repository.close()
     rmSync(directory, { recursive: true, force: true })
   }
 })
@@ -629,7 +267,7 @@ test("scheduling RPC authorizes exact live project scope before facts and observ
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerTaskReads(context, new TaskReads(repository), runtime)
+          yield* registerTaskReads(context, repository, runtime)
         }),
       ),
     )
@@ -819,7 +457,7 @@ test("registered scheduling RPC bounds large plan waits and coalesces proof refr
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerTaskReads(context, new TaskReads(repository), runtime)
+          yield* registerTaskReads(context, repository, runtime)
         }),
       ),
     )
@@ -1079,7 +717,7 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerTaskTools(taskToolContext, repository)
-          yield* registerTaskReads(ctx, new TaskReads(repository), runtime)
+          yield* registerTaskReads(ctx, repository, runtime)
         }),
       ),
     )
@@ -1283,7 +921,7 @@ test("Start RPC checks actor ownership and native permission before entering run
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerTaskReads(ctx, new TaskReads(repository), runtime)
+          yield* registerTaskReads(ctx, repository, runtime)
         }),
       ),
     )

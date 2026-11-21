@@ -1,6 +1,5 @@
 import type { LabelTone } from "../details/tone.ts"
 import { callsText, durationText } from "../details/format.ts"
-import type { LiveAttemptResponse } from "../observability/contract.ts"
 import { assignedTaskView } from "./worker-hold.ts"
 import type { TaskStateView } from "../tasks/task-state.ts"
 import { attemptLane } from "../tasks/stats.ts"
@@ -16,7 +15,8 @@ import {
 import type { ActivityLine, LiveSession } from "./monitor-model.ts"
 
 type Live = Parameters<typeof sessionModel>[0]
-export type WorkerAttempt = NonNullable<LiveAttemptResponse["attempt"]>
+export type { WorkerAttempt } from "./radar-streams.ts"
+import type { WorkerAttempt } from "./radar-streams.ts"
 
 /** The tool name as a person reads it: `read` is Read, `grep` and `glob` are Search. */
 export function toolName(tool: string) {

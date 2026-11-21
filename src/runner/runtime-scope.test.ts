@@ -6,7 +6,7 @@ import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
 import type { HostSession } from "./host.ts"
 import { RunnerStore } from "./store.ts"
-import { TaskReads } from "../tasks/read.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import { taskInstructions } from "../tasks/instructions.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
 import {
@@ -34,7 +34,7 @@ test("active scope amendments durably update the same worker after it fetched ol
   await drive(f.runtime, 2)
   const attempt = f.store.attempts(planID)[0]!
   const original = f.repository.get(attempt.task_id)
-  const fetched = taskInstructions(new TaskReads(f.repository).get({ taskID: attempt.task_id }))
+  const fetched = taskInstructions(await getTaskDetail(f.repository, { taskID: attempt.task_id }))
   expect(fetched).not.toContain("escape.txt")
   const command = {
     requestID: "allow-test",
@@ -633,7 +633,7 @@ test("scope amendments preserve the specification and recover dependency edits i
   } finally {
     reopenedRepository.close()
   }
-  expect(taskInstructions(new TaskReads(f.repository).get({ taskID: task.id }))).toContain(
+  expect(taskInstructions(await getTaskDetail(f.repository, { taskID: task.id }))).toContain(
     "Authorized execution scope",
   )
   expect(

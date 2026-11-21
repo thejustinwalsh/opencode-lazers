@@ -1,16 +1,8 @@
 import { sameProject } from "../project-key.ts"
 import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
-import { DateTime } from "effect"
 import type { TaskSpec } from "../task.ts"
-import type {
-  AttemptRow,
-  EffectRow,
-  NodeRow,
-  PlanRow,
-  ProgressRow,
-  RunnerStore,
-} from "../runner/store.ts"
+import type { AttemptRow, EffectRow, NodeRow, PlanRow, RunnerStore } from "../runner/store.ts"
 import { PlanInput } from "../runner/schema.ts"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { InspectTrajectoryInput } from "./schema.ts"
@@ -26,34 +18,9 @@ import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import type { TrajectoryMarketEquivalentCost } from "../models/task-valuation-schema.ts"
 import type { ProjectTaskValuationRequest } from "../models/valuation.ts"
 import { planIs } from "../runner/identity-read.ts"
-
-type TransitionRow = {
-  id: number
-  plan_id: string
-  task_id: string | null
-  version: number
-  event: string
-  payload: string
-  created_at: number
-}
-
-type CheckView = {
-  id: string
-  scope: "attempt" | "plan"
-  attemptID: string | null
-  state: string
-  result: "passed" | "failed" | "unknown"
-  command: string | null
-  startedAt: number | null
-  endedAt: number | null
-  timingBasis: string
-  exitCode: number | null
-  timedOut: boolean | null
-  unchanged: boolean | null
-  stdout: string | null
-  stderr: string | null
-  error: string | null
-}
+import { effectEvents, transitionEvent, type CheckView, type TransitionRow } from "./events.ts"
+import { dateMillis } from "../transcript-meta/step.ts"
+import type { TranscriptRouteRow } from "../transcript-meta/schema.ts"
 
 type PlanSnapshot = {
   row: PlanRow
@@ -82,21 +49,6 @@ function object(value: unknown): Record<string, unknown> | null {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function dateMillis(value: unknown): number | null {
-  let millis: number
-  if (typeof value === "number" && Number.isFinite(value)) millis = value
-  else {
-    if (value === null || value === undefined) return null
-    try {
-      millis = DateTime.toEpochMillis(value as DateTime.DateTime)
-    } catch {
-      return null
-    }
-  }
-  const integer = Math.trunc(millis)
-  return Number.isSafeInteger(integer) ? integer : null
 }
 
 const EPOCH_MILLIS = "unix-epoch-ms" as const
@@ -640,109 +592,31 @@ function messageFold(attempt: AttemptRow, stats: PrivacyStats) {
   }
 }
 
-function checkView(
-  effect: EffectRow,
-  planScope: boolean,
-  attemptID: string | null,
-  stats: PrivacyStats,
-): CheckView {
-  const receipt = parseObject(effect.receipt)
-  const check = object(receipt?.check)
-  const error = typeof receipt?.error === "string" ? safeText(receipt.error, stats, 1000) : null
-  const exitCode = asNumber(check?.exitCode)
-  const timedOut = typeof check?.timedOut === "boolean" ? check.timedOut : null
-  const unchanged = typeof check?.unchanged === "boolean" ? check.unchanged : null
-  const result =
-    effect.state !== "completed"
-      ? "unknown"
-      : exitCode === 0 && timedOut === false
-        ? "passed"
-        : exitCode !== null || timedOut === true
-          ? "failed"
-          : "unknown"
-  return {
-    id: safeText(effect.kind.replace(/^(?:graph-)?verify:/, ""), stats, 160),
-    scope: planScope ? "plan" : "attempt",
-    attemptID: attemptID === null ? null : safeText(attemptID, stats, 128),
-    state: safeText(effect.state, stats, 80),
-    result,
-    command: typeof check?.command === "string" ? safeText(check.command, stats) : null,
-    startedAt: asNumber(check?.startedAt),
-    endedAt: asNumber(check?.endedAt),
-    timingBasis:
-      "Verification receipt check.startedAt/check.endedAt; absent endpoints remain unknown",
-    exitCode,
-    timedOut,
-    unchanged,
-    stdout: typeof check?.stdout === "string" ? safeText(check.stdout, stats) : null,
-    stderr: typeof check?.stderr === "string" ? safeText(check.stderr, stats) : null,
-    error,
+/**
+ * What a transcript contributes to the effort, from the stored step rows (`transcript_steps`,
+ * below the transcript bound, in transcript order) and the stored message count: the same routes
+ * and count `messageFold` folds from the host's pages. Events, models and the digest are the
+ * report's alone; the effort reads none of them.
+ */
+function storedMessageFold(transcript: StoredTranscript, stats: PrivacyStats): MessageFold {
+  const routes: MessageFold["routes"] = []
+  for (const row of transcript.routes) {
+    const model =
+      row.provider_id !== null && row.model_id !== null
+        ? modelView(
+            {
+              providerID: row.provider_id,
+              id: row.model_id,
+              ...(row.variant !== null ? { variant: row.variant } : {}),
+            },
+            stats,
+          )
+        : null
+    const route = accountingRoute(model)
+    const id = safeText(row.message_id, stats, 200)
+    if (route && id) routes.push({ messageID: id, route, observedAt: row.created_at })
   }
-}
-
-function transitionEvent(
-  row: TransitionRow,
-  attempts: Map<string, AttemptRow>,
-  stats: PrivacyStats,
-) {
-  const payload = parseObject(row.payload)
-  const requestedAttempt = typeof payload?.attemptID === "string" ? payload.attemptID : null
-  const attemptID = requestedAttempt && attempts.has(requestedAttempt) ? requestedAttempt : null
-  const eventName = safeText(row.event, stats, 120)
-  return {
-    id: safeText(`runner-transition:${row.plan_id}:${row.id}`, stats, 256),
-    at: row.created_at,
-    attemptID: attemptID ? safeText(attemptID, stats, 128) : null,
-    sessionID: attemptID ? safeText(attempts.get(attemptID)!.session_id, stats, 128) : null,
-    kind: "runner-transition",
-    event: eventName,
-    version: row.version,
-    ...(typeof payload?.from === "string" ? { from: safeText(payload.from, stats, 80) } : {}),
-    ...(typeof payload?.to === "string" ? { to: safeText(payload.to, stats, 80) } : {}),
-    ...(typeof payload?.reason === "string" ? { reason: safeText(payload.reason, stats) } : {}),
-  }
-}
-
-function effectEvents(
-  effects: EffectRow[],
-  attempts: Map<string, AttemptRow>,
-  checks: CheckView[],
-  stats: PrivacyStats,
-) {
-  const events: Record<string, unknown>[] = []
-  for (const effect of effects) {
-    const attempt = effect.attempt_id ? attempts.get(effect.attempt_id) : undefined
-    if (effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:")) {
-      const planScope = effect.kind.startsWith("graph-verify:")
-      const check = checkView(effect, planScope, attempt?.id ?? null, stats)
-      checks.push(check)
-      events.push({
-        id: safeText(`runner-check:${effect.id}`, stats, 256),
-        at: check.endedAt ?? check.startedAt ?? attempt?.started_at ?? null,
-        attemptID: attempt ? safeText(attempt.id, stats, 128) : null,
-        sessionID: attempt ? safeText(attempt.session_id, stats, 128) : null,
-        kind: "verification",
-        checkID: check.id,
-        status: check.result,
-        state: check.state,
-        ...(check.error ? { error: check.error } : {}),
-      })
-      continue
-    }
-    const receipt = parseObject(effect.receipt)
-    const message = typeof receipt?.error === "string" ? safeText(receipt.error, stats, 1000) : null
-    events.push({
-      id: safeText(`runner-effect:${effect.id}`, stats, 256),
-      at: attempt?.started_at ?? null,
-      attemptID: attempt ? safeText(attempt.id, stats, 128) : null,
-      sessionID: attempt ? safeText(attempt.session_id, stats, 128) : null,
-      kind: "runner-effect",
-      effect: safeText(effect.kind, stats, 100),
-      state: safeText(effect.state, stats, 80),
-      ...(message ? { error: message } : {}),
-    })
-  }
-  return events
+  return { events: [], models: [], routes, count: transcript.messageCount, digest: "" }
 }
 
 function rawPlanInput(row: PlanRow) {
@@ -873,6 +747,22 @@ function modelFromPolicy(policy: string, stats: PrivacyStats) {
   return modelView(data?.model, stats)
 }
 
+function legacyTokenCountView(attempt: AttemptRow) {
+  const value = numberOrNull(attempt.token_count)
+  return {
+    value,
+    source: "runner_attempt.token_count scalar; not added to categorized session totals",
+    status: value === null ? ("missing" as const) : ("legacy-aggregate" as const),
+  }
+}
+
+/** What the effort view reads of an attempt's view: its id, takeover mark and legacy scalar. */
+type EffortAttemptView = {
+  id: string
+  takeover?: { agent: "architect" }
+  legacyTokenCount: ReturnType<typeof legacyTokenCountView>
+}
+
 function attemptView(
   attempt: AttemptRow,
   snapshot: PlanSnapshot,
@@ -890,7 +780,6 @@ function attemptView(
   const uniqueModels = new Map<string, NonNullable<typeof observed>>()
   for (const model of [...messageModels, ...(observed ? [observed] : [])])
     uniqueModels.set(modelKey(model), model)
-  const legacyTokenCount = numberOrNull(attempt.token_count)
   return {
     id: safeText(attempt.id, stats, 128),
     planID: safeText(attempt.plan_id, stats, 128),
@@ -944,11 +833,7 @@ function attemptView(
         ? "mixed models observed; session aggregate cannot be split by model"
         : "session aggregate attributed only to the session snapshot, not individual calls",
     usage: usage(session),
-    legacyTokenCount: {
-      value: legacyTokenCount,
-      source: "runner_attempt.token_count scalar; not added to categorized session totals",
-      status: legacyTokenCount === null ? "missing" : "legacy-aggregate",
-    },
+    legacyTokenCount: legacyTokenCountView(attempt),
     toolCount: {
       value: attempt.tool_count,
       source: "runner_attempt.tool_count; attempt scope",
@@ -1269,7 +1154,7 @@ type TaskEffortBasis = ReturnType<typeof projectTaskEffortBasis>
 function effortTokenUsage(
   allAttempts: AttemptEntry[],
   taskEffortBasis: TaskEffortBasis,
-  attemptViews: ReturnType<typeof attemptView>[],
+  attemptViews: readonly EffortAttemptView[],
   stats: PrivacyStats,
 ) {
   const categories = taskEffortBasis.usage.categories
@@ -1335,8 +1220,8 @@ function effortTiming(rawPlans: PlanSnapshot[], allAttempts: AttemptEntry[]) {
 function effortView(
   rawPlans: PlanSnapshot[],
   allAttempts: AttemptEntry[],
-  reads: SessionReads,
-  attemptViews: ReturnType<typeof attemptView>[],
+  reads: Pick<SessionReads, "sessions">,
+  attemptViews: readonly EffortAttemptView[],
   taskEffortBasis: TaskEffortBasis,
   marketEquivalentCost: TrajectoryMarketEquivalentCost | undefined,
   stats: PrivacyStats,
@@ -1426,8 +1311,8 @@ type ProgressCounts = {
  * dropped, so the raw payloads of the window are never held together. The projected facts are
  * what the report keeps.
  */
-function foldProgress(store: RunnerStore, attemptIDs: readonly string[]) {
-  const window = store.progressReportWindow(attemptIDs)
+function foldProgress(store: RunnerStore, attemptIDs: readonly string[], visible?: number) {
+  const window = store.progressReportWindow(attemptIDs, visible)
   const counts: ProgressCounts = { facts: 0, commentary: 0, gaps: 0, steps: 0, usageSnapshots: 0 }
   const facts: Record<string, unknown>[] = []
   for (const page of window.pages)
@@ -1589,6 +1474,122 @@ function paginateEvents(
 }
 
 /**
+ * The task's effort: usage and routes per unique worker session (`projectTaskEffortBasis`), the
+ * market valuation of the same request (`marketEquivalentCostOf`) and the view the report shows.
+ * The report and the stored effort (`effort-store.ts`) both compose it here, so they agree.
+ */
+async function composeTaskEffort(input: {
+  rawPlans: PlanSnapshot[]
+  allAttempts: AttemptEntry[]
+  reads: SessionReads
+  attemptViews: readonly EffortAttemptView[]
+  progressFacts: Record<string, unknown>[]
+  progressTruncated: boolean
+  truncatedContextSessionIDs: string[]
+  options: InspectOptions
+  stats: PrivacyStats
+}) {
+  const { rawPlans, allAttempts, reads, stats } = input
+  const valuationInput: ProjectTaskValuationRequest = {
+    attempts: allAttempts
+      .filter((entry) => !isTakeoverAttempt(entry.attempt.policy))
+      .map((entry) =>
+        valuationAttempt(
+          entry,
+          reads.sessions.get(entry.attempt.id) ?? null,
+          reads.folds.get(entry.attempt.id)?.routes ?? [],
+          reads.statuses.get(entry.attempt.id) ?? "missing",
+          stats,
+        ),
+      ),
+    progressFacts: input.progressFacts,
+    progressTruncated: input.progressTruncated,
+    truncatedContextSessionIDs: input.truncatedContextSessionIDs,
+  }
+  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
+  const marketEquivalentCost = await marketEquivalentCostOf(valuationInput, input.options)
+  return effortView(
+    rawPlans,
+    allAttempts,
+    reads,
+    input.attemptViews,
+    taskEffortBasis,
+    marketEquivalentCost,
+    stats,
+  )
+}
+
+export type TaskEffort = Awaited<ReturnType<typeof composeTaskEffort>>["effort"]
+
+/** A session's stored transcript metadata: its message count and its step routes below the bound. */
+export type StoredTranscript = { messageCount: number; routes: Iterable<TranscriptRouteRow> }
+
+/**
+ * The effort of one project-owned task from stored facts only: the attempts and plans, every
+ * retained progress row of its attempts (no window: nothing is truncated), the live session
+ * facts the host session fold stored (`sessionOf`, one row per session; absent reads as a
+ * missing session) and the transcript metadata the transcript fold stored (`transcriptOf`, read
+ * only for a session whose context is `available`). No host read and no message text: the
+ * composition equals the history capture's. Undefined when the task is gone or not this
+ * project's.
+ */
+export async function inspectTaskEffort(
+  store: RunnerStore,
+  projectID: string,
+  taskID: string,
+  sessionOf: (sessionID: string) => TrajectorySession | null,
+  options: {
+    taskValuationProvider: TaskValuationProvider
+    signal?: AbortSignal
+    transcriptOf?: (sessionID: string, below: number) => StoredTranscript | undefined
+  },
+): Promise<{ effort: TaskEffort; busy: boolean } | undefined> {
+  const stats = privacyStats()
+  const task = store.repository.get(taskID)
+  if (!task || !ownedByProject(task, store, projectID)) return undefined
+  const rawPlans = snapshots(store, task)
+  const allAttempts = rawPlans.flatMap((snapshot) =>
+    snapshot.attempts.map((attempt) => ({ attempt, snapshot })),
+  )
+  const folded = foldProgress(
+    store,
+    allAttempts.map(({ attempt }) => attempt.id),
+    Number.MAX_SAFE_INTEGER,
+  )
+  const reads: SessionReads = {
+    sessions: new Map(),
+    folds: new Map(),
+    errors: new Map(),
+    statuses: new Map(),
+  }
+  for (const { attempt } of allAttempts) {
+    // An Architect takeover has no native worker session; nothing is missing.
+    if (isTakeoverAttempt(attempt.policy)) continue
+    const session = sessionOf(attempt.session_id)
+    reads.sessions.set(attempt.id, session)
+    reads.statuses.set(attempt.id, session ? "available" : "missing")
+    if (session?.messageStatus !== "available") continue
+    const transcript = options.transcriptOf?.(attempt.session_id, MAX_CONTEXT_MESSAGES)
+    if (transcript) reads.folds.set(attempt.id, storedMessageFold(transcript, stats))
+  }
+  return composeTaskEffort({
+    rawPlans,
+    allAttempts,
+    reads,
+    attemptViews: allAttempts.map(({ attempt }) => ({
+      id: safeText(attempt.id, stats, 128),
+      ...(isTakeoverAttempt(attempt.policy) ? { takeover: { agent: "architect" as const } } : {}),
+      legacyTokenCount: legacyTokenCountView(attempt),
+    })),
+    progressFacts: folded.facts,
+    progressTruncated: folded.truncated,
+    truncatedContextSessionIDs: truncatedContextSessions(allAttempts, reads, stats),
+    options,
+    stats,
+  })
+}
+
+/**
  * Build one project-owned, read-only report. The runner's `detail()` method is
  * deliberately avoided because it calls `audit()` and inserts an audit row.
  */
@@ -1655,37 +1656,20 @@ export async function inspectTrajectory(
       concerns.get(attempt.id),
     ),
   )
-  const truncatedContextSessionIDs = truncatedContextSessions(allAttempts, reads, stats)
-  const valuationInput: ProjectTaskValuationRequest = {
-    attempts: allAttempts
-      .filter((entry) => !isTakeoverAttempt(entry.attempt.policy))
-      .map((entry) =>
-        valuationAttempt(
-          entry,
-          reads.sessions.get(entry.attempt.id) ?? null,
-          reads.folds.get(entry.attempt.id)?.routes ?? [],
-          reads.statuses.get(entry.attempt.id) ?? "missing",
-          stats,
-        ),
-      ),
-    progressFacts: projectedProgressFacts,
-    progressTruncated,
-    truncatedContextSessionIDs,
-  }
-  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
   const focusedAttempts = input.attemptID
     ? attemptViews.filter((attempt) => attempt.id === input.attemptID)
     : attemptViews
-  const marketEquivalentCost = await marketEquivalentCostOf(valuationInput, options)
-  const { effort, busy } = effortView(
+  const { effort, busy } = await composeTaskEffort({
     rawPlans,
     allAttempts,
     reads,
     attemptViews,
-    taskEffortBasis,
-    marketEquivalentCost,
+    progressFacts: projectedProgressFacts,
+    progressTruncated,
+    truncatedContextSessionIDs: truncatedContextSessions(allAttempts, reads, stats),
+    options,
     stats,
-  )
+  })
   const summary = {
     schemaVersion: 1,
     task: taskView(store, task, rawPlans, stats),

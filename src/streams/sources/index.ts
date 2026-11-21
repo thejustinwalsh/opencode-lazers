@@ -5,3 +5,7 @@
  */
 import "./tasks.ts"
 import "./live-history.ts"
+import "./radar.ts"
+import "./host-sessions.ts"
+import "./projects.ts"
+import "./radar-flow.ts"

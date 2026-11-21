@@ -1,4 +1,4 @@
-import type { LiveRadarResponse } from "../../src/observability/contract.ts"
+import type { RadarLive } from "../../src/radar/live-view.ts"
 
 /**
  * The data behind design/reviews/fable-ui-review-20261117/mockups/radar-flow.html as a live read:
@@ -54,7 +54,7 @@ const TARGETS = [
   "src/runner/lease.ts",
 ]
 
-export function mockupFlowLive(now: number): LiveRadarResponse {
+export function mockupFlowLive(now: number): RadarLive {
   const sessions = SESSIONS.map((entry) => ({
     id: `session:${entry.id}`,
     sessionID: entry.id,
@@ -194,5 +194,5 @@ export function mockupFlowLive(now: number): LiveRadarResponse {
     flow,
     scheduler: { status: "scheduled", participants: 5 },
     workload: { queued: 6, needsYou: 1, failed: 1 },
-  } as unknown as LiveRadarResponse
+  } as unknown as RadarLive
 }

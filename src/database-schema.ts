@@ -30,7 +30,7 @@ export const schemaModules = {
     tables: ["delegated_agent_admissions"],
   },
   projects: {
-    generation: 2,
+    generation: 3,
     source: "src/project-key.ts",
     tables: [
       "lazers_projects",
@@ -221,7 +221,7 @@ export const schemaModules = {
     tables: ["audit_runs", "audit_sections", "audit_decisions", "audit_findings"],
   },
   "task-schedule": {
-    generation: 4,
+    generation: 5,
     source: "src/tasks/schedule/schema.ts",
     tables: [
       "task_schedule",
@@ -231,11 +231,52 @@ export const schemaModules = {
       "task_schedule_waits",
       "task_schedule_sessions",
       "task_schedule_scopes",
+      "task_schedule_search",
       "task_schedule_counts",
       "task_schedule_dirty",
       "task_schedule_failed",
       "task_schedule_state",
     ],
+  },
+  projections: {
+    generation: 1,
+    source: "src/projections/lifecycle.ts",
+    tables: ["projection_state"],
+  },
+  "task-events": {
+    generation: 1,
+    source: "src/events/task-events-schema.ts",
+    tables: ["task_events", "task_events_dirty"],
+  },
+  "native-call-display": {
+    generation: 1,
+    source: "src/progress/native-call-display.ts",
+    tables: ["native_tool_call_display"],
+  },
+  "scheduler-status": {
+    generation: 1,
+    source: "src/runner/scheduler-status.ts",
+    tables: ["scheduler_project_status"],
+  },
+  "project-overview": {
+    generation: 1,
+    source: "src/projects/overview-store.ts",
+    tables: ["project_overview", "project_global", "project_presence", "project_overview_dirty"],
+  },
+  "host-sessions": {
+    generation: 1,
+    source: "src/host-sessions/state.ts",
+    tables: ["host_session_state", "host_session_dirty"],
+  },
+  "transcript-meta": {
+    generation: 2,
+    source: "src/transcript-meta/schema.ts",
+    tables: ["transcript_steps", "transcript_sessions", "transcript_meta_dirty"],
+  },
+  "trajectory-effort": {
+    generation: 2,
+    source: "src/trajectory/effort-store.ts",
+    tables: ["trajectory_task_effort", "trajectory_effort_dirty"],
   },
   observability: {
     generation: 1,

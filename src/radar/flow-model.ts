@@ -1,4 +1,4 @@
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { RadarLive } from "./live-view.ts"
 import {
   scopedWorkload,
   callSummary,
@@ -18,7 +18,7 @@ import type { ActivityLine, LiveSession } from "./monitor-model.ts"
 const FLOW_WINDOW_MS = 120_000
 export const FEED_CAP = 150
 
-type Live = LiveRadarResponse
+type Live = RadarLive
 
 export type DestKind = "model" | "local" | "service" | "you"
 export const DEST_GROUPS = [
@@ -457,8 +457,20 @@ export function modelWhen(card: ModelCard, now: number) {
   return `${minutes} min ago`
 }
 
-/** Sentences for the quiet state; a clause without data is omitted. */
+/**
+ * Sentences for the quiet state; a clause without data is omitted. While a session's stored model
+ * steps are still being read, an empty Flow is not final: it says so instead of "nothing".
+ */
 export function quietSentences(live: Live) {
+  const reading = live.sessions.filter(
+    (session) => session.availability === "available" && session.phasesLoading,
+  ).length
+  if (reading > 0)
+    return {
+      heading: "Reading model steps",
+      line: `${reading === 1 ? "One session's" : `${reading} sessions'`} model steps are still being read; Flow fills in as they arrive.`,
+      state: "",
+    }
   const architect = live.sessions.find(
     (session) => session.availability === "available" && session.isCurrentArchitect === true,
   )
@@ -468,6 +480,7 @@ export function quietSentences(live: Live) {
     queued > 0 ? `${queued} ${queued === 1 ? "task is" : "tasks are"} queued` : "",
   ].filter(Boolean)
   return {
+    heading: "Nothing is flowing",
     line: "No session has called a model or a tool in the last two minutes.",
     state: parts.length ? `${parts.join(" · ")}.` : "",
   }

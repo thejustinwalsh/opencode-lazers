@@ -301,14 +301,18 @@ test("an unreachable service shows a notice, not stale or empty rows", async () 
   ui.close()
 })
 
-test("49f6a84a-1: a poll with equal data keeps the row, its focus and an unsent reason", async () => {
+test("49f6a84a-1: a pushed frame with equal data keeps the row, its focus and an unsent reason", async () => {
   const ui = await open()
   await ui.flip("Pause alpha", true)
   await ui.type("Reason to pause alpha", "Rebuild in prog")
   const before = ui.q("Reason to pause alpha")
   const rowBefore = ui.row("alpha")
   const listsBefore = ui.api.calls.filter((c) => c.method === "list").length
-  await Bun.sleep(3_300) // one refresh interval
+  // No poll: an idle page re-reads only when the server pushes a change.
+  await Bun.sleep(300)
+  expect(ui.api.calls.filter((c) => c.method === "list").length).toBe(listsBefore)
+  ui.api.push()
+  await Bun.sleep(50)
   expect(ui.api.calls.filter((c) => c.method === "list").length).toBeGreaterThan(listsBefore)
   expect(ui.row("alpha")).toBe(rowBefore)
   expect(ui.q("Reason to pause alpha")).toBe(before)

@@ -7,7 +7,7 @@ const Scope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("global") }),
   z.strictObject({ kind: z.literal("project"), key: z.string().min(1) }),
 ])
-const Pause = z.strictObject({ reason: z.string(), by: z.string(), at: z.number() })
+type Pause = { reason: string; by: string; at: number }
 const ProofView = z.strictObject({
   key: z.string(),
   command: z.string(),
@@ -45,58 +45,6 @@ const ProfileChangeView = z.strictObject({
   key: z.string(),
   before: z.string().optional(),
   after: z.string().optional(),
-})
-/** `profile` is the stored profile JSON, the one document `ProjectProfileSchema` validates. */
-const RevisionView = z.strictObject({
-  revision: z.int(),
-  state: z.enum(["active", "superseded"]),
-  profile: z.unknown(),
-  author: z.strictObject({
-    kind: z.enum(["architect", "owner"]),
-    sessionID: z.string().optional(),
-  }),
-  reason: z.string(),
-  createdAt: z.number(),
-  /** When a later revision superseded this one. */
-  supersededAt: z.number().optional(),
-  proofs: z.array(ProofView),
-  mapPreview: MapPreviewView.optional(),
-  /** Names in `profile.env` that look like credentials. */
-  credentialLikeEnv: z.array(z.string()),
-})
-const ProfileView = z.strictObject({
-  key: z.string(),
-  active: RevisionView.optional(),
-  /** Earlier revisions, newest first, so a change can be seen and set again. */
-  history: z.array(RevisionView),
-  /** A stored repository-map source filter of one of its checkouts, kept until a profile is active. */
-  legacySource: z
-    .strictObject({ include: z.array(z.string()), exclude: z.array(z.string()) })
-    .optional(),
-  setupDismissedAt: z.number().nullable(),
-})
-const Project = z.strictObject({
-  key: z.string(),
-  code: z.string(),
-  name: z.string(),
-  checkouts: z.array(z.string()),
-  /** A live OpenCode location of this project exists in the serving process. */
-  loaded: z.boolean(),
-  /** Present only while the project's own pause is set. */
-  pause: Pause.nullable(),
-  /** Present only while Architect contact is paused for the project (read-only here). */
-  architectContact: z.strictObject({ reason: z.string() }).nullable(),
-  settings: ProjectSettingsView,
-  /** `revision` is the active profile revision, if any. */
-  profile: z.strictObject({
-    state: z.enum(["none", "active"]),
-    revision: z.int().optional(),
-  }),
-})
-const Listing = z.strictObject({
-  projects: z.array(Project),
-  globalPause: Pause.nullable(),
-  globalSettings: GlobalSettingsView,
 })
 /** A refused write is data, so the form can show it beside the field and keep the old value. */
 const Refusal = z.enum([
@@ -162,23 +110,65 @@ const SetupStarted = z.union([
 ])
 export type SetupStatusView = z.infer<typeof SetupStatus>
 export type SetupStartedView = z.infer<typeof SetupStarted>
-export type ProfileView = z.infer<typeof ProfileView>
-export type ProfileRevisionView = z.infer<typeof RevisionView>
+/** One project's profile revisions: the server-side view the Architect's profile tool reads. */
+export type ProfileView = {
+  key: string
+  active?: ProfileRevisionView
+  /** Earlier revisions, newest first, so a change can be seen and set again. */
+  history: ProfileRevisionView[]
+  /** A stored repository-map source filter of one of its checkouts, kept until a profile is active. */
+  legacySource?: { include: string[]; exclude: string[] }
+  setupDismissedAt: number | null
+}
+/** A profile revision. `profile` is the stored profile JSON (`ProjectProfileSchema`'s document). */
+export type ProfileRevisionView = {
+  revision: number
+  state: "active" | "superseded"
+  profile: unknown
+  author: { kind: "architect" | "owner"; sessionID?: string }
+  reason: string
+  createdAt: number
+  /** When a later revision superseded this one. */
+  supersededAt?: number
+  proofs: z.infer<typeof ProofView>[]
+  mapPreview?: z.infer<typeof MapPreviewView>
+  /** Names in `profile.env` that look like credentials. */
+  credentialLikeEnv: string[]
+}
 export type ProfileOutcomeView = z.infer<typeof ProfileOutcome>
-export type ProjectsListing = z.infer<typeof Listing>
-export type ProjectView = z.infer<typeof Project>
+/** What the Projects section shows: the `projects.list` and `projects.global` rows as views. */
+export type ProjectsListing = {
+  projects: ProjectView[]
+  globalPause: Pause | null
+  globalSettings: z.infer<typeof GlobalSettingsView>
+}
+/** A project as the Projects section shows it (a `projects.list` row, `overview-view.ts`). */
+export type ProjectView = {
+  key: string
+  code: string
+  name: string
+  checkouts: string[]
+  /** A live OpenCode location of this project exists in the serving process. */
+  loaded: boolean
+  /** Present only while the project's own pause is set. */
+  pause: Pause | null
+  /** Present only while Architect contact is paused for the project (read-only here). */
+  architectContact: { reason: string } | null
+  settings: z.infer<typeof ProjectSettingsView>
+  /** `revision` is the active profile revision, if any. */
+  profile: { state: "none" | "active"; revision?: number }
+}
 export type ProjectsOutcome = z.infer<typeof Outcome>
 export type ProjectScope = z.infer<typeof Scope>
 
 /**
- * Owner controls for the project registry: codes, dispatch pause and per-project limits.
- * Call: `client.rpc(Projects).list({})`, then re-read after every write.
+ * Owner controls for the project registry: codes, dispatch pause and per-project limits. The
+ * section reads the stored rows through the `projects.list` and `projects.global` streams.
  */
 export const Projects = Rpc.define({
   id: "lz.projects",
   events: {},
   methods: {
-    list: { input: z.strictObject({}), output: Listing },
     /**
      * Everything waiting on the owner in the projects the caller may read, a page per checkout.
      * `sessionID` is the calling session; continue with `nextCursor` until it is null.
@@ -202,7 +192,6 @@ export const Projects = Rpc.define({
       }),
       output: Outcome,
     },
-    profile: { input: z.strictObject({ key: z.string().min(1) }), output: ProfileView },
     /**
      * The owner's edit: validates the profile JSON, proves each command once in a native worktree
      * (this can take minutes) and saves the result as the new active revision at once.

@@ -1,4 +1,4 @@
-import { For } from "solid-js"
+import { For, Show } from "solid-js"
 import type { IconName, Ui } from "@opencode/plugin/gui"
 import type { ConnectionChip } from "./monitor-model.ts"
 
@@ -28,12 +28,22 @@ export function RadarHeader(props: {
   scope: RadarScopeChoice
   onScope: (choice: RadarScopeChoice) => void
   connection: ConnectionChip
-  onRefresh: () => void
+  /**
+   * Re-open what the view reads, for a view that can (the lifecycle). The Monitor's streams push
+   * every change of their rows, so it offers no Refresh.
+   */
+  onRefresh?: () => void
   /** Extra ⋯ menu items, after Refresh. */
   actions?: Array<{ label: string; icon?: IconName; onSelect: () => void }>
   ref?: (element: HTMLElement) => void
 }) {
   const Ui = props.ui
+  const menuItems = () => [
+    ...(props.onRefresh
+      ? [{ label: "Refresh", icon: "refresh" as IconName, onSelect: props.onRefresh }]
+      : []),
+    ...(props.actions ?? []),
+  ]
   return (
     <header class="lazers-radar-header" ref={props.ref}>
       <h2>Radar</h2>
@@ -72,14 +82,9 @@ export function RadarHeader(props: {
           }))}
         />
       </span>
-      <Ui.Menu
-        label="Radar actions"
-        icon="outline-dots"
-        items={[
-          { label: "Refresh", icon: "refresh", onSelect: props.onRefresh },
-          ...(props.actions ?? []),
-        ]}
-      />
+      <Show when={menuItems().length > 0}>
+        <Ui.Menu label="Radar actions" icon="outline-dots" items={menuItems()} />
+      </Show>
     </header>
   )
 }

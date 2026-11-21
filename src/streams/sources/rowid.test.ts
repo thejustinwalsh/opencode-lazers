@@ -9,6 +9,9 @@ import { ProgressRecorder } from "../../progress/recorder.ts"
 import { installProgressDisplaySchema } from "../../progress/display-store.ts"
 import { RunnerStore } from "../../runner/store.ts"
 import { ensureTaskScheduleSchema } from "../../tasks/schedule/schema.ts"
+import { ensureHostSessionStateSchema } from "../../host-sessions/state.ts"
+import { ensureProjectOverviewSchema } from "../../projects/overview-store.ts"
+import { ensureTranscriptMetaSchema } from "../../transcript-meta/schema.ts"
 import "./index.ts"
 import type { Source } from "../source.ts"
 import type { Columns } from "../frame.ts"
@@ -39,6 +42,9 @@ function declaredTables() {
     ensureTaskScheduleSchema(repository)
     new ProgressRecorder(new RunnerStore(repository), "p")
     repository.atomic((db) => installProgressDisplaySchema(db))
+    ensureHostSessionStateSchema(repository)
+    ensureProjectOverviewSchema(repository)
+    ensureTranscriptMetaSchema(repository)
     return new Map(
       repository.read((db) =>
         db

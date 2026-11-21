@@ -5,7 +5,6 @@ import { makeFixture } from "../../test/trajectory/fixture.ts"
 import { associatedSessionIDs, projectSessionIDs } from "./associations.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
-import type { RadarSessionHost } from "./native.ts"
 
 /** The read before this change: every task, plan, attempt and continuation row, ids repeated. */
 function legacyAssociatedSessionIDs(db: Database, projectDirectory: string) {
@@ -136,47 +135,6 @@ test("an unchanged project reads no session rows; a write re-reads and the set m
     expect(third.ids.has("ses-late")).toBe(true)
     expect([...third.ids].toSorted()).toEqual([...third.expected].toSorted())
   } finally {
-    fixture.close()
-  }
-})
-
-test("a project radar read does not rescan session membership while the revision is unchanged", async () => {
-  const fixture = makeFixture()
-  const secret = new Uint8Array(32).fill(22)
-  const none: RadarSessionHost = {
-    get: async () => null,
-    project: async () => ({ sessions: [], truncated: false }),
-    descendants: async () => ({ sessions: [], truncated: false }),
-  }
-  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, none)
-  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
-  tracker.initialize()
-  const membership = (queries: string[]) =>
-    queries.filter((sql) => /SELECT DISTINCT (session_id FROM \(|owner AS session_id)/.test(sql))
-  const radar = async () => {
-    const spy = spyOn(Database.prototype, "query")
-    try {
-      await reads.radar(
-        { scope: { kind: "project", sessionID: "ses-owner" }, includeUnmanagedSessions: false },
-        tracker,
-        new AbortController().signal,
-      )
-      return spy.mock.calls.map(([sql]) => String(sql))
-    } finally {
-      spy.mockRestore()
-    }
-  }
-  try {
-    expect(membership(await radar()).length).toBeGreaterThan(0)
-    expect(membership(await radar())).toEqual([])
-    fixture.store.atomic((db) => {
-      db.run("UPDATE runner_plans SET reason='moved' WHERE project_directory=?", [
-        fixture.directory,
-      ])
-    })
-    expect(membership(await radar()).length).toBeGreaterThan(0)
-  } finally {
-    tracker.close()
     fixture.close()
   }
 })

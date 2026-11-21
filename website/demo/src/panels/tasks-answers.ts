@@ -1,4 +1,4 @@
-import { Tasks } from "../../../../src/tasks/contract.ts"
+import { CurrentActivityOutput, Tasks } from "../../../../src/tasks/contract.ts"
 import type {
   TaskPage,
   TaskDetail,
@@ -7,8 +7,6 @@ import type {
 } from "../../../../src/tasks/contract.ts"
 import { TasksScheduling } from "../../../../src/tasks/scheduling-contract.ts"
 import type { SchedulingPage, SchedulingNode } from "../../../../src/tasks/scheduling-contract.ts"
-import { Observability } from "../../../../src/observability/contract.ts"
-import type { TopologyResponse } from "../../../../src/observability/contract.ts"
 import type { TaskState } from "../../../../src/runner/schema.ts"
 import type { Read } from "../adapter.ts"
 import { Streams } from "../../../../src/streams/contract.ts"
@@ -201,61 +199,6 @@ function detail(data: TasksData, id: string): TaskDetail {
 type Scope = { kind: "session" | "project"; sessionID: string }
 const SCOPE: Scope = { kind: "project", sessionID: SESSION }
 
-function topology(data: TasksData, scope: Scope = SCOPE): TopologyResponse {
-  const plans = planIDs(data)
-  return {
-    schemaVersion: 1,
-    projectID: PROJECT.id,
-    scope:
-      scope.kind === "project"
-        ? { kind: "project" }
-        : { kind: "session", sessionID: scope.sessionID },
-    observedAt: new Date(Date.now()).toISOString(),
-    boundary: {
-      repositoryVersion: 1,
-      sourceRevision: 1,
-      sourceFingerprint: "a".repeat(64),
-      nativeRevision: 1,
-      eventSequence: 1,
-    },
-    plans: [...plans].map(([title, id], index) => {
-      const nodes = data.tasks.filter((task) => task.plan === title)
-      return {
-        id,
-        revision: 1,
-        version: 1,
-        state: nodes.some((n) => n.state === "running") ? "running" : "queued",
-        reason: null,
-        title,
-        priority: 10 - index,
-        queuePosition: index,
-        afterPlans: [],
-        nodes: nodes.map((task, ordinal) => ({
-          taskID: taskID(task.n),
-          reference: ref(task.n),
-          revision: 1 as const,
-          objective: task.objective ?? task.title,
-          ordinal,
-          state: task.state,
-          version: 1,
-          reason: task.state === "blocked" ? (task.reason ?? null) : null,
-          machineVersion: "demo",
-          machineSupported: true,
-          snapshot: null,
-          snapshotMatchesState: true,
-          waitingOn: (task.after ?? [])
-            .filter((n) => data.tasks.find((t) => t.n === n && openStates.has(t.state)))
-            .map(taskID),
-        })),
-        dependencies: nodes.flatMap((task) =>
-          (task.after ?? []).map((n) => ({ prerequisite: taskID(n), successor: taskID(task.n) })),
-        ),
-      }
-    }),
-    unplannedTasks: [],
-  }
-}
-
 function scheduling(data: TasksData, scope: Scope = SCOPE): SchedulingPage {
   const plans = planIDs(data)
   const waiting = (task: DemoTask) =>
@@ -360,15 +303,17 @@ function currentActivity(data: TasksData, ids: string[]) {
 }
 
 export function rpc(data: () => TasksData) {
-  const streams = taskStreams(data, PROJECT.canonical)
+  // The detail and the rows' current activity read as streams; Models still reads `get`.
+  const streams = taskStreams(data, PROJECT.canonical, {
+    detail: (id) => detail(data(), id),
+    currentActivity: (ids) => currentActivity(data(), ids),
+  })
   return {
     [Streams.id]: streams,
     [Tasks.id]: {
       get: (input: { taskID: string }) => detail(data(), input.taskID),
-      currentActivity: (input: { taskIDs: string[] }) => currentActivity(data(), input.taskIDs),
     },
     [TasksScheduling.id]: { read: (input: { scope: Scope }) => scheduling(data(), input.scope) },
-    [Observability.id]: { topology: (input: { scope: Scope }) => topology(data(), input.scope) },
   } as Record<string, Record<string, (input: never) => unknown>>
 }
 
@@ -382,19 +327,14 @@ export function reads(data: TasksData): Read[] {
       value: detail(data, ref(task.n)),
     })
   out.push({
-    label: "lazers.tasks.currentActivity",
-    schema: Tasks.methods.currentActivity.output,
+    label: "tasks.currentActivity (stream composition)",
+    schema: CurrentActivityOutput,
     value: currentActivity(data, data.tasks.map((task) => taskID(task.n)).slice(0, 40)),
   })
   out.push({
     label: "lazers.tasks.scheduling.read",
     schema: TasksScheduling.methods.read.output,
     value: scheduling(data),
-  })
-  out.push({
-    label: "lazers.observability.topology",
-    schema: Observability.methods.topology.output,
-    value: topology(data),
   })
   return out
 }

@@ -1,70 +1,10 @@
 import { createMachine, initialTransition, transition as xstateTransition } from "xstate"
 import type { TaskState } from "./schema.ts"
+import { machineVersion, taskMachineConfig } from "./task-machine-config.ts"
 
-export const machineVersion = "lazers-task/1"
+export { machineVersion } from "./task-machine-config.ts"
 /** Pure transitions only. External work is journaled before execution by the runtime. */
-export const taskMachine = createMachine({
-  id: "lazers-task",
-  initial: "queued",
-  states: {
-    queued: {
-      on: { READY: "ready", BLOCK: "blocked", CANCEL: "cancelled", INCORPORATE: "incorporated" },
-    },
-    ready: {
-      on: {
-        DISPATCH: "running",
-        BLOCK: "blocked",
-        CANCEL: "cancelled",
-        EXHAUST: "exhausted",
-        ADOPT_ACCEPT: "accepted",
-        RETAINED_ACCEPT: "accepted",
-      },
-    },
-    running: {
-      on: {
-        VERIFY: "verifying",
-        BLOCK: "blocked",
-        FAIL: "failed",
-        CANCEL: "cancelled",
-        EXHAUST: "exhausted",
-        RETRY: "ready",
-        RETAINED_ACCEPT: "accepted",
-      },
-    },
-    verifying: {
-      on: {
-        RESUME: "running",
-        ACCEPT: "accepted",
-        REPAIR: "ready",
-        BLOCK: "blocked",
-        FAIL: "failed",
-        CANCEL: "cancelled",
-        EXHAUST: "exhausted",
-        RETAINED_ACCEPT: "accepted",
-      },
-    },
-    blocked: {
-      on: {
-        RECONCILE: "queued",
-        CANCEL: "cancelled",
-        RETRY: "ready",
-        RETAINED_ACCEPT: "accepted",
-      },
-    },
-    accepted: { on: { RETAINED_REPAIR: "ready" } },
-    failed: {
-      on: {
-        RESUME: "running",
-        RETRY: "ready",
-        ADOPT_ACCEPT: "accepted",
-        RETAINED_ACCEPT: "accepted",
-      },
-    },
-    cancelled: { on: { RESUME: "running", RETRY: "ready" } },
-    exhausted: { on: { RESUME: "running", RETRY: "ready" } },
-    incorporated: { type: "final" },
-  },
-})
+export const taskMachine = createMachine(taskMachineConfig)
 
 export function transition(state: TaskState, event: string) {
   const snapshot = taskMachine.resolveState({ value: state, context: {} })

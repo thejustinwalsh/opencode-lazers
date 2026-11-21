@@ -42,11 +42,8 @@ import {
 } from "./profile-store.ts"
 import type { ProfileRevisionRow } from "./profile-store.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
+import type { ProjectsDefaults } from "./overview-store.ts"
 
-export type ProjectsDefaults = {
-  global?: Partial<GlobalSettings>
-  project?: Partial<ProjectSettings>
-}
 type Controls = TaskRepository
 
 const refuse = (
@@ -96,7 +93,11 @@ const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
   credentialLikeEnv: row.profile.env.filter(credentialLikeEnv),
 })
 
-/** Everything the Projects section shows, read fresh from the shared database. */
+/**
+ * Everything the Projects section showed through the removed `list` read, read fresh from the
+ * shared database: kept as the parity oracle of `project_overview` until the old reads go
+ * (panel-streams Task 14).
+ */
 function listProjects(
   repository: Controls,
   loaded: () => Iterable<string>,
@@ -375,8 +376,6 @@ export function registerProjects(
         },
         catch: (error) => (error instanceof Error ? error : new Error(String(error))),
       }).pipe(Effect.orDie),
-    list: () => Effect.sync(() => operations.list()),
-    profile: (input) => Effect.sync(() => operations.profile(input.key)),
     setupStatus: (input) => Effect.promise(() => operations.setupStatus(input.sessionID)),
     startSetup: (input) => Effect.promise(() => operations.startSetup(input.sessionID)),
     dismissSetup: (input) => Effect.sync(() => operations.dismissSetup(input.key)),

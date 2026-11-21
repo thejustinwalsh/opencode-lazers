@@ -153,7 +153,11 @@ async function authorize(
   return currentSession.session
 }
 
-async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, signal: AbortSignal) {
+export async function configuredAccess(
+  ctx: ModelsContext,
+  source: ModelPriceSource,
+  signal: AbortSignal,
+) {
   try {
     const connection = await Effect.runPromise(
       ctx.integration.connection.active(Integration.ID.make(source)),
@@ -170,7 +174,7 @@ async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, si
   }
 }
 
-function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: string) {
+export function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: string) {
   return new ModelPriceSourceSettingsStore(
     {
       get: (key, signal) =>

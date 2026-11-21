@@ -1,4 +1,20 @@
 import { acquireScheduleOwner } from "../tasks/schedule/owner.ts"
+import { taskEventsProjection } from "../events/task-events-refresh.ts"
+import { startProjection } from "../projections/owner.ts"
+import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
+import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
+import { startHostSessionFold } from "../host-sessions/fold.ts"
+import { startTaskEffortFold } from "../trajectory/effort-store.ts"
+import { startTranscriptMetaFold } from "../transcript-meta/fold.ts"
+import { workerTaskEffort } from "../trajectory/effort-worker-client.ts"
+import { nativeHostSessionSource } from "../host-sessions/native.ts"
+import {
+  ensureProjectOverviewSchema,
+  projectOverviewProjection,
+  projectsDefaultsOf,
+  setProjectOverviewDefaults,
+} from "../projects/overview-store.ts"
+import { acquirePresence } from "../projects/presence.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -10,9 +26,11 @@ import { Session } from "@opencode/schema/session"
 import { UsageCache } from "../budget/server.ts"
 import { ProjectIndex } from "../context/index.ts"
 import { nativeContextPermission } from "../context/tools.ts"
-import { createModelsTaskValuationProvider } from "../models/server.ts"
-import { AssociationTaskReads } from "../observability/task-reads.ts"
-import { nativeRadarSessionHost } from "../observability/native.ts"
+import {
+  configuredAccess,
+  createModelsTaskValuationProvider,
+  createPriceSourceSettingsStore,
+} from "../models/server.ts"
 import { historyCacheBytes } from "../trajectory/history.ts"
 import { trajectoryCachePair } from "../trajectory/cache-pair.ts"
 import { ObservationReads } from "../observability/read.ts"
@@ -58,7 +76,6 @@ export type LazersCore = {
   readonly runtime: TaskRuntime
   readonly host: ReturnType<typeof nativeHost>
   readonly reads: ObservationReads
-  readonly taskReads: AssociationTaskReads
   readonly trajectoryHost: ReturnType<typeof nativeTrajectoryHost>
   readonly taskValuationProvider: ReturnType<typeof createModelsTaskValuationProvider>
   readonly managedUsageStore: ManagedUsageStore
@@ -164,6 +181,49 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   // retries parked refreshes; idle it holds a table subscription and no timer.
   // One owner per database per process serves every project core that loads it.
   const scheduleLease = acquireScheduleOwner(repository.path, info.projectDirectory)
+  // Backfills `task_events` (database-wide, paced like the display backfill) and drains what other
+  // connections queued; idle it holds a table subscription and no timer.
+  const taskEventsLease = startProjection(
+    repository.path,
+    info.projectDirectory,
+    taskEventsProjection,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS task events projection failed", { error: String(error) }),
+        ),
+    },
+  )
+  // Display rows for tool calls recorded before their table; triggers keep new ones current.
+  const nativeCallLease = startProjection(
+    repository.path,
+    info.projectDirectory,
+    nativeCallDisplayProjection,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS native call display backfill failed", {
+            error: String(error),
+          }),
+        ),
+    },
+  )
+  // The Projects section's rows: kept by triggers in each writer's transaction; this start
+  // resolves settings with this service's plugin-option defaults and marks the project loaded.
+  ensureProjectOverviewSchema(repository)
+  const overviewLease = startProjection(
+    repository.path,
+    info.projectDirectory,
+    projectOverviewProjection,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS project overview failed", { error: String(error) }),
+        ),
+    },
+  )
+  setProjectOverviewDefaults(repository, projectsDefaultsOf(info.options))
+  const presence = acquirePresence(repository, info.projectDirectory)
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
@@ -210,8 +270,63 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     (directory) => ownsRecordedWorkspace(directory, repository.projectDirectory),
     nativeRunnerHost.messages,
   )
-  const radarSessionHost = nativeRadarSessionHost(host)
+  // Live session facts for the Radar and task activity: a fold of host reads, hinted by native
+  // events and resynced by cursor on every subscription attach; idle it holds no timer.
+  const hostSessions = startHostSessionFold(
+    repository.path,
+    info.projectDirectory,
+    projectID,
+    nativeHostSessionSource(host, nativeRunnerHost),
+    {
+      events: host,
+      location: info.directory,
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS host session fold failed", { error: String(error) }),
+        ),
+    },
+  )
+  // Worker transcripts' metadata (routes, times, counts; never text), folded by host cursor.
+  const transcriptMeta = startTranscriptMetaFold(
+    repository.path,
+    info.projectDirectory,
+    nativeRunnerHost.messages,
+    {
+      events: host,
+      location: info.directory,
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS transcript metadata fold failed", { error: String(error) }),
+        ),
+    },
+  )
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
+  // Each task's effort and market valuation, recomputed off the main thread (the effort worker)
+  // when its facts or the prices change; only the price-source settings are read here.
+  const priceSourceSettings = createPriceSourceSettingsStore(host, repository.projectDirectory)
+  const effortCompute = workerTaskEffort({
+    path: repository.path,
+    projectDirectory: info.projectDirectory,
+    projectID,
+    readPriceInputs: async (signal) => {
+      const [policy, openrouter] = await Promise.all([
+        priceSourceSettings.read(signal),
+        configuredAccess(host, "openrouter", signal),
+      ])
+      return { policy, openrouter }
+    },
+  })
+  const taskEffort = startTaskEffortFold(
+    repository.path,
+    info.projectDirectory,
+    effortCompute.compute,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS task effort fold failed", { error: String(error) }),
+        ),
+    },
+  )
   // Sized once at load; a value set in Settings wins over the plugin option on the next load.
   const historyBytes = historyCacheBytes(
     globalSettings(repository, {
@@ -226,14 +341,12 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     trajectoryHost,
     projectID,
     observationSecret,
-    radarSessionHost,
     taskValuationProvider,
     undefined,
     // One cache pair under one budget, owned by this per-project core.
     trajectoryCachePair(observationSecret, historyBytes),
   )
   built("observationReads")
-  const taskReads = new AssociationTaskReads(repository)
   const usageCache = new UsageCache()
   const inferenceBroker = new InferenceBroker()
 
@@ -268,6 +381,18 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     },
   )
   built("schedulerParticipant")
+  // The Radar reads the scheduler's status for this project from its row.
+  const schedulerStatus = mirrorSchedulerStatus(
+    sharedScheduler,
+    schedulerProjectKey(repository.path, repository.projectDirectory, projectID),
+    repository,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS scheduler status write failed", { error: String(error) }),
+        ),
+    },
+  )
   // Joining a live group must not wait an interval: the next drain turn picks up handoff work.
   scheduler.request()
   const registration = scheduler
@@ -279,7 +404,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     runtime,
     host: nativeRunnerHost,
     reads,
-    taskReads,
     trajectoryHost,
     taskValuationProvider,
     managedUsageStore,
@@ -294,8 +418,17 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const disposeCore = async () => {
     scheduler = undefined
     displayBackfill.stop()
+    taskEventsLease.release()
+    nativeCallLease.release()
+    hostSessions.release()
+    transcriptMeta.release()
+    taskEffort.release()
+    effortCompute.release()
+    overviewLease.release()
+    presence.release()
     scheduleLease.release()
     await registration.dispose()
+    await schedulerStatus.stop()
     await runtime.stop()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.
     try {

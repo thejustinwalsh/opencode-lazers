@@ -4,16 +4,19 @@ import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { ObservationChangeTracker } from "../../src/observability/changes.ts"
-import { Observability } from "../../src/observability/contract.ts"
+import { ensureHostSessionStateSchema, writeHostSession } from "../../src/host-sessions/state.ts"
+import { ensureNativeCallDisplaySchema } from "../../src/progress/native-call-display.ts"
+import {
+  ensureTranscriptMetaSchema,
+  writeTranscriptPage,
+} from "../../src/transcript-meta/schema.ts"
 import { ProgressRecorder } from "../../src/progress/recorder.ts"
 import { refreshProgressDisplay } from "../../src/progress/display-store.ts"
 import { Streams } from "../../src/streams/contract.ts"
 import { readerPool, type ReaderPool } from "../../src/streams/pool.ts"
 import { createStreamsService } from "../../src/streams/rpc.ts"
 import { makeFixture, firstAttemptID } from "../trajectory/fixture.ts"
-import { operationalReads } from "../radar/operational.ts"
-import type { RadarNativeSession } from "../../src/observability/native.ts"
+import { insertTask } from "../../src/tasks/schedule/fixture.ts"
 
 type DOMEntry = {
   createReactiveStore<T>(initial: T): {
@@ -180,7 +183,6 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
   const fixture = makeFixture()
   let disposeSetup: (() => void) | undefined
   let mounted: { dispose(): void; setVisible(value: boolean): void } | undefined
-  let tracker: ObservationChangeTracker | undefined
   let pool: ReaderPool | undefined
   let streamsService: ReturnType<typeof createStreamsService> | undefined
   try {
@@ -292,42 +294,139 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       },
     })
 
+    // Two queued tasks in a plan: the Map's Queue group reads them through `radar.group`.
+    const queuedTasks = ["map-alpha", "map-beta"].map((name) =>
+      insertTask(fixture.repository, name),
+    )
+    fixture.store.submit(
+      {
+        requestID: "radar-dom-queued",
+        objective: "Queued work",
+        baseCommit: "a".repeat(40),
+        workspaceMode: "shared",
+        nodes: queuedTasks.map((id) => ({ taskID: id, revision: 1 })),
+        dependencies: [],
+        integrationOrder: queuedTasks,
+        verification: [{ id: "check", command: "bun test", timeoutMs: 60000 }],
+        acceptance: [
+          {
+            id: "ok",
+            assertion: "Checks pass",
+            evidence: [{ kind: "verification", verificationID: "check" }],
+          },
+        ],
+      },
+      "ses-owner",
+    )
+    await fixture.index()
     const projectID = "project"
-    const secret = new Uint8Array(32).fill(91)
-    const architect: RadarNativeSession = {
-      id: "ses-view-architect",
-      projectID,
-      parentID: null,
-      directory: fixture.directory,
+    ensureHostSessionStateSchema(fixture.repository)
+    ensureTranscriptMetaSchema(fixture.repository)
+    ensureNativeCallDisplaySchema(fixture.repository)
+    /** The host's session facts as the fold stores them (`host_session_state`). */
+    const hostSession = (
+      id: string,
+      change: { agent: string; parentID?: string | null; busy: boolean; updatedAt: number } & {
+        model?: { providerID: string; id: string; variant: string | null } | null
+      },
+    ) =>
+      fixture.repository.atomic((db) =>
+        writeHostSession(db, fixture.directory, projectID, id, {
+          id,
+          projectID,
+          parentID: change.parentID ?? null,
+          agent: change.agent,
+          title: null,
+          directory: fixture.directory,
+          archived: false,
+          busy: change.busy,
+          outcome: null,
+          model: change.model ?? null,
+          tokensIn: null,
+          tokensOut: null,
+          tokensReasoning: null,
+          tokensCacheRead: null,
+          tokensCacheWrite: null,
+          createdAt: change.updatedAt - 1_000,
+          updatedAt: change.updatedAt,
+        }),
+      )
+    for (const native of fixture.sessions.values())
+      hostSession(native.id, {
+        agent: "worker",
+        parentID: native.parentID,
+        busy: native.busy,
+        updatedAt: native.time.updated,
+        model: native.model
+          ? {
+              providerID: native.model.providerID,
+              id: native.model.id,
+              variant: native.model.variant ?? null,
+            }
+          : null,
+      })
+    hostSession("ses-view-architect", {
       agent: "architect",
-      model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
-      archived: false,
       busy: true,
-      createdAt: Date.now() - 1_000,
       updatedAt: Date.now(),
-    }
-    const reads = operationalReads(fixture, projectID, secret, [architect])
-    const bus = changeBus()
-    tracker = new ObservationChangeTracker(fixture.repository, secret, projectID)
-    tracker.initialize((change) => bus.publish(change))
-    const liveRequests: Array<{
-      scope: string
-      sessionID: string
-      includeUnmanagedSessions: boolean
-    }> = []
-    // The older calls of a worker are a stream of the project's service, backed here by a real
-    // reader pool over the fixture's database.
+      model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
+    })
+    // Every shown session's model steps are stored (`transcript_steps`): the Architect's, an
+    // unmanaged session's, and one whose transcript is still being read (a page not at its end).
+    hostSession("ses-dom-human", { agent: "build", busy: true, updatedAt: Date.now() - 2_000 })
+    hostSession("ses-dom-reading", { agent: "build", busy: true, updatedAt: Date.now() - 3_000 })
+    const step = (id: string, model: string, at: number) => ({
+      type: "assistant",
+      id,
+      model: { providerID: "openai", id: model, variant: "high" },
+      time: { created: at, streamed: at + 200, completed: at + 600 },
+      tokens: { input: 1_200, output: 40 },
+    })
+    const unread = { cursor: null, base: 0, messageCount: 0, state: "not-read" as const }
+    fixture.repository.atomic((db) => {
+      const now = Date.now()
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        "ses-view-architect",
+        unread,
+        [{ type: "user", id: "u-arch" }, step("msg_ui_architect", "gpt-6-luna", now - 5_000)],
+        undefined,
+      )
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        "ses-dom-human",
+        unread,
+        [step("msg_dom_human", "kimi-k3", now - 4_000)],
+        undefined,
+      )
+      writeTranscriptPage(
+        db,
+        fixture.directory,
+        "ses-dom-reading",
+        unread,
+        [step("msg_dom_reading", "kimi-k3", now - 3_500)],
+        "next-page",
+      )
+    })
+    // Every Monitor read is a stream, backed here by a real reader pool over the fixture's database.
     const streamBus = changeBus<{ stream: string; seq: number }>()
     const streamOpens: { source: string; filter: Record<string, unknown>; window: number }[] = []
+    let frames = 0
     pool = readerPool(fixture.repository.path, { workers: 1 })
     streamsService = createStreamsService({
       pool,
-      changed: (stream, seq) => streamBus.publish({ stream, seq }),
+      changed: (stream, seq) => {
+        frames++
+        streamBus.publish({ stream, seq })
+      },
       context: {
         projectID: projectID,
         projectDirectory: fixture.directory,
         projectIds: (id) => [id],
         assertRead: async () => {},
+        read: (run) => fixture.repository.read(run),
       },
     })
     const streamsRpc = {
@@ -345,33 +444,9 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
           streamBus.subscribe(options.signal),
       },
     }
+    const bus = changeBus()
     const legacyCalls = { snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 }
     const rpc = {
-      liveRadar: (
-        input: {
-          scope: { kind: "session" | "project"; sessionID: string }
-          includeUnmanagedSessions: boolean
-        },
-        options: { signal: AbortSignal },
-      ) => {
-        liveRequests.push({
-          scope: input.scope.kind,
-          sessionID: input.scope.sessionID,
-          includeUnmanagedSessions: input.includeUnmanagedSessions,
-        })
-        return reads.liveRadar(input, tracker!, options.signal, tracker!.streamEpoch)
-      },
-      liveAttempt: (
-        input: { scope: { kind: "session" | "project"; sessionID: string }; sessionID: string },
-        options: { signal: AbortSignal },
-      ) => Promise.resolve(reads.liveAttempt(input, options.signal)),
-      liveGroup: (
-        input: {
-          scope: { kind: "session" | "project"; sessionID: string }
-          group: "needs-you" | "failed" | "queued"
-        },
-        options: { signal: AbortSignal },
-      ) => Promise.resolve(reads.liveGroup(input, options.signal)),
       snapshot: async () => {
         legacyCalls.snapshot++
         throw new Error("Observation scope is too large; narrow it")
@@ -462,6 +537,14 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-session-main")].find(
         (button) => button.dataset.sessionId === sessionID,
       )
+    /** The Monitor opened `radar.sessions` in this scope. */
+    const sessionsOpened = (kind: string) =>
+      streamOpens.some(
+        (open) =>
+          open.source === "radar.sessions" &&
+          (open.filter.scope as { kind: string; sessionID: string }).kind === kind &&
+          (open.filter.scope as { sessionID: string }).sessionID === "ses-view-architect",
+      )
     const chooseScope = async (label: string) => {
       container.querySelector<HTMLButtonElement>(".lazers-radar-scope button")!.click()
       const item = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
@@ -472,14 +555,9 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
 
     await until(
       () =>
-        liveRequests.some((request) => request.scope === "session") &&
+        sessionsOpened("session") &&
         sessionButton("ses-view-architect")?.textContent?.includes("Architect") === true,
     )
-    expect(liveRequests[0]).toMatchObject({
-      scope: "session",
-      sessionID: "ses-view-architect",
-      includeUnmanagedSessions: false,
-    })
     expect(text()).not.toContain("No model or tool events in this read")
     expect(text()).not.toContain("Busy · no call in progress")
     expect(["Live", "Reconnecting", "Offline"]).toContain(
@@ -510,55 +588,31 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(text()).not.toMatch(/nknown|not observed|Not reported|None reported|Unavailable/)
     expect(text()).not.toMatch(/ses[-_]/)
     expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe("This session")
-    tracker.native({
-      id: "evt-ui-architect-step",
-      type: "session.step.started",
-      created: Date.now() - 500,
-      durable: { aggregateID: "ses-view-architect", seq: 1, version: 2 },
-      data: {
-        sessionID: "ses-view-architect",
-        assistantMessageID: "msg_ui_architect",
-        agent: "architect",
-        model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
-        text: "PRIVATE ARCHITECT TEXT DECOY",
-      },
-    })
-    tracker.native({
-      id: "evt-ui-architect-text",
-      type: "session.text.ended",
-      created: Date.now() - 400,
-      durable: { aggregateID: "ses-view-architect", seq: 2, version: 2 },
-      data: {
-        sessionID: "ses-view-architect",
-        assistantMessageID: "msg_ui_architect",
-        text: "PRIVATE ARCHITECT OUTPUT DECOY",
-      },
-    })
-    tracker.native({
-      id: "evt-ui-architect-tool-input",
-      type: "session.tool.input.started",
-      created: Date.now() - 300,
-      durable: { aggregateID: "ses-view-architect", seq: 3, version: 2 },
-      data: {
-        sessionID: "ses-view-architect",
-        assistantMessageID: "msg_ui_architect",
-        id: "call-ui-architect",
-        name: "Read",
-        input: { path: "PRIVATE ARCHITECT ARGUMENT DECOY" },
-      },
-    })
-    tracker.native({
-      id: "evt-ui-architect-tool-success",
-      type: "session.tool.success",
-      created: Date.now() - 200,
-      durable: { aggregateID: "ses-view-architect", seq: 4, version: 2 },
-      data: {
-        sessionID: "ses-view-architect",
-        assistantMessageID: "msg_ui_architect",
-        id: "call-ui-architect",
-        content: [{ type: "text", text: "PRIVATE ARCHITECT TOOL RESULT DECOY" }],
-      },
-    })
+    // The Architect's call as the canonical per-call record stores it (`native_tool_calls`, shown
+    // through `native_tool_call_display`). Its arguments and result are never stored.
+    fixture.repository.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO native_tool_calls(project_directory,project_id,session_id,identity_kind,
+             invocation_id,native_call_id,context_call_id,message_id,agent,tool,first_observed_at,
+             last_observed_at,sources_json,event_ids_json,payload)
+           VALUES(?,?,?,'native-call',?,?,?,?,?,?,?,?,'[]','[]',?)`,
+        )
+        .run(
+          fixture.directory,
+          projectID,
+          "ses-view-architect",
+          "call-ui-architect",
+          "call-ui-architect",
+          "call-ui-architect",
+          "msg_ui_architect",
+          "architect",
+          "Read",
+          Date.now() - 300,
+          Date.now() - 200,
+          JSON.stringify({ status: "succeeded" }),
+        ),
+    )
     await until(
       () =>
         text().includes("gpt-6-luna") &&
@@ -591,12 +645,18 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       await until(() => disclosure(label) !== undefined)
       if (disclosure(label)!.getAttribute("aria-expanded") !== "true") disclosure(label)!.click()
     }
+    // The Architect's stored model steps are its Messages; no message id or text is shown.
     await openDisclosure("Messages")
     await until(() =>
       [...container.querySelectorAll(".lazers-radar-message")].some((row) =>
         row.textContent?.includes("Architect Model request"),
       ),
     )
+    expect(
+      [...container.querySelectorAll(".lazers-radar-message")].some((row) =>
+        row.textContent?.includes("Response received"),
+      ),
+    ).toBe(true)
     expect(inspectorText()).not.toContain("msg_ui_architect")
     expect(inspectorText()).toContain("gpt-6-luna · high")
     expect(container.querySelector('[role="separator"]')).not.toBeNull()
@@ -611,11 +671,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(legacyCalls).toEqual({ snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 })
 
     await chooseScope("Project")
-    await until(() =>
-      liveRequests.some(
-        (request) => request.scope === "project" && !request.includeUnmanagedSessions,
-      ),
-    )
+    await until(() => sessionsOpened("project"))
     await until(() => sessionButton("ses-failed") !== undefined)
     expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe("Project")
     sessionButton("ses-failed")!.click()
@@ -639,10 +695,10 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(text()).not.toContain("PATCH BODY DECOY")
 
     await chooseScope("Project · all sessions")
-    await until(() =>
-      liveRequests.some(
-        (request) => request.scope === "project" && request.includeUnmanagedSessions,
-      ),
+    await until(
+      () =>
+        container.querySelector(".lazers-radar-scope button")?.textContent ===
+        "Project · all sessions",
     )
     expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe(
       "Project · all sessions",
@@ -690,8 +746,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     ).toEqual(["Tool", "Target", "Duration", "Time"])
     expect(inspectorText()).not.toMatch(/Grep|read\b/)
     // The worker's older calls open as a stream of the attempt, tools only, from before its live calls.
-    await until(() => streamOpens.length > 0)
-    expect(streamOpens.at(-1)).toMatchObject({
+    // The pane also opens the attempt's own streams (its row, its whole call lane, its newest
+    // row); the older-calls list is the one bounded before the live read's earliest call.
+    const olderOpen = () => streamOpens.filter((open) => open.filter.beforeAt !== undefined).at(-1)
+    await until(() => olderOpen() !== undefined)
+    expect(streamOpens.map((open) => open.source)).toContain("radar.attempt")
+    expect(olderOpen()).toMatchObject({
       source: "observability.liveHistory",
       filter: {
         projectDirectory: fixture.directory,
@@ -702,7 +762,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     })
     // The live read lists the newest calls, some of the 150 among them; the stream lists the
     // rest: every call at a time before the live read's earliest (they are at times 1 to 150).
-    const olderCount = () => (streamOpens.at(-1)!.filter.beforeAt as number) - 1
+    const olderCount = () => (olderOpen()!.filter.beforeAt as number) - 1
     expect(olderCount()).toBeGreaterThan(60)
     await openDisclosure("Calls")
     await until(() => container.querySelector(".lazers-radar-history [role=row] code") !== null)
@@ -781,7 +841,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const menuLabels = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map(
       (button) => button.textContent,
     )
-    expect(menuLabels).toEqual(["Refresh", "Open worker", "Show idle sessions"])
+    expect(menuLabels).toEqual(["Open worker", "Show idle sessions"])
     ;[...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
       .find((button) => button.textContent === "Open worker")!
       .click()
@@ -839,13 +899,15 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
 
     activity.scrollTop = 37
     readLine.focus()
-    const previousReadCount = liveRequests.length
-    tracker.native({
-      id: "evt-ui-refresh",
-      type: "session.updated",
-      data: { sessionID: "ses-failed" },
+    // A stored row changes: the open session stream pushes a frame and the rows re-render in place.
+    const previousFrames = frames
+    hostSession("ses-view-architect", {
+      agent: "architect",
+      busy: true,
+      updatedAt: Date.now() + 1,
+      model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
     })
-    await until(() => liveRequests.length > previousReadCount)
+    await until(() => frames > previousFrames)
     expect(lines().find((line) => line.textContent?.includes("src/worker.ts"))).toBe(readLine)
     expect(browserDocument.activeElement).toBe(readLine)
     expect(activity.scrollTop).toBe(37)
@@ -895,6 +957,18 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => container.querySelector(".lazers-radar-node[data-selected='true']") !== null)
     await until(() => paneOpen() === "true")
     expect(container.querySelector(".lazers-details-header")?.textContent).toContain("Architect")
+    // The Queue group lists its tasks from the stored task list (`radar.group`, `radar.workload`).
+    const queueNode = () =>
+      [...container.querySelectorAll<SVGGElement>(".lazers-radar-node")].find((node) =>
+        node.getAttribute("aria-label")?.startsWith("Queue"),
+      )
+    await until(() => queueNode() !== undefined)
+    queueNode()!.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }) as unknown as MouseEvent,
+    )
+    await until(() => text().includes("map-alpha") && text().includes("map-beta"))
+    expect(streamOpens.some((open) => open.source === "radar.group")).toBe(true)
+    expect(text()).not.toContain("still being indexed")
     // Flow shares the panel, header and snapshot: no reload, and the lifecycle chart sits in ⋯.
     tab("Flow").click()
     await until(() => tab("Flow")?.getAttribute("aria-selected") === "true")
@@ -907,6 +981,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     expect(text()).not.toMatch(/Unavailable|not observed/)
     const flowCanvas = container.querySelector(".lazers-radar-flowcanvas svg")
+    // The Architect's and the unmanaged session's model calls are flows to their models.
+    expect(flowCanvas).not.toBeNull()
     // Flow's pane is collapsed to its tab bar; a tab click opens it on that tab.
     expect(paneOpen()).toBe("false")
     if (flowCanvas) {
@@ -919,6 +995,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       flowTabs()[1]!.click()
       await until(() => paneOpen() === "true")
       expect(flowTabs()[1]!.getAttribute("aria-selected")).toBe("true")
+      // The Models tab names the Architect's and the unmanaged session's models in full.
+      await until(() => text().includes("gpt-6-luna") && text().includes("kimi-k3"))
       expect(container.querySelector(".lazers-radar-models")).not.toBeNull()
       expect(
         [...container.querySelectorAll('.lazers-radar-flow-tabs [role="tab"]')].map((item) =>
@@ -939,6 +1017,15 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     expect(container.querySelector(".lazers-details-header")?.textContent).toBe("No state selected")
     expect(headerShape()).toEqual(monitorHeaderShape)
+    // The lifecycle reads streams (plans, the plan's nodes, the node's recorded edges), never the
+    // snapshot: the statechart draws with the recorded ACCEPT edge of the fixture's task.
+    await until(() => container.querySelector(".lazers-radar-statechart") !== null)
+    for (const source of ["tasks.plans", "radar.nodes", "radar.planEvents"])
+      expect(streamOpens.map((open) => open.source)).toContain(source)
+    expect(legacyCalls.snapshot).toBe(0)
+    await until(
+      () => container.querySelector('.lazers-radar-statechart g[data-recorded="true"]') !== null,
+    )
     ;[...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Back to Flow")!
       .click()
@@ -948,12 +1035,19 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(false)
     expect(headerShape()).toEqual(monitorHeaderShape)
 
+    // A session whose transcript is still being read says so in Messages, never an empty list.
+    await until(() => sessionButton("ses-dom-reading") !== undefined)
+    sessionButton("ses-dom-reading")!.click()
+    openPane()
+    await openDisclosure("Messages")
+    await until(() => inspectorText().includes("model steps are still being read"))
     // Losing the service keeps the last sessions on screen, dimmed, under one banner.
     session.server.connected = false
-    tracker.native({
-      id: "evt-ui-offline",
-      type: "session.updated",
-      data: { sessionID: "ses-failed" },
+    hostSession("ses-view-architect", {
+      agent: "architect",
+      busy: true,
+      updatedAt: Date.now() + 2,
+      model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
     })
     await until(() => container.querySelector(".lazers-panel-banner") !== null)
     expect(container.querySelectorAll(".lazers-panel-banner").length).toBe(1)
@@ -964,7 +1058,6 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
   } finally {
     mounted?.dispose()
     disposeSetup?.()
-    tracker?.close()
     streamsService?.dispose()
     await pool?.close()
     fixture.close()

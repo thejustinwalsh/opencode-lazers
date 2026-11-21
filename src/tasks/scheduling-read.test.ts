@@ -12,7 +12,7 @@ import { TaskSchedulingRead } from "./scheduling-read.ts"
 import { DelegatedAgentCapacity } from "../runner/delegated-agent-capacity.ts"
 import { setProjectSetting } from "../projects/settings.ts"
 import { inspectPlan } from "../runner/inspection.ts"
-import { TaskReads } from "./read.ts"
+import { getTaskDetail } from "./stream-query.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -268,9 +268,8 @@ test("task, scheduling, and inspection reads expose bounded project-scoped plan 
   const f = fixture()
   const prerequisite = f.create("source-prerequisite", 1)
   const dependent = f.create("dependent-plan", 2, false, [prerequisite.plan.planID])
-  const tasks = new TaskReads(f.repository)
 
-  const task = tasks.get({ taskID: dependent.task.id })
+  const task = await getTaskDetail(f.repository, { taskID: dependent.task.id })
   expect(task).toMatchObject({
     status: "found",
     execution: {
@@ -339,7 +338,7 @@ test("task, scheduling, and inspection reads expose bounded project-scoped plan 
     ).run(prerequisite.plan.planID)
     f.repository.changed()
   })
-  const cancelled = tasks.get({ taskID: dependent.task.id })
+  const cancelled = await getTaskDetail(f.repository, { taskID: dependent.task.id })
   if (cancelled.status !== "found") throw new Error("Expected task detail")
   const cancelledExecution = cancelled.execution
   if (!cancelledExecution) throw new Error("Expected task execution")
@@ -361,7 +360,7 @@ test("task, scheduling, and inspection reads expose bounded project-scoped plan 
   expect(cancelledScheduleNode?.waitingOnPlans).toEqual([prerequisite.plan.planID])
 })
 
-test("unknown plan prerequisite facts are explicitly incomplete in Tasks and inspection", () => {
+test("unknown plan prerequisite facts are incomplete in inspection; Tasks shows the stored status", async () => {
   const f = fixture()
   const dependent = f.create("unknown-prerequisite", 1)
   f.repository.atomic((db) => {
@@ -371,14 +370,13 @@ test("unknown plan prerequisite facts are explicitly incomplete in Tasks and ins
     f.repository.changed()
   })
 
-  const task = new TaskReads(f.repository).get({ taskID: dependent.task.id })
+  const task = await getTaskDetail(f.repository, { taskID: dependent.task.id })
   if (task.status !== "found") throw new Error("Expected task detail")
-  expect(task.execution).toMatchObject({
-    waitingOnPlans: [],
-    waitingOnPlansCount: 0,
-    waitingOnPlansComplete: false,
-    reason: "Prerequisite plan facts are incomplete; dependent work remains queued.",
-  })
+  // The detail shows what the list shows (`effectiveStatus`): prerequisite plans are stored
+  // whole, so "Prerequisite plan facts are incomplete" no longer exists in Tasks
+  // (design/task-schedule-projection.md, "effectiveExecution and the reservation blocker").
+  expect(task.execution).toMatchObject({ state: "queued", reason: null, waitingOn: [] })
+  expect(task.execution?.waitingOnPlans).toBeUndefined()
   expect(inspectPlan(f.store, { planID: dependent.plan.planID, full: false })).toMatchObject({
     waitingOnPlans: [],
     waitingOnPlansCount: 0,

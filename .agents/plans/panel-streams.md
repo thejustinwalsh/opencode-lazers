@@ -154,7 +154,7 @@ and `monitor-state.ts:61-321`, boundary pairing of `radar` and `snapshot`.
 | session scope membership                                                                   | `task_schedule_sessions(task_id, session_id, role)` (`schema.ts:112-118`)                                                    | **qualifies**; add index `(session_id, task_id)` (gen bump)                                                                    |
 | attempt calls lanes, summary ticks                                                         | `runner_progress_display` (`display-store.ts:29-58`)                                                                         | **qualifies** for `tool`, `status`, `at`, route; ticks are display rows                                                        |
 | active attempts                                                                            | `runner_attempts` (rowid, `session_id UNIQUE`, partial `runner_attempts_active_project`)                                     | **qualifies** (`src/runner/store.ts:1108-1114,1339-1342`); filter by `project_directory` and state, never by plan              |
-| lifecycle plans and nodes                                                                  | `task_schedule_plans`, `task_schedule` by `plan_id` (index `task_schedule_plan`), `task_schedule_edges`                      | **qualifies**; add `ordinal` to `task_schedule` (gen bump)                                                                     |
+| lifecycle plans and nodes                                                                  | `task_schedule_plans`, `task_schedule` by `plan_id` (index `task_schedule_plan`), `task_schedule_edges`                      | **qualifies**; ★ `task_schedule.ordinal` already exists (`schema.ts:36`), no bump for it                                       |
 | lifecycle transitions                                                                      | `task_events` kind `transition`                                                                                              | **new** (Task 1)                                                                                                               |
 | live session facts (busy, pending input/permissions/forms, outcome, archived, model route) | `host_session_state`                                                                                                         | **new** (Task 3)                                                                                                               |
 | Architect calls (no progress rows)                                                         | `native_tool_call_display`                                                                                                   | **new** (Task 4); `native_tool_calls` is wide and has no recency index                                                         |
@@ -190,14 +190,27 @@ is ignored, so redelivery is harmless. Backfill: on owner start, one `host.get` 
 backfill re-stamps every tracked session once (live set ≤ the 252 attempt sessions plus
 architects).
 
-`native_tool_call_display` (Task 4): `id INTEGER PRIMARY KEY, project_directory, session_id,
-identity_kind, invocation_id, tool, status, agent, first_observed_at, last_observed_at,
-detail_available, UNIQUE(project_directory, session_id, identity_kind, invocation_id)`, index
-`(project_directory, session_id, first_observed_at DESC, id)`. Written beside the upsert at
-`src/progress/recorder.ts:1930` from the same pure function the live read uses today, like
-`refreshProgressDisplay` (`recorder.ts:1740,1815,1835`). Order key `first_observed_at` never
-changes, so windows do not re-anchor on update. Backfill: 82,327 rows, pages of 500 by rowid
-(165 transactions), newest first, watermark `below_rowid`.
+`native_tool_call_display` (Task 4, built in `src/progress/native-call-display.ts`; ★ own
+module `native-call-display` generation 1, not a runner bump, so `src/runner/store.ts` only gains
+an install call): `id INTEGER PRIMARY KEY` (★ the call's own `native_tool_calls` rowid, which an
+identity promotion keeps, so no natural-key UNIQUE is needed), `project_directory, session_id,
+identity_kind, invocation_id, call_id, detail_call_id, message_id, agent, tool, attempt_id,
+status, detail, error, first_observed_at, last_observed_at`, index `(project_directory,
+session_id, first_observed_at DESC, id)`. ★ Kept by triggers on `native_tool_calls` (INSERT,
+UPDATE OF the displayed columns, DELETE) running the live read's own SQL expressions
+(`json_extract` of status, 200-character detail, 240-character error): every writer (the
+recorder's insert, merge and identity promotion, project-key backfill, retention) is covered
+with no recorder change. Order key `first_observed_at` never changes, so windows do not re-anchor
+on update; ★ the old read ordered by `last_observed_at`, so a long call that updates late no
+longer jumps to the top. Backfill measured on the live-sized copy (82,525 calls): 166 pages of
+500 by rowid, newest first, median 5.6 ms, slowest 38 ms, 1.3 s in all; 29 MB table + 12 MB index.
+
+`scheduler_project_status` (Task 4, `src/runner/scheduler-status.ts`, ★ module
+`scheduler-status` generation 1): `id INTEGER PRIMARY KEY, project_directory UNIQUE, status,
+participants, updated_at`. ★ The coordinator gained `watch(key, listener)`, called on register,
+drain start, drain end and dispose; the core mirrors the latest status with serialized,
+coalesced `atomicAsync` writes (only a changed status writes). An observation of in-memory state,
+not a workflow state: nothing decides from it.
 
 ### 1.3 Sources
 
@@ -212,7 +225,7 @@ changes, so windows do not re-anchor on update. Backfill: 82,327 rows, pages of 
 | `radar.journal`          | `recovery_progress_facts`                                                            | project                                                                                            | `change_id desc`                | 16 + 16 = 32                                                 | more                                                                                        |
 | `radar.scheduler`        | `scheduler_project_status`                                                           | project                                                                                            | key                             | 1                                                            | exact: scan                                                                                 |
 | `radar.attempt` (detail) | `runner_attempts` join `task_schedule`                                               | project, `session_id = ?`; session scope requires `sessionID === scope.sessionID`                  | key                             | 1                                                            | —                                                                                           |
-| `radar.planEvents`       | `task_events`                                                                        | project, `plan_id = ?`, `kind = 'transition'`                                                      | `seq`                           | 40 in view + 20 + 20 = 80                                    | more                                                                                        |
+| `radar.planEvents`       | ★ latest row per edge of one node, grouped over `task_events`                        | project, `plan_id = ?`, `task_id = ?`, kind transition with from/to                                | `id`                            | the node's edges (exact scan)                                | exact: scan                                                                                 |
 | `radar.plans`            | reuse `tasks.plans` (`src/streams/sources/tasks.ts`)                                 |                                                                                                    |                                 |                                                              |                                                                                             |
 | `radar.planNodes`        | `task_schedule`                                                                      | `plan_id = ?`                                                                                      | `ordinal, task_id`              | node count; slide                                            | more                                                                                        |
 
@@ -252,6 +265,9 @@ session equality (`live-store.ts:752-753`). Foreign or archived sessions
 - `radar.group parity: needs-you, failed, queued heads equal storedGroupHead and totals equal workload`.
 - `radar.attempt parity: equals liveAttempt for worker and architect sessions; ticks equal summary.ticks`.
 - `radar.planEvents parity: transitions of a plan equal snapshot.transitions filtered to the plan`.
+  ★ Open for Task 5: `task_events` holds task-scoped transitions only (`task_id` NOT NULL); the
+  old snapshot's `transitions` include plan-level ones (`task_id` NULL, 409,170 live). Check what
+  the lifecycle view renders of them before building `radar.planEvents` on `task_events`.
 - `host_session_state fold: redelivered and out-of-order events leave the newest stamp`;
   `restart between cursor and rows resumes and ends equal to a fresh backfill`.
 - `idle: with no write and no native event, an open monitor issues 0 statements on the main connection and 0 reader re-reads` (`meterRepository`, `src/runner/read-meter.fixture.ts`; assert the same meter counts the old `liveRadar` statements so the test is not vacuous).
@@ -288,45 +304,82 @@ Client: `TrajectoryViewCache` (`panel-state.ts:123-180`), status cursor, capture
 
 ### 2.2 Stored projections
 
-`task_events` (Task 1; shared with Radar lifecycle and Tasks activity):
+`task_events` (Task 1 and Task 2, built; shared with Radar lifecycle and Tasks activity). As
+built in `src/events/task-events-schema.ts`, corrected from this plan's first sketch where the code
+disagreed (marked ★):
 
 ```sql
 CREATE TABLE task_events (
   id INTEGER PRIMARY KEY,
   project_directory TEXT NOT NULL, task_id TEXT NOT NULL, plan_id TEXT,
   attempt_id TEXT, session_id TEXT,
-  at REAL NOT NULL,                  -- event time; order key
-  kind TEXT NOT NULL,                -- transition | effect | check | progress | message | tool | step
-  origin TEXT NOT NULL,              -- 'tr:<id>' | 'ef:<id>' | 'pg:<seq>' | 'host:<session>:<part>'
+  at REAL,                           -- ★ event time; NULL when the source has none (below)
+  kind TEXT NOT NULL,                -- transition | effect | check | progress (later: message | tool | step)
+  origin TEXT NOT NULL UNIQUE,       -- ★ globally unique: 'tr:<id>' | 'ef:<id>' | 'ef:<id>@<task>' | 'pg:<seq>'
   event TEXT, from_state TEXT, to_state TEXT, status TEXT, tool TEXT, title TEXT,
   route_provider TEXT, route_model TEXT, route_variant TEXT,
-  detail TEXT,                       -- cold JSON, read only at window: 1
-  UNIQUE(project_directory, origin)
+  detail TEXT                        -- cold JSON, read only at window: 1
 );
 CREATE INDEX task_events_task ON task_events(project_directory, task_id, at, id);
 CREATE INDEX task_events_plan ON task_events(project_directory, plan_id, kind, id);
 CREATE INDEX task_events_attempt ON task_events(project_directory, attempt_id, at, id);
-CREATE TABLE task_events_dirty (origin TEXT PRIMARY KEY, project_directory TEXT NOT NULL);
+-- ★ the shared queue shape (src/projections/queue.ts): parked entries carry their error
+CREATE TABLE task_events_dirty (ref TEXT PRIMARY KEY, next_at INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 0, error TEXT);
 ```
 
-- Writers: guarded triggers queue `origin` on `runner_transitions` INSERT
-  `WHEN NEW.task_id IS NOT NULL`, on `runner_effects` INSERT/UPDATE OF `state, receipt`, and
-  `runner_progress_display` INSERT/UPDATE (progress kinds reuse the stored display; no payload
-  parse). `drainTaskEvents` runs inside `atomic`/`atomicAsync` beside the existing
-  `drainTaskSchedule` hook (`src/storage.ts` `atomic`; same `installScheduleDrain` pattern) and
-  derives the row with the functions the old read used (`transitionEvent`, `effectEvents`,
-  `checkView`).
+- ★ Plan-level effects (`task_id IS NULL AND attempt_id IS NULL`, 868 live, mostly
+  `graph-verify:*` checks and `worktree-remove`) show in every task of their plan in the old
+  read, so they fan out: one row per node, origin `ef:<id>@<task>`. A row needs its plan to hold
+  the task's node, as the old read does.
+- ★ `at` is nullable: a non-check effect with no attempt (plan cleanup) has no time in the old
+  read, which sorts it last; the row stores NULL rather than a made-up time. Columns: transition
+  → `event`, `from_state`, `to_state`; effect → `event` = effect kind, `to_state` = effect state;
+  check → `event` = check id, `status` = passed/failed/unknown, `to_state` = effect state;
+  progress → `event` = display kind, `status`, `tool`, route. `detail` holds `{ event }` (the old
+  read's event object exactly, plus `check`, the old `CheckView`, for checks) or, for progress,
+  `{ source, messageID, callID, agent, result, error }`.
+- For Task 13: ★ `sort_at` (`at`, or the largest safe integer when `at` is NULL) and `sort_key`
+  (the old event id) carry the old read's order (NULL `at` last, ties by event id); a timeline
+  orders `sort_at, sort_key, id` through `task_events_task (project_directory, task_id, sort_at,
+sort_key, id)`, which replaces the `at`-ordered index. A parity test checks the order with tied
+  times and an untimed plan cleanup.
+- Writers: guarded triggers queue the source key on `runner_transitions` INSERT
+  `WHEN NEW.task_id IS NOT NULL` (and UPDATE OF its displayed columns, never `plan_n`), on
+  `runner_effects` INSERT/DELETE/UPDATE OF ★ `plan_id,task_id,attempt_id,kind,state,receipt`,
+  and on `runner_progress_display` INSERT/UPDATE. ★ Dependency triggers on `runner_attempts`
+  (a new attempt can resolve a transition's `attemptID`; started_at/session_id feed rows) and
+  `runner_nodes` (fan-out) read `task_events`' own indexes, never a history table. Deletes of a
+  transition or display row delete the event directly. The drain runs inside `atomic` /
+  `atomicAsync` through ★ the shared projections hook (`src/projections/hook.ts`), and derives
+  rows with ★ `transitionEvent` / `effectEvents` (which applies `checkView`), moved from
+  `src/trajectory/read.ts` into `src/trajectory/events.ts` so both use one copy. A refresh writes
+  only a row that differs (every column compared).
 - Host message parts (`kind` message/tool/step, `origin` `host:`): `host-transcript-fold.ts`
   reads `message.list` after the per-session cursor in `host_message_cursors`
   (`src/core/host-messages.ts:36-42`; a writer table, never read by a source), pages of 50,
   applies `messageFold` and the privacy filter (`src/trajectory/privacy.ts`) at write time,
   and advances the cursor in the same transaction as the rows. Triggered by native
   `message.part.updated`/`step` events for attempt sessions (Task 3's hub path).
-- Backfill (paged, resumable, versioned by `projection_state(name='task_events', generation,
-after)`): transitions by `id` range pages of 2,000 over 418,671 ids (210 transactions, 9,501
-  rows written; `id` range scans need no plan filter); effects 2,626 (6 pages); progress 79,365
-  from `runner_progress_display` (159 pages of 500); host transcripts 252 attempt sessions
-  (one session per page, then its message pages).
+- Backfill (paged, resumable, versioned by `projection_state(name='task-events', generation,
+phase, after)`), measured on a copy of the live source tables (2026-11-21: 418,709 transition
+  ids, 9,510 task-scoped; 2,628 effects; 79,423 display rows), three runs:
+
+  | Phase       | Page              | Pages | Median page | Slowest page | Phase total |
+  | ----------- | ----------------- | ----: | ----------: | -----------: | ----------: |
+  | transitions | 2,000 ids (range) |   225 |      0.7 ms |        29 ms |      533 ms |
+  | effects     | 50 effects        |    53 |      7.3 ms |        31 ms |      503 ms |
+  | progress    | 250 display rows  |   318 |      2.8 ms |        36 ms |    1,562 ms |
+
+  About 2.6 s of writer time in total, spread by the owner's pacing (40 ms slices with 25 ms
+  waits when quiet, 6 ms slices with 500 ms waits while an attempt runs). Effects pages started
+  at 500 and measured 107 ms (check receipts are sanitized at write), then 100 (up to 58 ms).
+  Stored size on the copy: table 56 MB, three indexes 31 MB, of which progress `detail` was
+  19.6 MB; ★ that detail duplicated the display row and is no longer copied (progress rows keep
+  `detail` NULL; `pg:<seq>` names the display row): table 35 MB, indexes 33 MB.
+  Writer cost: 1,000 plan-level transition inserts 1.3 to 2.5 ms with zero queued; 1,000
+  task-scoped inserts plus their drain 15 ms; the hook's probe with nothing due 2.3 µs.
+  Host transcripts (Task 7): 252 attempt sessions, one session per page, then its message pages.
 
 `trajectory_task_effort` (Task 7):
 
@@ -626,19 +679,56 @@ Sizes: S ≤ 1 day, M 2–3 days, L 4–6 days, XL > 6 days of one implementer.
 ### Task 0: Shared projection owner, `projection` lifecycle, source rules (S)
 
 **Files:** `src/runner/lifecycle-machines.ts` (add `projection: backfilling → ready`,
-`ready → backfilling`), `src/projections/owner.ts`, `src/projections/lifecycle.ts`,
-`src/runner/identity-predicates.test.ts` (scan `src/streams/sources/`),
-`src/streams/sources/rowid.test.ts` (assert every registered source's `tables` are rowid).
+`ready → backfilling`), `src/projections/owner.ts`, `src/projections/lifecycle.ts`
+(`projection_state`, module `projections` generation 1), `src/projections/queue.ts` (dirty queue
+with parking), `src/projections/hook.ts` (per-connection drain hook, called from `atomic` and
+`atomicAsync` in `src/storage.ts`), `src/runner/identity-predicates.test.ts` (scan
+`src/streams/sources/`). `src/streams/sources/rowid.test.ts` already asserts every registered
+source's `tables` are rowid; nothing to add there until a source reads a new table.
+
+As built (replaces the sketch this section first had: one `backfillPage` could not cover a
+projection with several source tables, and an owner per database, not per core, is what the
+schedule owner already does):
 
 ```ts
-export type ProjectionSpec = {
+// src/projections/owner.ts
+export type BackfillPage = { next: number; done: boolean }
+export type BackfillPhase = {
   name: string
-  generation: number
-  backfillPage(db: Database, project: string, after: number): { next: number; done: boolean }
-  drain(db: Database, budget: number): { handled: number; remaining: number }
+  page(db: Database, scope: string, after: number): BackfillPage // one write transaction
 }
-export function startProjection(core: ProjectCore, spec: ProjectionSpec): { close(): void }
+export type ProjectionSpec = {
+  name: string // projection_state.name
+  generation: number // derivation generation; raising it rewrites every row
+  backfill: readonly BackfillPhase[] // ready when the last phase is done
+  queue?: { table: string; drain(db: Database): QueueDrain }
+}
+export function startProjection(
+  path: string,
+  projectDirectory: string,
+  spec: ProjectionSpec,
+  options?: { scope?: string; pacing?: BackfillPacing; onError?(e: unknown): void },
+): { owner: ProjectionOwner; release(): void } // one owner per (database, name, scope)
+// ProjectionOwner: settle(), drain(), status(), idle(), backfillPage(), close()
+
+// src/projections/queue.ts — queue table (ref TEXT PRIMARY KEY, next_at, attempts, error)
+export function queueTableSQL(table: string): string
+export const queueRef: (table: string, refExpr: string) => string // trigger body statement
+export function drainQueue(db, table, refresh: (db, ref) => void, { budget, now? }): QueueDrain
+// src/projections/hook.ts
+export function registerProjectionDrain(name: string, queue: string, drain: (db) => void): void
+export function enrollProjectionConnection(db: Database, name: string): void
+// src/projections/lifecycle.ts
+export function ensureProjectionStateSchema(repository: TaskRepository): void
+export function projectionStatus(db, name, scope?): ProjectionStatus | undefined
+export function resetProjectionState(db, name): void // a schema reinstall rebuilt the tables
 ```
+
+A throwing refresh stays queued with its error and an exponential `next_at` (1 s to 5 min); the
+hook's probe reads only due entries, so later writes skip it, and the owner holds one timer at
+the earliest `next_at`. Idle (ready, nothing due or parked) the owner holds one table-change
+subscription and no timer. The existing schedule owner and progress display backfill keep their
+own owners; moving them onto this one is not part of this plan.
 
 - [ ] Test `projection lifecycle: every state has an exit; generation bump returns ready → backfilling` (extend `lifecycle-dead-ends.test.ts`).
 - [ ] Test `owner: resumes at the stored watermark after a kill; idle when clean holds no timer`.
@@ -665,14 +755,94 @@ transaction as `refreshProgressDisplay`; backfill 79,365 rows. Commit
 the fold), `src/observability/changes.ts` (tracker no longer owns live signals once Task 6
 lands). Tests in 1.5. Commit `feat(events): fold host session state into the database`.
 
+★ As built (`src/host-sessions/{state,fold,native}.ts`, module `host-sessions` generation 1;
+source `radar.sessions` in `src/streams/sources/host-sessions{,-ref}.ts`). Corrections:
+
+- Own directory, not `src/events/` (another lane owns it). `event-hub.ts` is unchanged: the
+  fold joins it with `joinNativeEvents` from the project core; `changes.ts` is Task 6's.
+- An event is a hint, not a fact: the fold re-reads the session (`session.get`, one call) and
+  the inbox/permission/form counts (`RunnerHost.session` without messages) only when the
+  session is busy and unknown or the event can move them. A hint created before the last read
+  began reads nothing. A read older than the stored `host_updated_at` is ignored.
+- Columns added: `agent`, `title`, `directory`, `created_at`; `updated_at` is when a shown
+  column last changed (the `recent` order), `host_updated_at` the host's stamp. ★ `title` is the
+  session record's own label (lead's decision: a session attribute, not transcript text),
+  redacted and cut to 200 characters as the live monitor showed it; never derived from messages. Archived sessions keep their row
+  (`archived = 1`; Task 12 shows it); foreign sessions are never stored; deleted ones are.
+- Backfill: the shared owner's pages cannot await a host read, so the `projection` lifecycle
+  covers a seed (attempt and task sessions queued into `host_session_dirty`, the shared queue
+  shape, 6 pages of 200, slowest 0.6 ms) and the fold drains the queue asynchronously.
+  Every subscription attach (start and reattach) resyncs: `session.list` of the project's live
+  sessions by cursor, idle ones written from the listed record, busy ones queued, stored live
+  rows not listed queued. That, not a per-restart re-stamp, is what converges after lost events.
+- One writer: one fold per (database, project) per process; one service process per database
+  (owner decision), so the update hook sees every write.
+
 ### Task 4: Native call display and scheduler status (M)
 
-`native_tool_call_display` (runner module generation 21 → 22), `scheduler_project_status`.
-Commit `feat(radar): store native call display and scheduler status`.
+Built (see 1.2). `native_tool_call_display` (module `native-call-display` 1) and
+`scheduler_project_status` (module `scheduler-status` 1). Commit `feat(radar): store native call
+display and scheduler status`.
 
 ### Task 5: Radar sources (M) — `src/streams/sources/radar.ts`, `radar-ref.ts`; tests 1.5.
 
+Built: `radar.assignments`, `radar.attempt` (detail adds workspace, base commit, artifact),
+`radar.nativeCalls`, `radar.group`, `radar.workload`, `radar.journal`, `radar.scheduler`,
+`radar.planEvents`. ★ Reused instead of new sources: `radar.calls` is `observability.liveHistory`
+(`toolsOnly` for the tool lane), `radar.plans` is `tasks.plans`, `radar.planNodes` is
+`tasks.schedule` with `planID` and order `plan`. ★ `radar.sessions` waits for Task 3
+(`host_session_state` does not exist yet); it lands with or after Task 3. ★ In a session view,
+`radar.nativeCalls` reads the scope's own session only; reading a child session's calls needs
+`host_session_state.parent_session_id` (Task 3). ★ The `all` scope reads this service's project,
+as `observability.liveHistory` does; a cross-project view opens one stream per project (Task 6).
+
+★ `radar.planEvents`, decided from the GUI: the lifecycle view never renders a plan-level
+transition. `planTransitions` feeds only `observedTransition` (`src/radar/projection.ts:34-52`),
+which keeps `kind === "machine"` rows of the selected node (`task_id` set, valid from/to) and
+takes the latest per (from, event, to) edge; a transition is selectable only through such an edge
+(`src/radar/panel.tsx:600-640`), and the details pane shows that row's from, to, time, kind,
+reason and ids. So the source is the latest row per edge of one node, grouped at read time over
+`task_events` (pushed down to `task_events_plan`; 0.08 ms on the largest live node, 379 rows) with
+`detail` (reason, version) at `window: 1`. No new table, no copy of the 409,170 plan-level rows;
+Task 6 deletes that part of the old read.
+
 ### Task 6: Radar GUI on streams and deletions (L) — 1.4; demo `radar-streams.ts`.
+
+Built, except the sessions part (below):
+
+- Worker pane: `radar.attempt` (window 1, detail) plus `observability.liveHistory` (tools whole
+  for the lane, newest row for the last activity) in `src/radar/radar-streams.ts`; the 10 s
+  re-read effect and the old 1,000-tick lane cap are gone (the lane window starts at 256 calls and
+  doubles while rows remain). ★ The stored concern (`task_schedule.concern`) carries the line
+  only; the rule's recommended action and reason were read from `openConcerns` and are not shown
+  until `task_schedule` stores them (Task 12). ★ "older calls still indexing" (`historyIndexing`)
+  is not shown: it read the display backfill watermark on the main thread.
+- Map group pane: `radar.group` (window 50 = the old 25-row head plus 25 of slop) and
+  `radar.workload` (window 1) for the total. `ready = false` renders "still being indexed",
+  never an empty group or a zero.
+- Lifecycle view: `tasks.plans` (whole, first window 64: 221 plans live), ★ new `radar.nodes`
+  (`runner_nodes` with the persisted machine snapshot; whole, first window 16) and
+  `radar.planEvents` (whole, first window 64: at most one row per machine edge), plus a
+  window-1 detail stream anchored at the selected edge for its reason. ★ The machine definition
+  is plain data (`src/runner/task-machine-config.ts`), shared by the runner and the GUI, so the
+  GUI bundles no XState. Deleted: `RadarPanelState` (`src/radar/state.ts`),
+  `createRadarTransport` (`src/radar/transport.ts`), `ObservationSyncState`
+  (`src/observability/state.ts`), `planTransitions`, `transitionForSequence`.
+- Server deletions: RPCs `radar`, `topology`, `liveAttempt`, `liveGroup` and their all-projects
+  variants; `loadRadarSource` and the Radar edge, route and session builders (about 1,300 lines
+  of `src/observability/read.ts`); `LiveReadStore.readAttempt`/`readGroupTasks`;
+  `LIVE_GROUP_TASKS` (25); snapshot `transitions` and the plan-level transition read (the
+  snapshot now reads only a task's `WORKER_STARTED`/`WORKER_STOPPED`, which Trajectory's attempt
+  executions use). ★ Kept, with their owner: the snapshot read itself and its 1,000-plan and
+  10,001-row limits are Trajectory's (task choices, attempts, checks) until Task 13/14.
+- SEAM (Task 3): `radar.sessions` is declared in `radar-ref.ts` (name and the 1.2 columns) with
+  no server source. The monitor's sessions, calls and flow still come from `liveRadar`
+  (`RadarMonitorState`, `kept.ts`, `monitor-transport.ts`, the 512 KB response cap); they are
+  deleted together when Task 3's table lands.
+- Demo: `website/demo/src/panels/radar-streams.ts` answers `radar.attempt`,
+  `observability.liveHistory`, `radar.group` and `radar.workload` with real frames over the mock
+  world (a shared engine in `stream-answers.ts` serves Tasks and Radar); the `Streams` stub and
+  the `liveAttempt`/`liveGroup` answers are gone.
 
 ### Task 7: Host transcript fold and `trajectory_task_effort` (XL)
 
@@ -695,17 +865,54 @@ Module `model-mappings` generation 1 → 2; 3.4; demo `models-streams.ts`.
 
 Module `project-overview` generation 1; `projects` generation 2 → 3 (paths index); 4.2–4.5.
 
+★ As built (`src/projects/overview-store.ts`, `presence.ts`, `overview-view.ts`; sources
+`projects.list`, `projects.global` in `src/streams/sources/projects{,-ref}.ts`). Corrections:
+
+- Settings are one resolved JSON column (`settings`, the exact `ProjectSettings` /
+  `GlobalSettings` object), not one column each; pauses and Architect contact carry a `paused` /
+  `architect_contact` flag (a pause reason may be empty). `canonical_checkouts` (real paths,
+  resolved once at refresh) is what `loaded` matches `project_presence.canonical` against.
+- Writers are not edited: guarded triggers on `lazers_projects`, `lazers_project_paths`,
+  `lazers_settings`, `lazers_dispatch_pause`, `runner_architect_contact` and
+  `lazers_profile_revisions` queue the key, and the projections hook drains it in the writer's
+  transaction (the shared owner retries parked entries). Trigger bodies queue with UPDATE then
+  INSERT-if-missing, never `INSERT OR REPLACE`: under a writer's upsert (`ON CONFLICT DO
+UPDATE`, which `setPause` and the settings writer use) SQLite applies the outer conflict
+  handling to trigger statements, and a second `OR REPLACE` of the same ref failed the writer
+  with a UNIQUE error (found by the writers test).
+- The backfill is one owner page (queue every key and the global row, drain); new plugin-option
+  defaults (`setProjectOverviewDefaults`, at each core start) queue every row again.
+- Presence is written by the project core (create, dispose), refcounted per root (a reload
+  builds the new core before disposing the old); the first write of a process clears other
+  instances' rows.
+- `projects.revisions` (order `newest`; `state` filter; `window: 1` adds `payload`,
+  `map_preview`) and `projects.proofs` (order `recorded`, the proof rowid) feed the Verification
+  group: the active revision, its proofs and the earlier ones are three streams, and the
+  `profile` RPC is removed (`profileViewOf` stays for the Architect's profile tool). The earlier
+  list does not read documents, so a superseded revision whose payload no longer parses is listed
+  (the old read dropped it); no writer can store one (`activateRevision` validates). The `list`
+  RPC is removed; `listProjects` stays as the parity oracle until Task 14.
+
 ### Task 12: Tasks detail, activity, current activity, search fields (L)
 
 Sources `tasks.detail` (`task_schedule` + `tasks.body` cold), `tasks.attempts`
 (`runner_attempts`), `tasks.activity` (`task_events` kind transition), `tasks.currentActivity`
 (`task_schedule_sessions` ⋈ `host_session_state`), `tasks.history` (classification, advice,
-audit rows); `task-schedule` generation 4 → 5 (`node_version`, `ordinal`, blocker `kind`,
+audit rows); `task-schedule` generation 4 → 5 (`node_version`, blocker `kind` (★ `ordinal` exists),
 `task_schedule_search`, index `task_schedule_sessions(session_id, task_id)`). Delete
 `TaskReads.get`, `effectiveExecution`, `AssociationTaskReads`, `currentActivity` RPC, the
 per-hit `repository.get`. Parity: every `TaskDetail` field the panel renders
 (`panel.tsx:681-711,1106-1111,1198-1236,1597-1710,2143-2285`) equals the old `get` on the
 task-schedule corpus. Commit `feat(tasks): selected task detail and activity read streams`.
+
+★ As built (branch `feat/panels-tasks`): `tasks.history` is not a source: classification history,
+advice and audit history are cold columns of `tasks.detail`. Activity is `tasks.activity` (raw
+payload cold) and `tasks.activityPayloads` (payload a list column, for `lz-get-task` and the
+scope review) over `task_events` transitions, which keep `runner_transitions.payload` byte for
+byte (task-events generation 1, amended). The attempt summary is `tasks.attemptCalls` over
+`runner_progress_display`; its 1,000-tick cap is gone. No blocker `kind` column: same-plan
+`waitingOn` is part of the stored `execution`. `task_schedule_sessions(session_id, task_id)` needs
+no index: its primary key leads with those columns. `Tasks.get` stays for the Models panel only.
 
 ### Task 13: Trajectory sources, GUI, tool (L) — 2.3–2.4; demo `trajectory-streams.ts`.
 
@@ -752,18 +959,19 @@ registration edits are one line per task and merged in wave order.
 
 ## Schema generations and migration cost (418,671 transitions, 79,365 progress rows)
 
-| Module                      | Generation | Task   | Work at install                                  | Backfill (owner timer, paged)                                                                                                                             |
-| --------------------------- | ---------- | ------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `task-events`               | new, 1     | T1, T2 | create tables, triggers                          | 210 pages of 2,000 transition ids (9,501 rows written), 6 effect pages, 159 progress pages of 500; estimate under 30 s of writer time spread over minutes |
-| `projects`                  | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows) | none                                                                                                                                                      |
-| `project-overview`          | new, 1     | T11    | create                                           | 1 transaction (3 rows)                                                                                                                                    |
-| `model-sources`             | 2 → 3      | T8     | create `model_candidates`                        | 1 build per project: 5 body parses (≈0.93 MB each), ≈1,400 rows                                                                                           |
-| `runner`                    | 21 → 22    | T4     | create display table and index                   | 165 pages of 500 over 82,327 native calls (reads `payload`, the costliest page: measure, keep each page under 50 ms)                                      |
-| `host-sessions`             | new, 1     | T3     | create                                           | ≈260 host `get` calls, 20 per page                                                                                                                        |
-| `model-decision-projection` | 3 → 4      | T9     | create view tables                               | none (materialized on open)                                                                                                                               |
-| `trajectory-projection`     | new, 1     | T7     | create effort table                              | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
-| `model-mappings`            | 1 → 2      | T10    | create view                                      | 1 transaction per project                                                                                                                                 |
-| `task-schedule`             | 4 → 5      | T12    | drop and recreate projection                     | 260 tasks re-backfilled (seconds)                                                                                                                         |
+| Module                      | Generation | Task   | Work at install                                                         | Backfill (owner timer, paged)                                                                                                                             |
+| --------------------------- | ---------- | ------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task-events`               | new, 1     | T1, T2 | create tables, triggers (plus `projections` new, 1: `projection_state`) | measured: 225 transition pages, 53 effect pages, 318 progress pages; 2.6 s of writer time in pages of at most about 36 ms, spread over the owner's pacing |
+| `projects`                  | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows)                        | none                                                                                                                                                      |
+| `project-overview`          | new, 1     | T11    | create                                                                  | 1 transaction (3 rows)                                                                                                                                    |
+| `model-sources`             | 2 → 3      | T8     | create `model_candidates`                                               | 1 build per project: 5 body parses (≈0.93 MB each), ≈1,400 rows                                                                                           |
+| ★ `native-call-display`     | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
+| ★ `scheduler-status`        | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
+| `host-sessions`             | new, 1     | T3     | create (★ table + `host_session_dirty` queue)                           | ★ seed: 6 queue pages (slowest 0.6 ms); then one `session.get` per seeded session, async                                                                  |
+| `model-decision-projection` | 3 → 4      | T9     | create view tables                                                      | none (materialized on open)                                                                                                                               |
+| `trajectory-projection`     | new, 1     | T7     | create effort table                                                     | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
+| `model-mappings`            | 1 → 2      | T10    | create view                                                             | 1 transaction per project                                                                                                                                 |
+| `task-schedule`             | 4 → 5      | T12    | drop and recreate projection                                            | 260 tasks re-backfilled (seconds)                                                                                                                         |
 
 Every bump is a full service restart; four restarts total (one per wave 1–4).
 
@@ -808,7 +1016,20 @@ Every bump is a full service restart; four restarts total (one per wave 1–4).
 ## Owner decisions (2026-11-21)
 
 - **Scope:** all four panels ship in v0.2.0.
-- **Question 3, transcripts: not stored.** OpenCode already holds attempt transcripts; LAZERS
+- **Question 3, transcripts, final (2026-11-21, replaces the entry below):** store, at a minimum,
+  the transcript metadata the product requires; skip the line-by-line text. OpenCode owns message
+  text (read on demand by cursor, for display only); LAZERS owns the facts it derives from
+  messages, stored once, small, and queried (data-handling principle 4). A per-message metadata
+  projection of worker sessions, folded by host cursor, feeds effort and route coverage, so the
+  stored effort equals the history capture on every field. No text, tool input or output, or
+  reasoning is stored. Transcript text in the Trajectory panel stays a host-backed stream.
+  ★ Task 7 as built: `trajectory_task_effort` (module `trajectory-effort` 1), computed in the
+  effort worker (`src/trajectory/effort-worker.ts`); the main thread claims and writes (longest
+  step median 0.7 ms, up to about 20 ms when a write meets a WAL checkpoint). Until the metadata
+  projection lands, the route fields (`routes.observedStepRoutes` native-context sources,
+  `routes.assessments`, `routes.coverage`, market `coverage.routeEvidence` and
+  `sessions[].routeAllocation`) equal the status read, not the history capture.
+- **Question 3, transcripts: not stored** (superseded by the entry above). OpenCode already holds attempt transcripts; LAZERS
   does not duplicate them. Task 7 loses the host transcript fold
   (`src/events/host-transcript-fold.ts` is not built, no message text enters `tasks.sqlite`).
   Trajectory text is read from the host on demand, by cursor, a page at a time
