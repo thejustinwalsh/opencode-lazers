@@ -216,15 +216,22 @@ function assignmentRows(reads: ModelsDemoReads, taskID: string | null): DemoRow[
           record,
         })
     }
-  // The host names no model of its own for the demo's agents: a LAZERS route is what they run.
-  for (const agent of shown.agents ?? [])
+  // The host names no model of its own for the demo's agents (a LAZERS route is what they run),
+  // unless an agent's source says the model is native or the plugin's default.
+  for (const agent of shown.agents ?? []) {
+    const hosted = agent.source === "native" || agent.source === "plugin-default"
     rows.push({
       layer: "host",
       task_id: "",
       subject: agent.agentID,
       revision: 1,
-      record: { reachable: true, model: null, pluginDefault: false },
+      record: {
+        reachable: true,
+        model: hosted ? agent.model : null,
+        pluginDefault: agent.source === "plugin-default",
+      },
     })
+  }
   return withIDs(rows.toSorted((a, b) => String(a.subject).localeCompare(String(b.subject))))
 }
 

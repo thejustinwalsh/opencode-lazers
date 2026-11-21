@@ -721,7 +721,17 @@ const tasksOf = (data: ModelsData) => ({
 
 type Handlers = Record<string, Record<string, (input: never) => unknown>>
 
-export function rpc(data: () => ModelsData): Handlers {
+export function rpc(
+  data: () => ModelsData,
+  /** A test's changes to the candidates the comparison answers (benchmarks, missing prices). */
+  options: {
+    comparison?: (output: ModelComparisonOutput) => ModelComparisonOutput
+    /** What the host says about each agent (native or plugin-default models). */
+    settings?: (output: ModelSettingsOutput) => ModelSettingsOutput
+    /** The overview the views are built from (reference estimates the demo does not carry). */
+    overview?: (output: ModelDecisionOverview) => ModelDecisionOverview
+  } = {},
+): Handlers {
   const mappings = new Mappings(data)
   const tasks = tasksRpc(() => tasksOf(data()))
   return {
@@ -730,11 +740,13 @@ export function rpc(data: () => ModelsData): Handlers {
     [Streams.id]: combinedStreams(
       modelStreams(
         () => ({
-          overview: (filters) => overview(data(), filters),
+          overview: (filters) =>
+            (options.overview ?? ((output) => output))(overview(data(), filters)),
           inspect: (filters, id) =>
             inspect(data(), { filters, configurationID: id, selectedTaskID: null } as never),
-          comparison: () => comparison(data()),
-          settings: (taskID) => settings(mappings, data(), taskID),
+          comparison: () => (options.comparison ?? ((output) => output))(comparison(data())),
+          settings: (taskID) =>
+            (options.settings ?? ((output) => output))(settings(mappings, data(), taskID)),
           priceSources: POLICY.sources,
           pricesRetrievedAt: data().pricesRetrievedAt,
         }),
