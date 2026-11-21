@@ -15,7 +15,6 @@ import {
   singleEstimate,
 } from "../../test/models-decision/fixtures/decision.ts"
 import {
-  MODELS_DECISION_RPC_ID,
   ModelDecisionContextSchema,
   ModelDecisionConfigurationSchema,
   ModelDecisionEstimateSchema,
@@ -25,7 +24,6 @@ import {
   ModelDecisionRowsInputSchema,
   ModelDecisionRowSchema,
   ModelDecisionRowsOutputSchema,
-  ModelsDecision,
 } from "./decision-contract.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import { ModelDecisionReferenceEstimateSchema } from "./reference-estimate.ts"
@@ -103,8 +101,6 @@ test("versioned reads share producer context while the global graph stays indepe
   const rows = ModelDecisionRowsOutputSchema.parse(decisionRows())
   const inspect = ModelDecisionInspectOutputSchema.parse(decisionInspect())
 
-  expect(ModelsDecision.id).toBe(MODELS_DECISION_RPC_ID)
-  expect(ModelsDecision.id).toBe("lazers.models.decision.v2")
   for (const output of [overview, rows]) {
     expect(output.context.snapshotID).toBe("snapshot:producer-owned/42")
     expect(output.context.filters).toEqual(decisionRead.filters)
