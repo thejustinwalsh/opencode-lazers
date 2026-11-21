@@ -122,6 +122,25 @@ test("task instructions preserve goal, acceptance, boundaries, guidance, verific
   expect(instructions).not.toContain('"proposal"')
 })
 
+test("task instructions retain an explicit persona without inferring one when omitted", () => {
+  const omitted = taskInstructions(detail)
+  expect(omitted).not.toContain("Explicit task persona")
+  if (detail.status !== "found") throw new Error("Test task fixture is not found")
+  const assigned = taskInstructions(
+    GetOutput.parse({
+      ...detail,
+      task: {
+        ...detail.task,
+        proposal: { ...detail.task.proposal, persona: "small-refactoring" },
+      },
+    }),
+  )
+  expect(assigned).toContain("## Explicit task persona\n- small-refactoring")
+  expect(assigned).toContain(
+    "ordinary plan's explicitly authored node persona remains authoritative",
+  )
+})
+
 test("task instructions retain readable missing-task and unavailable-revision outcomes", () => {
   expect(taskInstructions(detail)).not.toContain("Task-attached advice")
   expect(taskInstructions({ status: "not_found" })).toBe("Task not_found.")

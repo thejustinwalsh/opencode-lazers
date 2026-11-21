@@ -120,6 +120,31 @@ describe("task proposals", () => {
     }
   })
 
+  test("task persona is an optional explicit enum independent of classification", () => {
+    const personas = ["ui", "systems", "small-refactoring"] as const
+    for (const persona of personas) {
+      const proposal = TaskSubmissionSchema.parse({
+        ...validProposal(),
+        idempotencyKey: `persona-${persona}`,
+        persona,
+      })
+      expect(proposal.persona).toBe(persona)
+      expect(proposal.classification).toEqual(validProposal().classification)
+    }
+
+    const omitted = TaskProposalSchema.parse(validProposal())
+    expect(omitted).not.toHaveProperty("persona")
+    expect(taskProposalJSONSchema.required).not.toContain("persona")
+    expect(taskProposalJSONSchema.properties?.persona).toMatchObject({
+      type: "string",
+      enum: personas,
+    })
+
+    for (const persona of ["auditor", "Systems", "", null, ["systems"]]) {
+      expect(TaskProposalSchema.safeParse({ ...validProposal(), persona }).success).toBe(false)
+    }
+  })
+
   test("preserves a workspace-relative directory artifact reference verbatim", () => {
     const reference = ".agents/docs/evidence/037-artifact-evidence/"
     const proposal = TaskProposalSchema.parse({
