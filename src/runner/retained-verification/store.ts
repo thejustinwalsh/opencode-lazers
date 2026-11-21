@@ -131,20 +131,17 @@ function ensureCleanupColumn(db: Database) {
     db.exec(
       "ALTER TABLE runner_retained_verifications ADD COLUMN cleanup_pending INTEGER NOT NULL DEFAULT 1",
     )
-    const rows = db
-      .query<{ id: string; payload: string }, []>(
-        "SELECT id,payload FROM runner_retained_verifications",
-      )
-      .all()
-    const set = db.query("UPDATE runner_retained_verifications SET cleanup_pending=? WHERE id=?")
-    for (const row of rows) {
-      try {
-        const operation = RetainedVerificationSchema.parse(JSON.parse(row.payload))
-        set.run(retainedCleanupPending(operation) ? 1 : 0, row.id)
-      } catch {
-        // An unreadable row stays pending: the tick reports it where it can.
-      }
-    }
+    const settled = (workspace: string, state: string) =>
+      `(CASE WHEN json_extract(payload,'$.${workspace}') IS NULL
+         THEN json_extract(payload,'$.${state}') IS NULL
+         ELSE json_extract(payload,'$.${state}')='removed' END)`
+    db.exec(`
+      UPDATE runner_retained_verifications SET cleanup_pending=CASE WHEN
+        json_extract(payload,'$.cleanupState')='complete'
+        AND ${settled("taskWorkspace", "taskWorkspaceState")}
+        AND ${settled("combinedWorkspace", "combinedWorkspaceState")}
+      THEN 0 ELSE 1 END
+    `)
   }
   db.exec(`
     CREATE INDEX IF NOT EXISTS runner_retained_verifications_cleanup

@@ -78,3 +78,28 @@ test("the tick reads terminal operations with cleanup pending, not the project's
   )
   expect(plan).toContain("runner_retained_verifications_cleanup")
 }, 120_000)
+
+test("rows written before the cleanup_pending column existed are classified when it is added", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-retained-legacy-"))
+  directories.push(directory)
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/project")
+  repositories.push(repository)
+  const done = operation(1, {})
+  const stuck = operation(2, { state: "failed", cleanupState: "failed" })
+  const owned = operation(3, { taskWorkspace: "/w", taskWorkspaceState: "owned" })
+  repository.atomic((db) => {
+    db.exec(
+      "CREATE TABLE runner_retained_verifications (id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, plan_id TEXT NOT NULL, task_id TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL)",
+    )
+    const insert = db.query(
+      "INSERT INTO runner_retained_verifications VALUES(?,'/project',?,?,?,?)",
+    )
+    for (const entry of [done, stuck, owned])
+      insert.run(entry.id, entry.planID, entry.taskID, entry.state, JSON.stringify(entry))
+  })
+  const ids = repository
+    .read((db) => terminalPendingRetainedVerifications(db, "/project"))
+    .map((entry) => entry.id)
+    .sort()
+  expect(ids).toEqual([stuck.id, owned.id].sort())
+}, 120_000)
