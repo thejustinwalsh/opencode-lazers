@@ -98,6 +98,15 @@ class StorageBusyError extends Error {
   }
 }
 
+/**
+ * Plugin load waits for the write lock this long. A schema install or an index build holds it for
+ * about 1 s on a live-sized database (the integer-key index build is the longest; measured on the
+ * 2026-11-21 restart), and the index worker waits 30 s on its own connection, so 30 s is thirty
+ * times the longest hold seen. It bounds the wait only: when it is spent the load fails with the
+ * real cause and nothing is left registered, so the next load attempt starts clean.
+ */
+const LOAD_LOCK_WAIT_MS = 30_000
+
 function isSqliteBusy(error: unknown): boolean {
   return error instanceof SQLiteError && /^SQLITE_(BUSY|LOCKED)/.test(error.code ?? "")
 }
@@ -470,6 +479,30 @@ function withoutRevisionGuard(stored: string): string {
   }
 }
 
+/**
+ * Run a synchronous unit of start-up work that may take the write lock on its own connection,
+ * yielding the event loop between attempts while another connection holds it. Each attempt must
+ * leave nothing behind when it throws. Throws `StorageBusyError` (with the SQLite error as its
+ * cause) once `deadlineMs` is spent.
+ */
+export async function waitForWriteLock<T>(
+  run: () => T,
+  options: { deadlineMs?: number } = {},
+): Promise<T> {
+  const started = Date.now()
+  const deadline = started + (options.deadlineMs ?? LOAD_LOCK_WAIT_MS)
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return run()
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error
+      const now = Date.now()
+      if (now >= deadline) throw new StorageBusyError(attempt, now - started, { cause: error })
+      await Bun.sleep(Math.min(5 * 2 ** Math.min(attempt - 1, 6), 250, deadline - now))
+    }
+  }
+}
+
 export class TaskRepository {
   private shared: SharedConnection | undefined
   private readonly listeners = new Set<() => void>()
@@ -600,6 +633,29 @@ export class TaskRepository {
   read<T>(run: (db: Database) => T): T {
     const db = this.db
     return timeStorage("read", () => db.transaction(() => run(db)).deferred())
+  }
+
+  /**
+   * Run `CREATE ... IF NOT EXISTS` statements only when one of the objects they name is missing, so
+   * a current database takes no write lock at load. Returns whether it ran them.
+   */
+  installMissing(sql: string): boolean {
+    const names = new Set(
+      [...sql.matchAll(/CREATE\s+(?:TABLE|INDEX|TRIGGER)\s+IF NOT EXISTS\s+(\w+)/g)].map(
+        (match) => match[1]!,
+      ),
+    )
+    const present = this.read(
+      (db) =>
+        db
+          .query<{ n: number }, []>(
+            `SELECT count(*) AS n FROM sqlite_master WHERE name IN (${[...names].map((name) => `'${name}'`).join(",")})`,
+          )
+          .get()!.n,
+    )
+    if (present === names.size) return false
+    this.atomic((db) => db.exec(sql))
+    return true
   }
 
   /** Module upgrades are transactional; current generations need no write transaction. */
