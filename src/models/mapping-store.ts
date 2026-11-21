@@ -96,6 +96,18 @@ function currentIn(db: Database, key: MappingKey): ModelMappingRecord | null {
 export class ModelMappingStore {
   constructor(readonly repository: TaskRepository) {}
 
+  /** Reads run on a deferred read transaction; only a missing table takes the write lock. */
+  private view<T>(run: (db: Database) => T): T {
+    try {
+      return this.repository.read(run)
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("no such table: model_mappings"))
+        throw error
+      this.repository.atomic(ensureTables)
+      return this.repository.read(run)
+    }
+  }
+
   /** GUI path: guarded by the revision the editor last read. */
   update(input: unknown): ModelMappingWrite {
     const update = ModelMappingUpdateSchema.parse(input)
@@ -154,27 +166,23 @@ export class ModelMappingStore {
     const target = ModelMappingTargetInputSchema.parse(targetInput)
     const persona = WorkerPersona.parse(personaInput)
     const key = keyFor(target, this.repository.projectDirectory, persona)
-    return this.repository.atomic((db) => {
-      ensureTables(db)
-      return currentIn(db, key)
-    })
+    return this.view((db) => currentIn(db, key))
   }
 
   history(targetInput: unknown, personaInput: unknown): ModelMappingRecord[] {
     const target = ModelMappingTargetInputSchema.parse(targetInput)
     const persona = WorkerPersona.parse(personaInput)
     const key = keyFor(target, this.repository.projectDirectory, persona)
-    return this.repository.atomic((db) => {
-      ensureTables(db)
-      return db
+    return this.view((db) =>
+      db
         .query<{ payload: string }, [string, string, string, string]>(
           `SELECT payload FROM model_mappings
            WHERE scope=? AND project_directory=? AND task_id=? AND persona=?
            ORDER BY revision`,
         )
         .all(key.scope, key.projectDirectory, key.taskID, key.persona)
-        .map((row) => decode(row.payload))
-    })
+        .map((row) => decode(row.payload)),
+    )
   }
 
   /**
@@ -198,8 +206,7 @@ export class ModelMappingStore {
   layers(persona: WorkerPersonaType, taskID?: string): ModelMappingLayers {
     const parsedPersona = WorkerPersona.parse(persona)
     const parsedTaskID = taskID === undefined ? undefined : z.uuid().parse(taskID)
-    return this.repository.atomic((db) => {
-      ensureTables(db)
+    return this.view((db) => {
       return {
         task: parsedTaskID
           ? currentIn(
