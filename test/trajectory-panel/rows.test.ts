@@ -4,6 +4,7 @@ import {
   attemptFromRow,
   checkFromDetail,
   concernFromSchedule,
+  holdFromSchedule,
   checkFromRow,
   eventFromDetail,
   eventFromRow,
@@ -159,4 +160,24 @@ test("a check row carries its receipt interval, so the timeline draws it unselec
   }
   expect(checkFromDetail(detail)).toMatchObject({ startedAt: 30, command: "bun test" })
   expect(eventFromDetail(detail)?.kind).toBe("verification")
+})
+
+test("the hold is the stored schedule row's plan state and reason, not a timeline event", () => {
+  const row = {
+    task_id: "t1",
+    status: "running",
+    node_state: "running",
+    plan_state: "blocked",
+    plan_reason: "Worker execution was interrupted and could not resume",
+    node_reason: null,
+    reason: null,
+  }
+  expect(holdFromSchedule(row)).toEqual({
+    waiting: true,
+    reason: "Worker execution was interrupted and could not resume",
+  })
+  expect(holdFromSchedule({ ...row, plan_state: "running", plan_reason: null })).toEqual({
+    waiting: false,
+    reason: null,
+  })
 })

@@ -113,6 +113,11 @@ const Report = z
       status: z.string(),
       /** The current recorded lifecycle state; absent from older servers. */
       recordedState: z.string().optional(),
+      /**
+       * The task's current hold from its stored schedule row (`listRowOf`, the rule Tasks lists
+       * by): held, and why. Absent when the report has no schedule row.
+       */
+      hold: z.object({ waiting: z.boolean(), reason: z.string().nullable() }).optional(),
       specification: z.object({ objective: z.string() }).strip(),
     }),
     plans: z.array(

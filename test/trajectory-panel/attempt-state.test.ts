@@ -3,7 +3,6 @@ import {
   attemptDuration,
   attemptName,
   attemptSignals,
-  holdReason,
   holdReasons,
   lastWorkerActivity,
   reportTaskView,
@@ -17,32 +16,58 @@ const report = (planState: string, status = "running", planReason: string | null
     plans: [{ id: "p1", state: planState, reason: planReason, checks: [] }],
     attempts: [{ id: "a1", planID: "p1" }],
   }) as never
-const blocked = {
-  id: "e1",
-  kind: "runner-transition",
-  event: "BLOCKED",
-  at: 5,
-  reason: "Waiting for a dependency",
-} as TrajectoryEvent
 
 test("a running task under a blocked plan is Waiting, the word Tasks and Radar show", () => {
-  const held = reportTaskView(report("blocked"), [blocked])
+  const held = reportTaskView(report("blocked"))
   expect(held.label).toBe("Waiting")
   expect(held.working).toBe(false)
   expect(held.explained).toBe(true)
-  const running = reportTaskView(report("running"), [])
+  const running = reportTaskView(report("running"))
   expect(running.label).toBe("Running")
   expect(running.working).toBe(true)
   // A finished task under a blocked plan is not held.
-  expect(reportTaskView(report("blocked", "accepted"), []).label).not.toBe("Waiting")
+  expect(reportTaskView(report("blocked", "accepted")).label).not.toBe("Waiting")
 })
 
 test("a held attempt gets the same callout sentence Tasks gives", () => {
-  const view = reportTaskView(report("blocked"), [blocked])
-  expect(holdReason([blocked])).toBe("Waiting for a dependency")
-  expect(taskReason(view, report("blocked"), [blocked])).toEqual(expect.any(String))
-  expect(taskReason(view, report("blocked"), [blocked])!.length).toBeGreaterThan(10)
-  expect(taskReason(reportTaskView(report("running"), []), report("running"), [])).toBeUndefined()
+  const held = report("blocked", "running", "Waiting for a dependency")
+  const view = reportTaskView(held)
+  expect(taskReason(view, held)).toEqual(expect.any(String))
+  expect(taskReason(view, held)!.length).toBeGreaterThan(10)
+  expect(taskReason(reportTaskView(report("running")), report("running"))).toBeUndefined()
+})
+
+test("the header's hold reason is the stored schedule row's, whatever the timeline window holds", () => {
+  // The task's BLOCKED transition is outside every loaded window: no event is passed at all. The
+  // schedule row (task_schedule: plan state and reason) says the task is held, and why; the latest
+  // attempt's plan is an older one that carries no state or reason.
+  const raw = "Worker execution was interrupted and could not resume"
+  const stored = {
+    task: {
+      id: "t1",
+      status: "running",
+      recordedState: "running",
+      hold: { waiting: true, reason: raw },
+      specification: { objective: "x" },
+    },
+    plans: [
+      { id: "p0", checks: [] },
+      { id: "p1", state: "blocked", reason: raw, checks: [] },
+    ],
+    attempts: [{ id: "a1", planID: "p0" }],
+  } as never
+  const view = reportTaskView(stored)
+  expect(view.label).toBe("Waiting")
+  expect(holdReasons(stored)).toEqual([raw])
+  expect(taskReason(view, stored)).toBe(
+    "The worker was interrupted and the runtime could not resume it. Open Architect to resume or retry it.",
+  )
+  // The stored row is not held: no hold reason, whatever an older plan recorded.
+  const released = {
+    ...(stored as object),
+    task: { ...(stored as { task: object }).task, hold: { waiting: false, reason: null } },
+  } as never
+  expect(reportTaskView(released).label).toBe("Running")
 })
 
 test("a held or interrupted attempt stops at its last activity, not now", () => {
@@ -70,14 +95,11 @@ test("a held or interrupted attempt stops at its last activity, not now", () => 
 test("the callout sentence comes from the plan reason, the source Tasks and Radar read", () => {
   const raw = "Worker execution was interrupted and could not resume"
   const held = report("blocked", "running", raw)
-  const view = reportTaskView(held, [])
-  // No BLOCKED transition carries a reason here; the plan's reason does.
-  expect(holdReasons(held, [])).toEqual([raw])
-  expect(taskReason(view, held, [])).toBe(
+  const view = reportTaskView(held)
+  expect(holdReasons(held)).toEqual([raw])
+  expect(taskReason(view, held)).toBe(
     "The worker was interrupted and the runtime could not resume it. Open Architect to resume or retry it.",
   )
-  // The plan reason leads the transition's.
-  expect(holdReasons(held, [blocked])).toEqual([raw, "Waiting for a dependency"])
 })
 
 test("a late runner event is not worker activity", () => {

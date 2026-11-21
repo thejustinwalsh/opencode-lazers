@@ -1014,7 +1014,7 @@ function PanelView(
   /** The one state view every panel shows for this task (held is Waiting, not Running). */
   const taskView = createMemo(() => {
     const line = report()
-    return line ? reportTaskView(line, loadedEvents()) : undefined
+    return line ? reportTaskView(line) : undefined
   })
   const presentation = () => {
     const view = taskView()
@@ -1413,7 +1413,7 @@ function PanelView(
     const view = taskView()
     const explained =
       view && isLatestAttempt(attempt) && view.explained
-        ? taskReason(view, line, loadedEvents(), ended?.raw ?? ended?.text)
+        ? taskReason(view, line, ended?.raw ?? ended?.text)
         : undefined
     return {
       attempt,

@@ -9,6 +9,7 @@ import type {
   TrajectoryReport,
 } from "./projection.ts"
 import { isActiveAttemptState } from "./projection.ts"
+import { listRowOf } from "../tasks/task-row.ts"
 
 /**
  * The view's data, built from stream rows. A row carries only what the stream's columns name; a
@@ -141,6 +142,15 @@ export function checkFromRow(row: Raw): TrajectoryCheck & { planID: string; ref:
     stderr: null,
     error: null,
   }
+}
+
+/**
+ * The task's current hold from its stored `tasks.schedule` row: held and why, by the rule Tasks
+ * lists by (`listRowOf`). Stored plan and node state, never a windowed event.
+ */
+export function holdFromSchedule(row: Raw): { waiting: boolean; reason: string | null } {
+  const { waiting, holdReason } = listRowOf((column) => row[column], String(row.task_id))
+  return { waiting, reason: holdReason }
 }
 
 export type ConcernSignal = { line: string; action?: string; because?: string } | undefined
