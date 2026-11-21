@@ -13,6 +13,7 @@ import { Streams } from "../../src/streams/contract.ts"
 import { readerPool, type ReaderPool } from "../../src/streams/pool.ts"
 import { createStreamsService } from "../../src/streams/rpc.ts"
 import { makeFixture, firstAttemptID } from "../trajectory/fixture.ts"
+import { insertTask } from "../../src/tasks/schedule/fixture.ts"
 
 type DOMEntry = {
   createReactiveStore<T>(initial: T): {
@@ -290,6 +291,31 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       },
     })
 
+    // Two queued tasks in a plan: the Map's Queue group reads them through `radar.group`.
+    const queuedTasks = ["map-alpha", "map-beta"].map((name) =>
+      insertTask(fixture.repository, name),
+    )
+    fixture.store.submit(
+      {
+        requestID: "radar-dom-queued",
+        objective: "Queued work",
+        baseCommit: "a".repeat(40),
+        workspaceMode: "shared",
+        nodes: queuedTasks.map((id) => ({ taskID: id, revision: 1 })),
+        dependencies: [],
+        integrationOrder: queuedTasks,
+        verification: [{ id: "check", command: "bun test", timeoutMs: 60000 }],
+        acceptance: [
+          {
+            id: "ok",
+            assertion: "Checks pass",
+            evidence: [{ kind: "verification", verificationID: "check" }],
+          },
+        ],
+      },
+      "ses-owner",
+    )
+    await fixture.index()
     const projectID = "project"
     ensureHostSessionStateSchema(fixture.repository)
     ensureTranscriptMetaSchema(fixture.repository)
@@ -881,6 +907,18 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => container.querySelector(".lazers-radar-node[data-selected='true']") !== null)
     await until(() => paneOpen() === "true")
     expect(container.querySelector(".lazers-details-header")?.textContent).toContain("Architect")
+    // The Queue group lists its tasks from the stored task list (`radar.group`, `radar.workload`).
+    const queueNode = () =>
+      [...container.querySelectorAll<SVGGElement>(".lazers-radar-node")].find((node) =>
+        node.getAttribute("aria-label")?.startsWith("Queue"),
+      )
+    await until(() => queueNode() !== undefined)
+    queueNode()!.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }) as unknown as MouseEvent,
+    )
+    await until(() => text().includes("map-alpha") && text().includes("map-beta"))
+    expect(streamOpens.some((open) => open.source === "radar.group")).toBe(true)
+    expect(text()).not.toContain("still being indexed")
     // Flow shares the panel, header and snapshot: no reload, and the lifecycle chart sits in ⋯.
     tab("Flow").click()
     await until(() => tab("Flow")?.getAttribute("aria-selected") === "true")
