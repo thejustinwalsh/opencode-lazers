@@ -170,6 +170,16 @@ const STAGES = {
       "packages/runntime/test/zoo/lfm3/audio-trim.gpu.test.ts",
     ],
   },
+  "omni-device-limits": {
+    baseCommit: "70ab1be9c16571b777b0321073e230e1873b1a4b",
+    directory: "contributions/runntime/omni-device-limits",
+    allowedPaths: [
+      "packages/runntime/src/core/gpu/",
+      "packages/runntime/src/core/index.ts",
+      "packages/runntime/src/zoo/transformers/init.ts",
+      "packages/runntime/test/core/gpu/",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/

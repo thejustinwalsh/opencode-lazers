@@ -1,0 +1,9 @@
+
+ RUN  v5.0.4 /Users/tjw/Documents/ChatGPT/runntime.worktrees/omni-trim/packages/runntime
+
+
+ Test Files  2 passed (2)
+      Tests  72 passed (72)
+   Start at  10:22:53
+   Duration  4.03s (import 39%, tests 36%, worker 25%)
+
