@@ -20,7 +20,7 @@ export type PriceInputs = {
 }
 
 /** The two whole-model sources a price index and a market identity are built from. */
-export const PRICE_EVIDENCE_SOURCES = ["native-catalog", "openrouter-models"] as const
+const PRICE_EVIDENCE_SOURCES = ["native-catalog", "openrouter-models"] as const
 
 type SnapshotFacts = {
   snapshotID: string

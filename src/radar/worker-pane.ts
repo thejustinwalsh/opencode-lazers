@@ -133,7 +133,7 @@ export function lastCall(lines: readonly ActivityLine[]) {
 }
 
 /** The first rows of Recent calls, newest first. */
-export const RECENT_CALLS = 4
+const RECENT_CALLS = 4
 export function recentCalls(lines: readonly ActivityLine[]) {
   const ordered = lines.toSorted((left, right) => (right.startedAt ?? 0) - (left.startedAt ?? 0))
   return { recent: ordered.slice(0, RECENT_CALLS), earlier: ordered.slice(RECENT_CALLS) }
@@ -214,5 +214,3 @@ export function workerStats(input: {
 export function workerLane(attempt: WorkerAttempt | null | undefined, now: number) {
   return attempt ? attemptLane(attempt, now) : undefined
 }
-
-export const workerLabel = (session: LiveSession) => sessionRole(session).label

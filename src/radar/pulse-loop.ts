@@ -105,7 +105,7 @@ type Wire = {
  * then has no damage to draw on the frames in between, which is what halves its work at 30 fps.
  * At 90 px/s a step is 3 px.
  */
-export const STEP_MS = 33
+const STEP_MS = 33
 const MAX_KEYFRAMES = 400
 
 /**

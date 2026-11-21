@@ -5,7 +5,7 @@ import { terminalPlanStates as terminal } from "./plan-control.ts"
 import { messageID, isRerunnableEffect } from "./runtime-helpers.ts"
 import { fingerprint } from "../identity.ts"
 import { checkResourcesSettled, workingTreeIdentity } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { protectedPaths } from "./scope.ts"
 import type { WorkerInstruction } from "./host.ts"
 import { hostMessageByID } from "./host-reads.ts"
@@ -264,7 +264,7 @@ export class EffectReconciliation {
   async checkReceiptMatchesEffect(
     effect: EffectRow,
     payload: any,
-    check: CheckReceipt,
+    check: RunnerCheckReceipt,
   ): Promise<boolean> {
     if (effect.kind !== "mechanical-fix")
       return (
@@ -295,7 +295,7 @@ export class EffectReconciliation {
   }
   settleMatchedCheck(
     effect: EffectRow,
-    check: CheckReceipt,
+    check: RunnerCheckReceipt,
     fence: number,
     activityIdentity: unknown,
   ): boolean {
@@ -322,7 +322,7 @@ export class EffectReconciliation {
     this.forgetCheckActivity(effect, activityIdentity)
     return true
   }
-  recordVerificationEvidence(effect: EffectRow, check: CheckReceipt) {
+  recordVerificationEvidence(effect: EffectRow, check: RunnerCheckReceipt) {
     try {
       this.progress.recordVerification(effect.attempt_id!, effect.id, check)
     } catch {
@@ -347,7 +347,7 @@ export class EffectReconciliation {
   /** A check whose activity failed without a matching receipt is uncertain; anything else falls through. */
   settleFailedCheckActivity(
     effect: EffectRow,
-    activity: VerificationActivity<CheckReceipt> | undefined,
+    activity: VerificationActivity<RunnerCheckReceipt> | undefined,
     fence: number,
     activityIdentity: unknown,
   ): boolean {
@@ -418,13 +418,13 @@ async function worktreeReconcileCandidates(
 }
 
 /** The check receipt a runner subprocess left at the effect's receipt path, when there is one. */
-function readCheckReceipt(payload: { receiptPath: string }): CheckReceipt | undefined {
+function readCheckReceipt(payload: { receiptPath: string }): RunnerCheckReceipt | undefined {
   return existsSync(payload.receiptPath)
-    ? (JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt)
+    ? (JSON.parse(readFileSync(payload.receiptPath, "utf8")) as RunnerCheckReceipt)
     : undefined
 }
 
-function unsettledCheckError(label: "Mechanical" | "Verification", check: CheckReceipt) {
+function unsettledCheckError(label: "Mechanical" | "Verification", check: RunnerCheckReceipt) {
   return new Error(
     `${label} command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
   )

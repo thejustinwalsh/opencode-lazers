@@ -44,9 +44,9 @@ import { spliceItems, type VirtualItem } from "./virtual-rows.ts"
  */
 
 /** Rows held on each side of the rows that fit. */
-export const SLOP_ROWS = 25
+const SLOP_ROWS = 25
 /** Rows the window holds for a view that fits `fit` rows. */
-export const windowFor = (fit: number) => Math.max(1, fit) + 2 * SLOP_ROWS
+const windowFor = (fit: number) => Math.max(1, fit) + 2 * SLOP_ROWS
 
 const readerOf = (row: unknown) => (column: string) => (row as Record<string, unknown>)[column]
 const unfinished = (stream: GuiStream<never>) => stream.after() !== 0
@@ -274,7 +274,7 @@ export type SelectedFactsInput = {
 }
 
 /** One related task: its id, and the reference and title the relation carries. */
-export type RelatedTask = { taskID: string; reference?: string; title?: string }
+type RelatedTask = { taskID: string; reference?: string; title?: string }
 
 type Facts = {
   row: Accessor<(ExecutionListRow & { bucket: string }) | undefined>
@@ -481,4 +481,3 @@ export function createSelectedFacts(input: SelectedFactsInput) {
     successors: () => read((f) => f.successors, []),
   }
 }
-export type SelectedFacts = ReturnType<typeof createSelectedFacts>

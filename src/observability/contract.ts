@@ -845,7 +845,7 @@ const TrajectoryStatusInput = z.strictObject({
   live: z.strictObject({ cursor: z.uuid().optional() }).optional(),
 })
 
-export const Changed = z.strictObject({
+export const ObservabilityChanged = z.strictObject({
   projectID: z.string().min(1),
   sequence: z.int().positive(),
   repositoryVersion: z.int().nonnegative(),
@@ -889,13 +889,13 @@ export const Observability = Rpc.define({
     },
     trajectoryStatus: { input: TrajectoryStatusInput, output: TrajectoryOutput },
   },
-  events: { changed: { schema: Changed } },
+  events: { changed: { schema: ObservabilityChanged } },
 })
 
 export type ObservationScope = z.infer<typeof ObservationScope>
 /** The scopes that read one project; every read except the all-projects ones takes this. */
 export type SingleScope = Exclude<ObservationScope, { kind: "all" }>
-export const ALL_PROJECTS_UNAVAILABLE = "All-projects scope is not available for this read"
+const ALL_PROJECTS_UNAVAILABLE = "All-projects scope is not available for this read"
 export function singleScope(scope: ObservationScope): SingleScope {
   if (scope.kind === "all") throw new Error(ALL_PROJECTS_UNAVAILABLE)
   return scope
@@ -909,7 +909,6 @@ export type LiveRadarRequestInput = z.input<typeof LiveRadarInput>
 export type LiveRadarResponse = z.infer<typeof LiveRadarOutput>
 export type LiveGroupRequestInput = z.input<typeof LiveGroupInput>
 export type LiveGroupResponse = z.infer<typeof LiveGroupOutput>
-export type LiveAttemptRequest = z.infer<typeof LiveAttemptInput>
 export type LiveAttemptRequestInput = z.input<typeof LiveAttemptInput>
 export type LiveAttemptResponse = z.infer<typeof LiveAttemptOutput>
 export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
@@ -918,4 +917,4 @@ export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
 export type TrajectoryHistoryResponse = z.infer<typeof TrajectoryHistoryOutput>
 export type TrajectoryHistoryErrorReason = z.infer<typeof TrajectoryHistoryErrorData>["reason"]
 export type TrajectoryStatusRequest = z.infer<typeof TrajectoryStatusInput>
-export type ObservationChange = z.infer<typeof Changed>
+export type ObservationChange = z.infer<typeof ObservabilityChanged>

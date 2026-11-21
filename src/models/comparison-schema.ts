@@ -90,6 +90,16 @@ const VariantCoverageSchema = z.strictObject({
   omittedVariants: z.number().int().nonnegative().max(200_000).nullable(),
 })
 
+/** The catalog fields every native model record carries, shared by the candidate and the group schemas. */
+export const NativeCatalogFields = {
+  name: z.string().max(512).nullable(),
+  enabled: z.boolean().nullable(),
+  type: z.string().max(512).nullable(),
+  contextTokens: z.number().finite().nonnegative().nullable(),
+  capabilities: NativeModelEvidenceRecordSchema.shape.capabilities,
+  availableVariants: z.array(z.string().min(1).max(512)).max(100).nullable(),
+}
+
 /** What one price source quotes for a model, USD per million tokens. */
 const PriceQuoteSchema = z.strictObject({
   source: z.enum(["openrouter", "opencode", "models-dev"]),
@@ -108,12 +118,7 @@ export const ModelComparisonCandidateSchema = z.strictObject({
     variant: z.string().max(512).nullable(),
   }),
   native: z.strictObject({
-    name: z.string().max(512).nullable(),
-    enabled: z.boolean().nullable(),
-    type: z.string().max(512).nullable(),
-    contextTokens: z.number().finite().nonnegative().nullable(),
-    capabilities: NativeModelEvidenceRecordSchema.shape.capabilities,
-    availableVariants: z.array(z.string().min(1).max(512)).max(100).nullable(),
+    ...NativeCatalogFields,
     variantCoverage: VariantCoverageSchema,
     prices: NativeModelEvidenceRecordSchema.shape.prices,
     ambiguousIdentity: z.boolean(),

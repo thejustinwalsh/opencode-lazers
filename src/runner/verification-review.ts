@@ -12,7 +12,7 @@ import {
   verificationEnvironmentIdentity,
   writeCheckReceipt,
 } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import {
   buildScopeReport,
   classifyChanges,
@@ -231,7 +231,7 @@ export class VerificationReview {
   decideVerification(
     plan: PlanRow,
     attempt: AttemptRow,
-    failures: CheckReceipt[],
+    failures: RunnerCheckReceipt[],
     review: FallowReviewResult | undefined,
     scope: ScopeReport,
   ): boolean {
@@ -454,7 +454,7 @@ export class VerificationReview {
     artifact: { commit: string; identity: string },
     receiptPath: string,
     signal: AbortSignal,
-  ): Promise<CheckReceipt> {
+  ): Promise<RunnerCheckReceipt> {
     const startedAt = Date.now()
     const result = await this.fallowReviewRun({
       workspace: attempt.workspace,
@@ -585,7 +585,7 @@ export class VerificationReview {
     ctx: PlanFallowContext,
     receiptPath: string,
     signal: AbortSignal,
-  ): Promise<CheckReceipt> {
+  ): Promise<RunnerCheckReceipt> {
     const startedAt = Date.now()
     const result = await this.fallowPlanReviewRun({
       workspace: ctx.workspace,
@@ -657,7 +657,7 @@ export class VerificationReview {
   async missingEvidence(
     workspace: string,
     assertions: TaskProposal["acceptance"],
-    receipts: CheckReceipt[],
+    receipts: RunnerCheckReceipt[],
   ) {
     const missing: string[] = []
     for (const assertion of assertions)
@@ -695,7 +695,7 @@ export class VerificationReview {
           )
           .all(previous.id),
       )
-      .map((row) => JSON.parse(row.body) as CheckReceipt)
+      .map((row) => JSON.parse(row.body) as RunnerCheckReceipt)
       .filter((receipt) => !checkSucceeded(receipt))
       .map(
         (receipt) =>

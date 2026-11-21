@@ -10,7 +10,7 @@ export function LiveChat() {
   useEffect(() => {
     const el = host.current
     if (!el) return
-    const load = () => void import("./Chat").then((m) => setChat(() => m.LiveChat))
+    const load = () => void import("./Chat").then((m) => setChat(() => m.LiveChatPanel))
     if (!("IntersectionObserver" in window)) return load()
     const watcher = new IntersectionObserver(
       (entries) => {

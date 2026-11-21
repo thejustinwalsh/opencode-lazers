@@ -108,7 +108,7 @@ export function taskClassificationFor(
 }
 
 /** Read task and classification metadata without running repository migrations. */
-export function readTaskClassification(
+function readTaskClassification(
   db: Database,
   projectDirectory: string,
   taskID: string,

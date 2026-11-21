@@ -32,7 +32,7 @@ import {
   type SizePick,
 } from "./tree.ts"
 
-export { SIZE_CHOICES, type SizePick } from "./tree.ts"
+export type { SizePick } from "./tree.ts"
 
 export type Answers = Record<
   string,

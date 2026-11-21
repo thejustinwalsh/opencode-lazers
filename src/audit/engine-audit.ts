@@ -29,7 +29,7 @@ const Action = z.looseObject({
 })
 const Actions = z.array(Action).optional()
 
-export const EngineComplexityFinding = z.strictObject({
+const EngineComplexityFinding = z.strictObject({
   path: z.string(),
   name: z.string(),
   line: z.int(),
@@ -66,7 +66,7 @@ export const EngineComplexityFinding = z.strictObject({
   gate_exemption: z.literal("test-file").optional(),
 })
 
-export const EngineCloneGroup = z.strictObject({
+const EngineCloneGroup = z.strictObject({
   instances: z.array(z.looseObject({ file: z.string(), start_line: z.int(), end_line: z.int() })),
   token_count: z.int(),
   line_count: z.int(),
@@ -79,7 +79,7 @@ export const EngineCloneGroup = z.strictObject({
   demotion_reason: z.literal("no-added-lines").optional(),
 })
 
-export const EngineDiffRiskFinding = z.strictObject({
+const EngineDiffRiskFinding = z.strictObject({
   rule: z.enum([
     "weakened-tests",
     "added-suppression",
@@ -157,7 +157,7 @@ const DeadCodeItem = z.looseObject({
   actions: Actions,
 })
 
-export const EngineDeadCode = z
+const EngineDeadCode = z
   .looseObject(
     Object.fromEntries(DEAD_CODE_LISTS.map((name) => [name, z.array(DeadCodeItem).optional()])),
   )
@@ -174,7 +174,7 @@ export const EngineDeadCode = z
     }
   })
 
-export const EngineStylingFinding = z.looseObject({
+const EngineStylingFinding = z.looseObject({
   code: z.string().optional(),
   path: z.string().optional(),
   line: z.int().optional(),
@@ -200,7 +200,7 @@ const Attribution = z.strictObject({
   diff_risk_introduced: z.int(),
 })
 
-export const EngineAudit = z.strictObject({
+const EngineAudit = z.strictObject({
   kind: z.literal("audit"),
   schema_version: z.int(),
   version: z.string(),
@@ -241,7 +241,6 @@ export type EngineAudit = z.infer<typeof EngineAudit>
 export type EngineComplexityFinding = z.infer<typeof EngineComplexityFinding>
 export type EngineCloneGroup = z.infer<typeof EngineCloneGroup>
 export type EngineDiffRiskFinding = z.infer<typeof EngineDiffRiskFinding>
-export type EngineDeadCodeItem = z.infer<typeof DeadCodeItem> & Record<string, unknown>
 
 /** Validates the engine's audit JSON. Throws a message naming the first field that does not fit. */
 export function parseEngineAudit(value: unknown): EngineAudit {

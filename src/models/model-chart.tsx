@@ -43,6 +43,27 @@ export type ModelChartProps = {
 
 const DEFAULT_WIDTH = 474
 
+/** Keeps `width` at the wrapper's measured width, from mount on and as it is resized. */
+function trackWidth(
+  wrapper: () => HTMLDivElement | undefined,
+  width: () => number,
+  setWidth: (next: number) => void,
+) {
+  onMount(() => {
+    const element = wrapper()
+    if (!element) return
+    const measure = () => {
+      const next = Math.floor(element.clientWidth)
+      if (next > 0 && next !== width()) setWidth(next)
+    }
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    onCleanup(() => observer.disconnect())
+  })
+}
+
 /**
  * The scatter plot, drawn as SVG: hairline frame, weak grid, filled accent points joined by a thin
  * polyline for the best trade-off, hollow neutral points for the rest, every point labelled.
@@ -52,18 +73,7 @@ export function ModelChart(props: ModelChartProps) {
   let wrapper: HTMLDivElement | undefined
   const [width, setWidth] = createSignal(DEFAULT_WIDTH)
   const [hovered, setHovered] = createSignal<string | null>(null)
-  onMount(() => {
-    if (!wrapper) return
-    const measure = () => {
-      const next = Math.floor(wrapper!.clientWidth)
-      if (next > 0 && next !== width()) setWidth(next)
-    }
-    measure()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(wrapper)
-    onCleanup(() => observer.disconnect())
-  })
+  trackWidth(() => wrapper, width, setWidth)
 
   const layout = createMemo(() =>
     layoutChart({
@@ -365,18 +375,7 @@ export type RankingChartProps = {
 export function RankingChart(props: RankingChartProps) {
   let wrapper: HTMLDivElement | undefined
   const [width, setWidth] = createSignal(DEFAULT_WIDTH)
-  onMount(() => {
-    if (!wrapper) return
-    const measure = () => {
-      const next = Math.floor(wrapper!.clientWidth)
-      if (next > 0 && next !== width()) setWidth(next)
-    }
-    measure()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(wrapper)
-    onCleanup(() => observer.disconnect())
-  })
+  trackWidth(() => wrapper, width, setWidth)
   const layout = createMemo(() =>
     layoutRanking({
       width: width(),

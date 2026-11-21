@@ -31,9 +31,11 @@
     "@opencode/client": "2.3.0"
   },
   "devDependencies": {
+    "@opencode/ai": "2.3.0",
     "@opencode/client": "2.3.0",
     "@opencode/plugin": "2.3.0",
     "@opencode/schema": "2.3.0",
+    "@standard-schema/spec": "1.1.0",
     "@types/bun": "1.4.4",
     "effect": "4.1.0",
     "happy-dom": "^21.0.4",
@@ -44,10 +46,8 @@
     "vite-plugin-solid": "2.11.15"
   },
   "dependencies": {
-    "@huggingface/tokenizers": "0.2.0",
     "@tanstack/solid-virtual": "3.13.53",
     "elkjs": "0.12.1",
-    "ignore": "7.0.14",
     "repomix": "1.18.1",
     "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-625c05e/runntime-0.2.0-625c05e.tgz",
     "xstate": "5.33.3",

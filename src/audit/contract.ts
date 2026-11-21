@@ -85,9 +85,9 @@ const Thresholds = z.strictObject({
  * check receipt, the repair prompt, the Architect notice and `lz-fallow-audit`; only
  * `fallow-render.ts` turns it into text. Names and enums follow Fallow's own JSON.
  */
-export const FallowSeverity = z.enum(["error", "warn"])
-export const FallowAttribution = z.enum(["introduced", "worsened", "inherited"])
-export const FallowClass = z.enum([
+const FallowSeverity = z.enum(["error", "warn"])
+const FallowAttribution = z.enum(["introduced", "worsened", "inherited"])
+const FallowClass = z.enum([
   "complexity",
   "duplication",
   "dead-code",
@@ -96,13 +96,13 @@ export const FallowClass = z.enum([
   "diff-risk",
   "styling",
 ])
-export const FallowMetric = z.enum(["cyclomatic", "cognitive", "crap", "line_count"])
+const FallowMetric = z.enum(["cyclomatic", "cognitive", "crap", "line_count"])
 const Location = z.strictObject({
   file: text,
   line: z.int().nonnegative(),
   endLine: z.int().nonnegative().optional(),
 })
-export const FallowFinding = z.strictObject({
+const FallowFinding = z.strictObject({
   /** Stable across edits (no line number), so the same finding is recognised after a repair. */
   id: text,
   /** The engine's rule name: `complexity`, `code-duplication`, `unused-export`, `weakened-tests`... */
@@ -166,7 +166,7 @@ export const FallowPackage = z.strictObject({
 export type FallowPackage = z.infer<typeof FallowPackage>
 
 /** What became of a finding the first audit reported, read by auditing again after the repair. */
-export const FallowDisposition = z.strictObject({
+const FallowDisposition = z.strictObject({
   findingID: text,
   severity: FallowSeverity,
   disposition: z.enum(["fixed", "remaining", "suppressed"]),
@@ -175,7 +175,7 @@ export const FallowDisposition = z.strictObject({
 })
 export type FallowDisposition = z.infer<typeof FallowDisposition>
 
-export const FallowReviewOutput = z.strictObject({
+const FallowReviewOutput = z.strictObject({
   status: z.enum(["clean", "findings", "unavailable"]),
   reason: z.string().optional(),
   package: FallowPackage.optional(),
@@ -327,7 +327,7 @@ const HealthRow = z.strictObject({
   line: z.int().nonnegative(),
   subject: z.string(),
 })
-export const FallowHealthComparison = z.strictObject({
+const FallowHealthComparison = z.strictObject({
   baselineRunID: z.uuid(),
   scoreFrom: z.number().nullable(),
   scoreTo: z.number().nullable(),

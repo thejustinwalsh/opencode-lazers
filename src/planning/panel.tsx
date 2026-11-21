@@ -1,4 +1,5 @@
 import { Command, LinkHandler, MenuItem, Panel, Style, bindPlugin } from "@opencode/plugin/gui"
+import { linkSignal, linkedSession } from "../link-host.ts"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js"
 import { createPlanLinkHandler } from "./links.ts"
@@ -124,16 +125,9 @@ export function setupPlanningPanel(ctx: PlanningContext) {
           .rpc(PlanningRpc)
           .resolve({ planningID }, { location: session.location, signal })
       },
-      signal: () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)]),
+      signal: () => linkSignal(ctx),
       open(target) {
-        const session = ctx.sessions
-          .list()
-          .find(
-            (candidate) =>
-              candidate.id === target.session.id &&
-              candidate.server.id === target.session.server.id &&
-              candidate.location?.directory === target.sessionDirectory,
-          )
+        const session = linkedSession(ctx, target)
         if (!session) return
         setSelected((all) => ({ ...all, [sessionKey(session)]: target.planningID }))
         ctx.layout.open(`${ctx.id}:plan`, session, { tab: "select" })

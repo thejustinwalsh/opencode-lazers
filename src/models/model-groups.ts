@@ -1,4 +1,4 @@
-import type { ModelCandidate } from "./comparison-state.ts"
+import type { ModelCandidate } from "./comparison-presentation.ts"
 import { parseModelName, vendorSlug } from "./name-identity.ts"
 
 export type RouteRef = { providerID: string; modelID: string }

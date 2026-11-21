@@ -21,7 +21,7 @@ const runs = (...entries: [number, Run["kind"], number][]): Run[] =>
  * acceptance are illustrative project data. Dollars per accepted task are those tokens times a fixed
  * coding-task mix of 15% fresh input, 5% output and 80% cache reads at the prices above.
  */
-export const provenance = {
+const provenance = {
   source: "OpenRouter model catalog",
   before: { generation: 337, retrievedAt: "2026-11-19T17:21:30.333Z" },
   after: { generation: 338, retrievedAt: "2026-11-19T18:39:46.306Z" },

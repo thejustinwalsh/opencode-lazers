@@ -57,7 +57,7 @@ export const itemsStoredCountSource = defineSource({
 })
 
 /** Opening needs the caller's say: group "g0" is refused, and every other read is held to the caller's group. */
-export const itemsGuardedSource = defineSource({
+defineSource({
   ...definition,
   name: "test.items.guarded",
   count: "exact",

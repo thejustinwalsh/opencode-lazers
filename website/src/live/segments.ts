@@ -1,6 +1,6 @@
 /** Splits an answer into speakable segments. Mirrors `speechSegments` in `src/webgpu/speech.ts`
  *  (the product's read aloud); `test/live-segments.test.ts` keeps the two in agreement. */
-export const SPEECH_CHUNK_CHARS = 320
+const SPEECH_CHUNK_CHARS = 320
 const SPEECH_CHUNK_WORDS = 48
 
 export function speechSegments(markdown: string): string[] {

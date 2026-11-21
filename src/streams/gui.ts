@@ -1,5 +1,5 @@
 import { batch, createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
-import { readFrame, type Columns } from "./frame.ts"
+import { readFrame, type Columns, type Row } from "./frame.ts"
 import { STREAM_LEASE_MS, type StreamAnchorInput, type StreamFrame } from "./contract.ts"
 import { streamColumns, type SourceRef } from "./source.ts"
 
@@ -8,8 +8,6 @@ import { streamColumns, type SourceRef } from "./source.ts"
  * `close`, a window in items) over plugin RPC on the copy tier. The frame arrives as base64 text
  * (plugin RPC is JSON), is decoded to the frame layout once, and rows are read from it lazily.
  */
-export type Row<C extends Columns> = { readonly [K in keyof C]: unknown }
-
 export type GuiStreamOptions<F> = {
   filter: F
   order: string

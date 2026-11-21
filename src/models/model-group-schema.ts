@@ -1,6 +1,7 @@
 import { z } from "zod"
 import {
   ModelComparisonEvidenceReferenceSchema,
+  NativeCatalogFields,
   ModelComparisonSnapshotSelectionSchema,
   ModelComparisonSourceSchema,
 } from "./comparison-schema.ts"
@@ -115,12 +116,7 @@ export const ModelGroupsOutputSchema = z.strictObject({
 
 const NativeConfigurationSchema = z.strictObject({
   source: z.literal("native-catalog"),
-  name: z.string().max(512).nullable(),
-  enabled: z.boolean().nullable(),
-  type: z.string().max(512).nullable(),
-  contextTokens: z.number().finite().nonnegative().nullable(),
-  capabilities: NativeModelEvidenceRecordSchema.shape.capabilities,
-  availableVariants: z.array(z.string().min(1).max(512)).max(100).nullable(),
+  ...NativeCatalogFields,
   variantCoverage: z.strictObject({
     status: z.enum(["complete", "truncated", "unknown"]),
     totalVariants: z.number().int().nonnegative().max(200_000).nullable(),

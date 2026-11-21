@@ -39,7 +39,7 @@ const real = (path: string) => {
   }
 }
 
-export const defaultProbe: WorktreeProbe = {
+const defaultProbe: WorktreeProbe = {
   exists: existsSync,
   async size(path) {
     try {
@@ -64,7 +64,7 @@ export const defaultProbe: WorktreeProbe = {
 }
 
 /** Roots LAZERS creates worktrees under; anything elsewhere is never removed here. */
-export function worktreeRoots(project: string, dataDirectory: string) {
+function worktreeRoots(project: string, dataDirectory: string) {
   const canonical = real(project)
   return [`${canonical}.worktrees`, join(dataDirectory, "runner", "worktrees")].map(real)
 }

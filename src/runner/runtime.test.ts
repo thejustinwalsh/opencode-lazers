@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
 import { checkResourcesSettled } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 
 import { RunnerStore } from "./store.ts"
 import { fingerprint } from "../identity.ts"
@@ -333,7 +333,7 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   const checkedAttempt = f.store.attempts(f.receipt.planID)[0]!
   const receiptPath = (JSON.parse(effect.payload) as { receiptPath: string }).receiptPath
   expect(existsSync(receiptPath)).toBe(true)
-  const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as CheckReceipt
+  const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as RunnerCheckReceipt
   expect(receipt).toMatchObject({
     id: "content",
     artifact: checkedAttempt.artifact,

@@ -64,7 +64,7 @@ export class StubHorizons {
  * message and tool results after it), whose thinking blocks and tool calls a provider may require
  * unmodified.
  */
-export function turnBoundary(messages: readonly Entry[]): string | undefined {
+function turnBoundary(messages: readonly Entry[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!
     if (message.role === "user" && message.id !== undefined) return message.id

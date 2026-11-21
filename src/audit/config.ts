@@ -108,7 +108,7 @@ export type ResolvedFallowConfig = {
 }
 
 /** Every project needs a Fallow config; none resolves to this typed error, never a silent default. */
-export class FallowConfigMissingError extends Error {
+class FallowConfigMissingError extends Error {
   readonly code = "FALLOW_CONFIG_MISSING"
   constructor(readonly projectDirectory: string) {
     super(

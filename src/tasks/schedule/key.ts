@@ -72,7 +72,7 @@ export type KeyFacts = {
   finishedAt: number
 }
 
-export const MAX_PRIORITY = 2147483647
+const MAX_PRIORITY = 2147483647
 const FINISH_CEILING = 9_999_999_999_999
 const SEQ_CEILING = Number.MAX_SAFE_INTEGER
 
@@ -103,16 +103,6 @@ export function encodeSortKey(facts: KeyFacts): string {
     pad(open ? (facts.ordinal ?? 0) : 0, 9),
     pad(tie, 16),
   ].join("")
-}
-
-/** The inverse of `encodeSortKey` for tests and the audit; `finishedAt` and `seq` only. */
-export function decodeSortKey(key: string) {
-  return {
-    rank: Number(key[0]),
-    unplanned: key[1] === "1",
-    finishedAt: FINISH_CEILING - Number(key.slice(2, 15)),
-    priorityKey: Number(key.slice(15, 25)),
-  }
 }
 
 /**

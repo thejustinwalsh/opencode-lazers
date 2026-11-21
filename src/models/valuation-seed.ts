@@ -9,7 +9,7 @@ import type { CurrentPriceIndex } from "./valuation-schema.ts"
  * costs, sessions no attempt owns), interleaved in one global sequence like `runner_progress`.
  */
 export type SeedRoute = { providerID: string; modelID: string; variant: string | null }
-export type SeedFact = Record<string, unknown> & { sequence: number; sessionID: string }
+type SeedFact = Record<string, unknown> & { sequence: number; sessionID: string }
 
 export const SEED_ROUTES: SeedRoute[] = [
   { providerID: "openrouter", modelID: "a-model", variant: "medium" },

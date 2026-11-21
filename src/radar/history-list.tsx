@@ -26,15 +26,15 @@ import { toolName } from "./worker-pane.ts"
  *                                        └──────────────┘
  * ```
  */
-export const HISTORY_ROW_PX = 28
+const HISTORY_ROW_PX = 28
 const VIEW_ROWS = 8
 /** Rows that fit, with one more for a partly visible row. */
 const FIT_ROWS = VIEW_ROWS + 1
 const SLOP_ROWS = 12
-export const HISTORY_WINDOW = FIT_ROWS + 2 * SLOP_ROWS
+const HISTORY_WINDOW = FIT_ROWS + 2 * SLOP_ROWS
 const COLUMNS = "64px minmax(0, 1fr) 64px"
 
-export type HistoryTarget = { attemptID: string; sessionID: string; beforeAt?: number }
+type HistoryTarget = { attemptID: string; sessionID: string; beforeAt?: number }
 export type HistorySource = {
   transport: StreamsTransport
   projectDirectory: string
@@ -42,7 +42,7 @@ export type HistorySource = {
 }
 
 /** The older calls of one attempt as a stream. Call inside the owner that should close it. */
-export function createOlderCalls(source: HistorySource, target: Accessor<HistoryTarget>) {
+function createOlderCalls(source: HistorySource, target: Accessor<HistoryTarget>) {
   const stream = createStream(source.transport, liveHistoryRef, () => {
     const now = target()
     return {
@@ -89,7 +89,7 @@ export function createOlderCalls(source: HistorySource, target: Accessor<History
   })
   return { stream, items, total }
 }
-export type OlderCalls = ReturnType<typeof createOlderCalls>
+type OlderCalls = ReturnType<typeof createOlderCalls>
 
 function targetOf(item: LiveHistoryItem) {
   return (

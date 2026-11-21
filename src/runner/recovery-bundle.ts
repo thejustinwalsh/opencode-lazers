@@ -33,9 +33,9 @@ export const RECOVERY_STALE_MS = 2 * 3_600_000
 /** A delivered bundle that stays unanswered is raised again, replacing itself, after this long. */
 export const RECOVERY_REPRAISE_MS = 6 * 3_600_000
 /** A bundle that could not reach an Architect is tried again no sooner than this. */
-export const RECOVERY_RETRY_MS = 5 * 60_000
+const RECOVERY_RETRY_MS = 5 * 60_000
 /** Items beyond this get one identifying line instead of their full detail; none is left out. */
-export const RECOVERY_TEXT_ITEMS = 60
+const RECOVERY_TEXT_ITEMS = 60
 
 export const RECOVERY_BUNDLE_STATUS = "recovery-bundle"
 export const RECOVERY_BUNDLE_EVENT = "RECOVERY_BUNDLE_RAISED"
@@ -61,7 +61,7 @@ const NOISE_EVENT_PREFIXES = [
   "RECOVERY_BUNDLE_",
 ]
 
-export const RecoveryKind = z.enum([
+const RecoveryKind = z.enum([
   "held-plan",
   "failed-task",
   "accepted-unintegrated",
@@ -98,7 +98,7 @@ const RecoveryRecommendation = z.strictObject({
   because: z.string(),
 })
 
-export const RecoveryItem = z.strictObject({
+const RecoveryItem = z.strictObject({
   /** Stable while the condition is unchanged; a changed state or reason is a new item. */
   key: z.string(),
   kind: RecoveryKind,

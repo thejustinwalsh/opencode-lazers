@@ -33,9 +33,6 @@ export function noticeMarker(marker: NoticeMarker): string | undefined {
   return `[lz-notice ${fields.join(" ")}]`
 }
 
-/** Matches one whole marker line; the line must stand alone. */
-export const NOTICE_MARKER_LINE = /^\[lz-notice ([^\]\n]+)\]$/m
-
 export function parseNoticeMarker(line: string): NoticeMarker | undefined {
   const match = /^\[lz-notice ([^\]\n]+)\]$/.exec(line)
   if (!match) return undefined

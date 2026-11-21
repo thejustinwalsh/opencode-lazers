@@ -9,7 +9,7 @@ export type Msg = ContextMessage & { content: unknown }
 export const planID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`
 export const taskID = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, "0")}`
 
-export function payload(status: string, plan: number, version: number, extra: object = {}) {
+function payload(status: string, plan: number, version: number, extra: object = {}) {
   return JSON.stringify({
     planID: planID(plan),
     planRevision: 1,

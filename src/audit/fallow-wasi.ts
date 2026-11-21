@@ -24,7 +24,7 @@ export type WasiRequest = Record<string, unknown> & { op: string; root: string }
  * What a run produced. The report leaves as bytes (`stdoutBytes`, which a worker can hand to its
  * parent without a copy); `stdout` decodes them on demand, for callers that read text.
  */
-export class WasiOutcome {
+class WasiOutcome {
   constructor(
     readonly stdoutBytes: Uint8Array,
     readonly stderr: string,
@@ -43,7 +43,7 @@ export class WasiOutcome {
  * most the bytes written so far once over the whole run. `take` returns exactly the bytes
  * written, as the only buffer left (the capacity beyond them is released).
  */
-export const STDOUT_FIRST_BYTES = 64 * 1024
+const STDOUT_FIRST_BYTES = 64 * 1024
 export class StdoutBuffer {
   private bytes = new Uint8Array(STDOUT_FIRST_BYTES)
   length = 0
@@ -302,10 +302,10 @@ export class ThreadPool {
 export const MAX_FALLOW_THREADS = 2
 
 /** Initial and maximum size, in 64 KiB pages, of the shared memory a threaded module imports. */
-export const SHARED_MEMORY = { initial: 65535, maximum: 65536 } as const
+const SHARED_MEMORY = { initial: 65535, maximum: 65536 } as const
 
 /** True for a module built for `wasm32-wasip1-threads`: it imports its (shared) memory. */
-export function isThreadedModule(module: WebAssembly.Module): boolean {
+function isThreadedModule(module: WebAssembly.Module): boolean {
   return WebAssembly.Module.imports(module).some((entry) => entry.kind === "memory")
 }
 
