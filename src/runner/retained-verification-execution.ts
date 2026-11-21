@@ -1866,8 +1866,10 @@ export class RetainedVerificationExecution {
       if (!terminalIDs.has(operationID))
         this.runtime.terminalRetainedVerificationCleanupChecks.delete(operationID)
     const checkedAt = this.runtime.now()
+    // An operation is checked again when its own record moved (progress, a new state) or the
+    // fallback interval passed: the worktree inventory cannot be observed without asking, so a
+    // stuck cleanup is retried on that interval rather than on every tick.
     const operations = terminalOperations.filter((operation) => {
-      if (!this.terminalRetainedVerificationCleanupRecordedComplete(operation)) return true
       const previous = this.runtime.terminalRetainedVerificationCleanupChecks.get(operation.id)
       if (!previous || previous.updatedAt !== operation.updatedAt) return true
       const elapsed = checkedAt - previous.checkedAt
@@ -1898,16 +1900,10 @@ export class RetainedVerificationExecution {
   /** With no worktree inventory to judge by, remember already-clean operations so they are not rechecked at once. */
   private deferTerminalCleanupChecks(operations: RetainedVerification[], checkedAt: number) {
     for (const operation of operations) {
-      const current = this.runtime.store.atomic((db) => retainedVerification(db, operation.id))
-      if (
-        current &&
-        current.updatedAt === operation.updatedAt &&
-        this.terminalRetainedVerificationCleanupRecordedComplete(current)
-      )
-        this.runtime.terminalRetainedVerificationCleanupChecks.set(operation.id, {
-          updatedAt: current.updatedAt,
-          checkedAt,
-        })
+      this.runtime.terminalRetainedVerificationCleanupChecks.set(operation.id, {
+        updatedAt: operation.updatedAt,
+        checkedAt,
+      })
     }
   }
 
@@ -1956,6 +1952,13 @@ export class RetainedVerificationExecution {
       isTerminalRetainedState(current.state) &&
       this.terminalRetainedVerificationCleanupRecordedComplete(current)
     )
+      this.runtime.terminalRetainedVerificationCleanupChecks.set(current.id, {
+        updatedAt: current.updatedAt,
+        checkedAt: this.runtime.now(),
+      })
+    else if (current && operationFacts(current) === operationFacts(original))
+      // Not done, and the pass changed nothing but the stamp its own attempt writes: wait for
+      // the fallback interval. A pass that moved any fact runs again on the next tick.
       this.runtime.terminalRetainedVerificationCleanupChecks.set(current.id, {
         updatedAt: current.updatedAt,
         checkedAt: this.runtime.now(),
@@ -2398,4 +2401,10 @@ export class RetainedVerificationExecution {
     }
     await this.acceptRetainedCandidate(operation, workspace, receipts, fence)
   }
+}
+
+/** The facts of a retained verification other than the stamp every cleanup attempt rewrites. */
+function operationFacts(operation: RetainedVerification) {
+  const { updatedAt: _updatedAt, ...facts } = operation
+  return JSON.stringify(facts)
 }
