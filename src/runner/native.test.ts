@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { assertHostListQuery } from "../../test/host-list-fake.ts"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -1443,6 +1443,37 @@ test("live idle check counts only running shells whose cwd is inside the worktre
   expect((await fixture.host.session("ses_worker"))?.runningShells).toBe(2)
 })
 
+test("a running shell's output time is its output file's last write, else its start", async () => {
+  const directory = "/project/.worktrees/attempt"
+  const dir = mkdtempSync(join(tmpdir(), "lazers-shell-output-"))
+  try {
+    const file = join(dir, "sh_live.out")
+    writeFileSync(file, "line\n")
+    const written = Date.now() - 60_000
+    utimesSync(file, written / 1000, written / 1000)
+    const fixture = nativeLivenessFixture({
+      idle: DateTime.nowUnsafe(),
+      directory,
+      shells: [
+        { id: "live", status: "running", cwd: directory, file, time: { started: 1 } },
+        {
+          id: "lost",
+          status: "running",
+          cwd: directory,
+          file: join(dir, "gone"),
+          time: { started: 2 },
+        },
+        { id: "done", status: "exited", cwd: directory, file, time: { started: 3, completed: 4 } },
+      ],
+    })
+    const session = await fixture.host.session("ses_worker")
+    expect(session?.runningShells).toBe(2)
+    expect(Math.abs(session!.shellOutputAt! - written)).toBeLessThan(1_000)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("live idle check counts active descendants of the worker but not unrelated sessions", async () => {
   const fixture = nativeLivenessFixture({
     idle: DateTime.nowUnsafe(),
@@ -1516,6 +1547,35 @@ test("a current failed idle marker completes an input that never received an ass
       },
     })
   }
+})
+
+// Live LZ-216: the host interrupted a turn held by a shell tool call. It completed the assistant
+// message with finish "error" and wrote an interrupted idle marker; the adapter called the turn
+// completed, so every automatic resume was refused as a lineage mismatch.
+test("an interrupted idle marker after a completed, errored reply makes the turn interrupted", async () => {
+  const idle = DateTime.nowUnsafe()
+  const idleMillis = DateTime.toEpochMillis(idle)
+  const fixture = nativeLivenessFixture({
+    busy: DateTime.makeUnsafe(idleMillis - 9_000_000),
+    idle,
+    outcome: "interrupted",
+    messages: [
+      { id: "msg_assigned", type: "user", time: { created: idleMillis - 9_000_000 } },
+      {
+        id: "msg_shell",
+        type: "assistant",
+        time: { created: idleMillis - 7_000_000, completed: idleMillis - 1 },
+        finish: "error",
+        content: [{ type: "tool", state: { status: "error" } }],
+      },
+      { id: "msg_idle", type: "idle", outcome: "interrupted", time: { created: idleMillis } },
+    ],
+  })
+  expect(await fixture.host.session("ses_worker", { messages: true })).toMatchObject({
+    busy: false,
+    outcome: "interrupted",
+    turn: { inputID: "msg_assigned", state: "interrupted" },
+  })
 })
 
 test("orphaned busy timestamps and unfinished latest assistant override historical success", async () => {

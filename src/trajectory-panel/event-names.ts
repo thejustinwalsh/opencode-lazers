@@ -186,6 +186,8 @@ export const runnerTransitions: Record<string, string> = {
   VERIFICATION_RESUMED: "Checks resumed",
   VERIFY: "Checking",
   WORKER_APPROVAL_WAIT: "Worker waiting for approval",
+  WORKER_AUTO_RESUME_ATTEMPTED: "Automatic worker resume attempted",
+  WORKER_AUTO_RESUME_REFUSED: "Automatic worker resume refused",
   WORKER_AUTO_RESUMED: "Worker resumed automatically",
   WORKER_RESUME_ADOPTED: "Resume adopted the running worker",
   WORKER_BACKGROUND_WAIT: "Worker waiting on background work",
