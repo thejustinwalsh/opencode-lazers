@@ -1,5 +1,6 @@
 import { joinNativeEvents } from "../core/event-hub.ts"
 import { LruMap, SESSION_MEMO_ENTRIES } from "../core/process-shared.ts"
+import { parkQueueEntry, QueueRetryTimer } from "../core/queue-retry.ts"
 import { databaseChanges } from "../database-events.ts"
 import { startProjection, type ProjectionLease } from "../projections/owner.ts"
 import { TaskRepository } from "../storage.ts"
@@ -109,8 +110,6 @@ export function hostSessionHint(event: unknown): Hint | undefined {
   }
 }
 
-const BACKOFF_FIRST_MS = 1000
-const BACKOFF_CEILING_MS = 5 * 60_000
 /** Queue entries per read of the queue: a unit of work, the rest wait for the next read. */
 const DRAIN_BATCH = 20
 /** Stored live rows per resync page, an id scan of one index range. */
@@ -127,7 +126,7 @@ export class HostSessionFold {
   private draining: Promise<void> | undefined
   private resyncing: Promise<void> | undefined
   private resyncAgain = false
-  private retryTimer: ReturnType<typeof setTimeout> | undefined
+  private readonly retry: QueueRetryTimer
   private unsubscribe: (() => void) | undefined
   /** When the newest read of each session began: an event created before it is already read. */
   private readonly readAt = new LruMap<string, number>(SESSION_MEMO_ENTRIES)
@@ -152,6 +151,9 @@ export class HostSessionFold {
   ) {
     this.range = hostSessionRefRange(repository.projectDirectory)
     this.now = options.now ?? Date.now
+    this.retry = new QueueRetryTimer(repository, HOST_SESSION_QUEUE, this.range, this.now, () => {
+      void this.drain()
+    })
   }
 
   private get project() {
@@ -189,7 +191,7 @@ export class HostSessionFold {
 
   /** True when the fold holds no timer and runs nothing. */
   idle(): boolean {
-    return !this.retryTimer && !this.draining && !this.resyncing
+    return !this.retry.pending && !this.draining && !this.resyncing
   }
 
   /**
@@ -286,7 +288,7 @@ export class HostSessionFold {
           // The database is busy or failing: the work stays queued for the next change or retry.
           this.options.onError?.(error)
         }
-        this.scheduleRetry()
+        if (!this.closed) this.retry.schedule()
       }
     })().finally(() => {
       this.draining = undefined
@@ -342,53 +344,13 @@ export class HostSessionFold {
       this.readAt.delete(sessionID)
       this.observedAt.delete(sessionID)
       if (observe) this.observe.add(sessionID)
-      const message = error instanceof Error ? error.message : String(error)
       this.options.onError?.(error)
       try {
-        this.repository.atomic((db) =>
-          db
-            .query(`UPDATE ${HOST_SESSION_QUEUE} SET attempts=?,error=?,next_at=? WHERE ref=?`)
-            .run(
-              attempts + 1,
-              message.slice(0, 500),
-              this.now() + Math.min(BACKOFF_FIRST_MS * 2 ** attempts, BACKOFF_CEILING_MS),
-              ref,
-            ),
-        )
+        parkQueueEntry(this.repository, HOST_SESSION_QUEUE, { ref, attempts }, error, this.now())
       } catch {
         // Still queued and due: the next drain retries it.
       }
     }
-  }
-
-  /** One timer, only while an entry of this project is parked; it fires at the earliest backoff. */
-  private scheduleRetry() {
-    clearTimeout(this.retryTimer)
-    this.retryTimer = undefined
-    if (this.closed) return
-    const [low, high] = this.range
-    let at: number | null | undefined
-    try {
-      at = this.repository.read(
-        (db) =>
-          db
-            .query<{ at: number | null }, [string, string, number]>(
-              `SELECT MIN(next_at) AS at FROM ${HOST_SESSION_QUEUE} WHERE ref>=? AND ref<? AND next_at>?`,
-            )
-            .get(low, high, this.now())?.at,
-      )
-    } catch {
-      return
-    }
-    if (at === null || at === undefined) return
-    this.retryTimer = setTimeout(
-      () => {
-        this.retryTimer = undefined
-        void this.drain()
-      },
-      Math.max(0, at - this.now()),
-    )
-    this.retryTimer.unref?.()
   }
 
   /** Resync and drain until nothing is due: for tests and tools that must wait. */
@@ -401,8 +363,7 @@ export class HostSessionFold {
 
   close(): void {
     this.closed = true
-    clearTimeout(this.retryTimer)
-    this.retryTimer = undefined
+    this.retry.clear()
     this.unsubscribe?.()
   }
 }
