@@ -1,3 +1,4 @@
+import { AuditHistory } from "../../audit/history.ts"
 import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
 import { drainTaskSchedule, retryParked } from "./drain.ts"
@@ -185,6 +186,7 @@ test("triggers queue the owner of each changed row, and only for relevant column
 test("every source table has its triggers", () => {
   const f = open()
   new HandoffStore(f.repository)
+  new AuditHistory(f.repository)
   const present = new Set(
     rows<{ name: string }>(
       f,

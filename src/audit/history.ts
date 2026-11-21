@@ -1,3 +1,4 @@
+import { installScheduleTriggers } from "../tasks/schedule/schema.ts"
 import { canonical } from "../identity.ts"
 import { existsSync, realpathSync, statSync } from "node:fs"
 import type { Database } from "bun:sqlite"
@@ -350,6 +351,8 @@ export class AuditHistory {
       const columns = db.query<{ name: string }, []>("PRAGMA table_info(audit_sections)").all()
       if (!columns.some((column) => column.name === "raw_file"))
         db.exec("ALTER TABLE audit_sections ADD COLUMN raw_file INTEGER NOT NULL DEFAULT 0")
+      // The schedule projection queues a task when its audit runs change.
+      installScheduleTriggers(db)
     })
   }
   /** True until a `compact` call finds nothing left to move; sections stored now never need it. */
@@ -832,13 +835,16 @@ export class AuditHistory {
 }
 
 export function taskAuditHistory(repository: TaskRepository, taskID: string) {
-  return repository.atomic((db) => {
-    if (!db.query("SELECT name FROM sqlite_master WHERE name='audit_runs'").get()) return undefined
-    const row = db
-      .query<{ count: number; latestRunID: string | null }, [string, string, string, string]>(
-        `SELECT COUNT(*) AS count,(SELECT id FROM audit_runs WHERE project_directory=? AND task_id=? ORDER BY started_at DESC,rowid DESC LIMIT 1) AS latestRunID FROM audit_runs WHERE project_directory=? AND task_id=?`,
-      )
-      .get(repository.projectDirectory, taskID, repository.projectDirectory, taskID)
-    return row?.count ? { runCount: row.count, latestRunID: row.latestRunID } : undefined
-  })
+  return repository.atomic((db) => auditHistoryIn(db, repository.projectDirectory, taskID))
+}
+
+/** A task's audit runs as the detail shows them: the count and the newest run, or none. */
+export function auditHistoryIn(db: Database, projectDirectory: string, taskID: string) {
+  if (!db.query("SELECT name FROM sqlite_master WHERE name='audit_runs'").get()) return undefined
+  const row = db
+    .query<{ count: number; latestRunID: string | null }, [string, string, string, string]>(
+      `SELECT COUNT(*) AS count,(SELECT id FROM audit_runs WHERE project_directory=? AND task_id=? ORDER BY started_at DESC,rowid DESC LIMIT 1) AS latestRunID FROM audit_runs WHERE project_directory=? AND task_id=?`,
+    )
+    .get(projectDirectory, taskID, projectDirectory, taskID)
+  return row?.count ? { runCount: row.count, latestRunID: row.latestRunID } : undefined
 }
