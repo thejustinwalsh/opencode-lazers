@@ -5,6 +5,7 @@ import { budgetFromEnv, sharedByteLru } from "./byte-lru.ts"
 import type { SharedConnection } from "../storage.ts"
 import {
   ENDPOINT_PRICING_PRODUCTS,
+  aggregateEndpointState,
   EndpointPricingProductIDSchema,
   EndpointPricingReadSchema,
   EndpointPricingScenarioSchema,
@@ -628,17 +629,7 @@ export class ModelEvidenceStore {
       )
     })
     const states = scenarios.map(({ state }) => state)
-    const state: EndpointPricingRead["state"] = states.every((value) => value === "never")
-      ? "never"
-      : states.some((value) => value === "refreshing")
-        ? "refreshing"
-        : states.every((value) => value === "succeeded")
-          ? "succeeded"
-          : states.every((value) => value === "cancelled")
-            ? "cancelled"
-            : states.every((value) => value === "failed")
-              ? "failed"
-              : "partial"
+    const state = aggregateEndpointState(states)
     return EndpointPricingReadSchema.parse({
       state,
       generation: Math.max(...scenarios.map(({ generation }) => generation)),
