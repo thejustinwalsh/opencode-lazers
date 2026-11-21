@@ -1124,7 +1124,7 @@ export class TaskRuntime {
         this.sources.reconcileArchitectSources(fence),
       )
       const retainedOperations = section("tick:activeRetained", () =>
-        this.store.atomic((db) => activeRetainedVerifications(db, this.directory)),
+        this.store.read((db) => activeRetainedVerifications(db, this.directory)),
       )
       for (const operation of retainedOperations) {
         if (this.retainedVerificationRuns.has(operation.id)) continue
@@ -1221,7 +1221,7 @@ export class TaskRuntime {
           // A live retained verification owns the stopped plan until it records pass or fail.
           if (
             plan.state !== "cancelling" &&
-            this.store.atomic((db) => activeRetainedVerifications(db, this.directory, plan.id))
+            this.store.read((db) => activeRetainedVerifications(db, this.directory, plan.id))
               .length > 0
           )
             return

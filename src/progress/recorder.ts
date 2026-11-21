@@ -1638,7 +1638,7 @@ export class ProgressRecorder {
    */
   assignments(): ProgressAssignment[] {
     const directory = this.store.repository.projectDirectory
-    return this.store.atomic((db) => {
+    return this.store.read((db) => {
       const stamp = observationRevisionStamp(db, directory)
       return [
         ...this.assignmentGate.runSync(`assignments:${directory}`, stamp, () =>

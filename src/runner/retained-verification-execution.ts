@@ -1859,7 +1859,7 @@ export class RetainedVerificationExecution {
 
   async reconcileTerminalRetainedVerifications(fence: number): Promise<void> {
     const terminalOperations = this.runtime.store
-      .atomic((db) => retainedVerificationsForProject(db, this.runtime.directory))
+      .read((db) => retainedVerificationsForProject(db, this.runtime.directory))
       .filter((operation) => isTerminalRetainedState(operation.state))
     const terminalIDs = new Set(terminalOperations.map((operation) => operation.id))
     for (const operationID of this.runtime.terminalRetainedVerificationCleanupChecks.keys())

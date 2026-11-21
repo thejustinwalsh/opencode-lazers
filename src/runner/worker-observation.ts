@@ -227,7 +227,7 @@ export class WorkerObservation {
   }
 
   private reconcileRequestID(planID: string) {
-    return this.store.atomic(
+    return this.store.read(
       (db) =>
         db
           .query<{ id: number }, [string]>(
