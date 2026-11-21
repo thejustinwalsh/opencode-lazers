@@ -59,6 +59,8 @@ export function setStorageTiming(on: boolean) {
 
 /** Storage entry points whose own frame may sit between `timeStorage` and the caller. */
 const WRAPPERS = /^(read|atomic|atomicAsync|retryBusy)\d*$/
+/** The stall probe's timing wrappers: they call the caller's code, so they are never the site. */
+const PROBE_WRAPPERS = /^(section|sectionAsync|sectionEffect|timed)\d*$/
 const FRAME = /^at (?:async )?(?:(.*?) \()?([^()]+?):(\d+):\d+\)?$/
 
 /**
@@ -79,6 +81,11 @@ function callSite(): string {
   let index = 2
   const method = frames[index]?.[1]?.split(".").pop()
   if (method !== undefined && WRAPPERS.test(method)) index++
+  while (true) {
+    const probe = frames[index]?.[1]?.split(".").pop()
+    if (probe === undefined || !PROBE_WRAPPERS.test(probe)) break
+    index++
+  }
   const match = frames[index]
   if (!match) return "(unknown)"
   const [, name, file, line] = match
