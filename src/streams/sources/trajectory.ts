@@ -82,6 +82,8 @@ const EVENTS = `(${[
       route_provider: "route_provider",
       route_model: "route_model",
       route_variant: "route_variant",
+      started_at: "started_at",
+      ended_at: "ended_at",
       detail: "detail",
       project_directory: "project_directory",
       task_id: "task_id",

@@ -131,17 +131,30 @@ test("the schedule row's concern carries the stored recommendation onto the atte
   expect(concernFromSchedule({ concern: null })).toBeUndefined()
 })
 
-test("a check row is a point; its detail adds the stored interval", () => {
-  const row = { ...base, ref: "tr:3", kind: "check", event: "tests", status: "passed", at: 40 }
+test("a check row carries its receipt interval, so the timeline draws it unselected", () => {
+  const row = {
+    ...base,
+    ref: "ef:3",
+    kind: "check",
+    event: "tests",
+    status: "passed",
+    to_state: "completed",
+    at: 40,
+    started_at: 30,
+    ended_at: 40,
+  }
   expect(checkFromRow(row)).toMatchObject({
     id: "tests",
     scope: "attempt",
+    state: "completed",
     result: "passed",
-    startedAt: null,
+    startedAt: 30,
     endedAt: 40,
   })
+  // A receipt without an end keeps it unknown, as the old read did; the event time is not used.
+  expect(checkFromRow({ ...row, ended_at: null })).toMatchObject({ startedAt: 30, endedAt: null })
   const detail = {
-    event: { id: "tr:3", kind: "verification" },
+    event: { id: "ef:3", kind: "verification" },
     check: { startedAt: 30, endedAt: 40, command: "bun test" },
   }
   expect(checkFromDetail(detail)).toMatchObject({ startedAt: 30, command: "bun test" })

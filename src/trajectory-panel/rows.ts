@@ -118,25 +118,22 @@ export function checkFromDetail(detail: unknown): Partial<TrajectoryCheck> | und
   return parsed.success ? parsed.data : undefined
 }
 
-/**
- * One `check` row. The list row knows when the result was recorded, not when the check began, so
- * its interval is the recorded instant; the selected check's detail adds the stored interval.
- */
+/** One `check` row, with the receipt interval the list row carries (`started_at`, `ended_at`). */
 export function checkFromRow(row: Raw): TrajectoryCheck & { planID: string; ref: string } {
   const status = text(row.status)
-  const at = num(row.at) ?? null
   return {
     ref: String(row.ref),
     planID: text(row.plan_id) ?? "",
     id: text(row.event) ?? String(row.ref),
     scope: text(row.attempt_id) ? "attempt" : "plan",
     attemptID: text(row.attempt_id) ?? null,
-    state: status ?? "",
+    state: text(row.to_state) ?? status ?? "",
     result: status === "passed" || status === "failed" ? status : "unknown",
     command: null,
-    startedAt: null,
-    endedAt: at,
-    timingBasis: "Check result event time; the start is in the check's detail",
+    startedAt: num(row.started_at) ?? null,
+    endedAt: num(row.ended_at) ?? null,
+    timingBasis:
+      "Verification receipt check.startedAt/check.endedAt; absent endpoints remain unknown",
     exitCode: null,
     timedOut: null,
     unchanged: null,

@@ -26,7 +26,8 @@ import { drainTaskEvents, TASK_EVENTS } from "./task-events-refresh.ts"
  * trajectory read shows it) or `pg:<seq>` (a progress row of one of the task's attempts). A queue `ref` is the origin without the `@<task>` part. `at` is the
  * event time the trajectory read sorts by; NULL when the source has none (an effect with no
  * attempt and no check timing), which that read sorts last. `detail` is the trajectory event (and,
- * for a check, its check view) as JSON: cold, read only at `window: 1`. `payload` is a transition's
+ * for a check, its check view) as JSON: cold, read only at `window: 1`. `started_at`/`ended_at` are a
+ * check's receipt interval (`check.startedAt`/`check.endedAt`), so a list draws it unselected. `payload` is a transition's
  * own `runner_transitions.payload`, byte for byte (the Tasks activity and `lz-get-task` show it);
  * NULL for every other kind.
  */
@@ -40,6 +41,7 @@ const TABLES_SQL = `
     attempt_id TEXT, session_id TEXT,
     at REAL,
     sort_at REAL NOT NULL, sort_key TEXT NOT NULL,
+    started_at REAL, ended_at REAL,
     kind TEXT NOT NULL,
     origin TEXT NOT NULL UNIQUE,
     event TEXT, from_state TEXT, to_state TEXT, status TEXT, tool TEXT, title TEXT,

@@ -326,6 +326,53 @@ test("timeline parity: the stream walked by windows equals the old read's order,
   expect(JSON.stringify(full)).not.toContain("PRIVATE")
 })
 
+test("check intervals: every check row carries the old read's receipt interval, unselected", async () => {
+  const report = await inspectTrajectory(
+    made.store,
+    made.host,
+    "project",
+    InspectTrajectoryInput.parse({ taskID }),
+    cursorSecret,
+    { allEvents: true },
+  )
+  const old = [
+    ...report.plans.flatMap((plan) => plan.checks),
+    ...report.attempts.flatMap((attempt) => attempt.checks),
+  ]
+  const key = (check: {
+    id: unknown
+    attemptID: unknown
+    startedAt: unknown
+    endedAt: unknown
+    state: unknown
+    result: unknown
+  }) =>
+    JSON.stringify([
+      check.id,
+      check.attemptID,
+      check.startedAt,
+      check.endedAt,
+      check.state,
+      check.result,
+    ])
+  // The list columns alone, as the panel's every-check stream reads them (no window-1 detail).
+  const listed = (await events({ kinds: ["check"] })).map((row) =>
+    key({
+      id: row.event,
+      attemptID: row.attempt_id,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      state: row.to_state,
+      result: row.status,
+    }),
+  )
+  expect(listed.length).toBe(3)
+  expect(listed.toSorted()).toEqual([...new Set(old.map(key))].toSorted())
+  expect(listed.every((row) => JSON.parse(row)[2] !== null && JSON.parse(row)[3] !== null)).toBe(
+    true,
+  )
+})
+
 test("documented differences from the old read", async () => {
   const old = new Map((await oldEvents()).map((event) => [String(event.id), event]))
   const full = new Map((await events()).map((row) => [String(row.sort_key), row]))
