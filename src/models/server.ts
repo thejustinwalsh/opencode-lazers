@@ -40,12 +40,8 @@ import {
   MODELS_DECISION_CONTRACT_VERSION,
   ModelDecisionReadInputSchema,
   ModelsDecision,
-  ModelDecisionInspectOutputSchema,
-  ModelDecisionInspectRPCInputSchema,
   ModelDecisionOverviewAllOutputSchema,
   ModelDecisionOverviewAllRPCInputSchema,
-  ModelDecisionOverviewOutputSchema,
-  ModelDecisionOverviewRPCInputSchema,
   ModelDecisionRowsAllOutputSchema,
   ModelDecisionRowsAllRPCInputSchema,
 } from "./decision-contract.ts"
@@ -196,26 +192,6 @@ function createModelsPriceIndexReader(
       store.close()
     }
   }
-}
-
-async function authorizeDecisionRead(
-  ctx: ModelsContext,
-  request: { scope: { projectDirectory: string }; sessionID: string },
-  projectDirectory: string,
-  projectID: string,
-  signal: AbortSignal,
-) {
-  if (request.scope.projectDirectory !== projectDirectory)
-    throw new Error("Models scope is unavailable")
-  await authorizeModels(
-    ctx,
-    request.sessionID,
-    projectID,
-    "lz-read-model-decision",
-    [projectDirectory],
-    signal,
-  )
-  signal.throwIfAborted()
 }
 
 /** Read-only Models-owned task valuation provider using the same configured cached price path. */
@@ -631,24 +607,6 @@ export function registerModelsServer(
     })
 
     yield* timedRpc(ctx.rpc).register(ModelsDecision, {
-      overview: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionOverviewRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.overview(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionOverviewOutputSchema.parse(output)
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
       overviewAll: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -702,29 +660,6 @@ export function registerModelsServer(
               unit: request.unit,
               rows,
             })
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      inspect: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionInspectRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.inspect(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                configurationID: request.configurationID,
-                selectedTaskID: request.selectedTaskID,
-                contributorCursor: request.contributorCursor,
-                contributorLimit: request.contributorLimit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionInspectOutputSchema.parse(output)
           },
           catch: failure,
         }).pipe(Effect.orDie),

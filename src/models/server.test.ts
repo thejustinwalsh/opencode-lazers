@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
-import { Effect, Schema } from "effect"
+import { Effect, Exit, Schema, Scope } from "effect"
 import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -16,11 +16,21 @@ import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import { ModelPriceSourceSettingsSchema } from "./price-source-settings.ts"
-import { registerModelsServer } from "./server.ts"
+import { authorizeModels, registerModelsServer } from "./server.ts"
+import { readerPool } from "../streams/pool.ts"
+import { openStream } from "../streams/client.ts"
+import type { StreamContext } from "../streams/source.ts"
+import {
+  modelContributorsSource,
+  modelPointsSource,
+  modelViewSource,
+} from "../streams/sources/models.ts"
+import type { ModelPointsFilter, ModelViewFilter } from "../streams/sources/models-ref.ts"
+import type { DecisionInspectionFacts } from "./decision-read.ts"
 import { modelAssignmentsSource } from "../streams/sources/models.ts"
 import { assignmentSettingsOf, type AssignmentLayerRow } from "./assignment-settings.ts"
 import { ensureModelAssignmentViewSchema } from "./assignment-view.ts"
-import type { ModelDecisionInspect, ModelDecisionOverview } from "./decision-contract.ts"
+import type { ModelDecisionContributor, ModelDecisionOverview } from "./decision-contract.ts"
 import {
   createModelsManagedUsagePriceProvider,
   createModelsTaskValuationProvider,
@@ -30,11 +40,8 @@ import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
 import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint-pricing.ts"
 import {
-  ModelDecisionInspectOutputSchema,
   ModelDecisionOverviewAllOutputSchema,
-  ModelDecisionOverviewOutputSchema,
   ModelDecisionRowsAllOutputSchema,
-  ModelDecisionRowsOutputSchema,
 } from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
 import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
@@ -50,17 +57,11 @@ type ModelRPC = {
   priceSources(input: unknown): Effect.Effect<unknown, unknown>
   configurePriceSources(input: unknown): Effect.Effect<unknown, unknown>
   refreshSources(input: unknown): Effect.Effect<unknown, unknown>
-  overview(input: unknown): Effect.Effect<unknown, unknown>
-  /** Test-side: every configuration's row, from the overview and each inspection. */
-  rows(input: unknown): Effect.Effect<unknown, unknown>
-  configurations(input: unknown): Effect.Effect<unknown, unknown>
-  inspect(input: unknown): Effect.Effect<unknown, unknown>
 }
 
 /**
- * The reads the Models panel takes from streams now, rebuilt for these registration tests from
- * what the service still serves: settings are the assignments stream's composition of the stored
- * layer rows, and a configuration's row is its inspection's facts, in the overview's order.
+ * The settings read the Models panel takes from a stream now, rebuilt for these registration
+ * tests: the assignments stream's composition of the stored layer rows.
  */
 function withStreamedReads(methods: ModelRPC, repository: TaskRepository): ModelRPC {
   const { path, projectDirectory: directory } = repository
@@ -88,52 +89,7 @@ function withStreamedReads(methods: ModelRPC, repository: TaskRepository): Model
         reader.close()
       }
     })
-  const rows = (input: unknown) =>
-    Effect.promise(async () => {
-      const {
-        limit: _limit,
-        cursor: _cursor,
-        snapshotID,
-        ...read
-      } = input as Record<string, unknown>
-      const overview = (await Effect.runPromise(methods.overview(read))) as ModelDecisionOverview
-      const pinned = (snapshotID as string | undefined) ?? overview.context.snapshotID
-      const found = []
-      for (const reference of overview.graph.referenceEstimates ?? []) {
-        const inspected = (await Effect.runPromise(
-          methods.inspect({
-            ...read,
-            snapshotID: pinned,
-            configurationID: reference.configurationID,
-            selectedTaskID: null,
-            contributorLimit: 1,
-          }),
-        )) as Extract<ModelDecisionInspect, { status: "found" }>
-        if (inspected.status !== "found") continue
-        found.push({
-          configuration: inspected.configuration,
-          cohort: inspected.cohort,
-          efficiency: inspected.efficiency,
-          nativeReportedCost: inspected.nativeReportedCost,
-          ...(inspected.referenceEstimate
-            ? { referenceEstimate: inspected.referenceEstimate }
-            : {}),
-        })
-      }
-      return { context: overview.context, rows: found, totalCount: found.length, nextCursor: null }
-    })
-  return {
-    ...methods,
-    settings,
-    rows,
-    configurations: (input) =>
-      Effect.map(rows(input), (page) => ({
-        context: page.context,
-        configurations: page.rows.map((row) => row.configuration),
-        totalCount: page.totalCount,
-        nextCursor: null,
-      })),
-  }
+  return { ...methods, settings }
 }
 type NativeSession = {
   id: string
@@ -232,10 +188,6 @@ function modelContext(options: {
     priceSources: () => Effect.die(new Error("RPC not registered")),
     configurePriceSources: () => Effect.die(new Error("RPC not registered")),
     refreshSources: () => Effect.die(new Error("RPC not registered")),
-    overview: () => Effect.die(new Error("RPC not registered")),
-    rows: () => Effect.die(new Error("RPC not registered")),
-    configurations: () => Effect.die(new Error("RPC not registered")),
-    inspect: () => Effect.die(new Error("RPC not registered")),
   }
   let registered: ModelRPC | undefined
   const rpc = {
@@ -343,39 +295,158 @@ async function register(
   options: Parameters<typeof modelContext>[0] & {
     fetcher?: ModelEvidenceFetcher
     evidenceReadStoreFactory?: Parameters<typeof registerModelsServer>[3]
+    /** Keep the registration open (decision views build and are opened through it) until `close`. */
+    live?: boolean
   } = {},
 ) {
   const native = modelContext(options)
   const { tools, editor } = registeredEditor()
+  const scope = options.live ? await Effect.runPromise(Scope.make()) : undefined
+  const registration = Effect.gen(function* () {
+    yield* registerModelsServer(
+      native.context as never,
+      repository,
+      options.fetcher,
+      options.evidenceReadStoreFactory,
+    )
+    yield* registerModelTools(
+      {
+        permission: native.context.permission,
+        tool: {
+          transform: (callback: (editor: ToolEditor) => void) =>
+            Effect.sync(() => {
+              callback(editor)
+              return { dispose: Effect.void }
+            }),
+        },
+      } as never,
+      repository,
+    )
+  })
   await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* registerModelsServer(
-          native.context as never,
-          repository,
-          options.fetcher,
-          options.evidenceReadStoreFactory,
-        )
-        yield* registerModelTools(
-          {
-            permission: native.context.permission,
-            tool: {
-              transform: (callback: (editor: ToolEditor) => void) =>
-                Effect.sync(() => {
-                  callback(editor)
-                  return { dispose: Effect.void }
-                }),
-            },
-          } as never,
-          repository,
-        )
-      }),
-    ),
+    scope ? registration.pipe(Scope.provide(scope)) : Effect.scoped(registration),
   )
   return {
     ...native,
     tools,
     methods: () => withStreamedReads(native.methods() as unknown as ModelRPC, repository),
+    close: () => (scope ? Effect.runPromise(Scope.close(scope, Exit.void)) : Promise.resolve()),
+  }
+}
+
+const ALL_FILTERS = { persona: null, taskKind: null, period: { from: null, to: null } } as const
+
+/**
+ * The stored decision view, read the way the Models panel reads it: each source's `authorize`
+ * (the session and the RPC's own permission, through the registered context) opens the view, the
+ * decision worker builds it, and the rows are walked through a reader pool. The view is rebuilt
+ * on open; `read(after)` waits for a snapshot other than `after`.
+ */
+function decisionStreams(
+  harness: { context: unknown },
+  path: string,
+  options: { directory?: string; view?: ModelViewFilter["view"] } = {},
+) {
+  const directory = options.directory ?? projectDirectory
+  const pool = readerPool(path, { workers: 1 })
+  const sql = new Database(path, { readonly: true, strict: true })
+  const releases: Array<() => void> = []
+  const context: StreamContext = {
+    projectID,
+    projectDirectory: directory,
+    projectIds: (id) => [id],
+    assertRead: async () => {},
+    assertAction: async (sessionID, action) => {
+      await authorizeModels(
+        harness.context as never,
+        sessionID,
+        projectID,
+        action,
+        [directory],
+        new AbortController().signal,
+      )
+    },
+  }
+  const request = (projectDirectoryInput = directory): ModelPointsFilter => ({
+    projectDirectory: projectDirectoryInput,
+    sessionID: "ses-native",
+    view: options.view ?? { filters: ALL_FILTERS },
+  })
+  const walk = async (
+    source: { columns: Record<string, unknown>; detail?: Record<string, unknown> },
+    filter: unknown,
+    order: string,
+    window: number,
+  ) => {
+    const stream = openStream(pool, source as never, { filter, order, window, transport: "copy" })
+    try {
+      await stream.ready()
+      const seen = new Map<number, Record<string, unknown>>()
+      const take = () => {
+        for (const row of stream.items as Record<string, unknown>[]) seen.set(row.id as number, row)
+      }
+      take()
+      while (stream.after !== 0) {
+        await stream.slide(window)
+        take()
+      }
+      return [...seen.values()]
+    } finally {
+      stream.close()
+    }
+  }
+  const settle = async (viewID: number, after: string | null) => {
+    const deadline = Date.now() + 60_000
+    for (;;) {
+      const row = sql
+        .query<{ state: string; snapshot_id: string | null; last_error: string | null }, [number]>(
+          "SELECT state,snapshot_id,last_error FROM model_decision_views WHERE id=?",
+        )
+        .get(viewID)
+      if (row?.state === "ready" && row.snapshot_id !== after) return
+      if (Date.now() > deadline)
+        throw new Error(`The decision view did not build: ${row?.last_error ?? row?.state}`)
+      await Bun.sleep(20)
+    }
+  }
+  return {
+    /** Authorize and open the view through the points source; the build starts. */
+    authorize: async (input = request()) => {
+      const scoped = await modelPointsSource.authorize!(input, context)
+      releases.push(() => modelPointsSource.release!(scoped))
+      return scoped
+    },
+    /** The view once built (a snapshot other than `after`): its context and every configuration. */
+    async read(after: string | null = null) {
+      const scoped = await this.authorize()
+      await settle(scoped.viewID!, after)
+      const [view] = await walk(modelViewSource, scoped, "key", 1)
+      const rows = await walk(modelPointsSource, scoped, "chart", 100)
+      const viewContext = view!.context as ModelDecisionOverview["context"]
+      return {
+        scoped,
+        context: viewContext,
+        counts: view!.counts as { configurationCount: number; groupCount: number },
+        rows,
+        /** The stored inspection facts of each configuration, in the chart's order. */
+        points: rows.map((row) => row.inspection as DecisionInspectionFacts),
+        find: (configurationID: string) =>
+          rows
+            .map((row) => row.inspection as DecisionInspectionFacts)
+            .find((facts) => facts.configuration.configurationID === configurationID),
+      }
+    },
+    /** One configuration's contributors in the inspection's order. */
+    async contributors(scoped: ModelPointsFilter, configurationID: string) {
+      const filter = { ...scoped, configurationID }
+      const rows = await walk(modelContributorsSource, filter, "inspection", 100)
+      return rows.map((row) => row.detail as ModelDecisionContributor)
+    },
+    close: async () => {
+      for (const release of releases) release()
+      await pool.close()
+      sql.close()
+    },
   }
 }
 
@@ -641,53 +712,6 @@ function rewriteAttemptForMarket(
   } finally {
     db.close()
   }
-}
-
-function saveLunaEndpointSnapshot(
-  store: ModelEvidenceStore,
-  projectDirectory: string,
-  generation: number,
-  rates: { prompt: string; overridePrompt: string } = {
-    prompt: "0.0000001",
-    overridePrompt: "0.0000002",
-  },
-) {
-  const productID = "openai/gpt-6-luna" as const
-  const product = ENDPOINT_PRICING_PRODUCTS.find((item) => item.productID === productID)!
-  const record = EndpointPricingRecordSchema.parse({
-    productID,
-    name: "OpenAI GPT-6 Luna",
-    providerName: "OpenAI",
-    tag: "openai",
-    serviceTier: null,
-    pricing: {
-      unit: "USD per token",
-      prompt: rates.prompt,
-      completion: "0.0000005",
-      inputCacheRead: "0.00000001",
-      inputCacheWrite: "0.000000125",
-      overrides: [
-        {
-          minPromptTokens: 272_000,
-          prompt: rates.overridePrompt,
-          completion: "0.00000075",
-          inputCacheRead: "0.00000002",
-          inputCacheWrite: "0.00000025",
-        },
-      ],
-    },
-    cacheWriteDocumentation: null,
-  })
-  store.saveEndpointPricingSnapshot({
-    snapshotID: crypto.randomUUID(),
-    projectDirectory,
-    productID,
-    generation,
-    retrievedAt: new Date(Date.now() + generation).toISOString(),
-    sourceURL: product.sourceURL,
-    httpStatus: 200,
-    records: [record],
-  })
 }
 
 function writeCapturedAnthropicAliasEvidence(path: string) {
@@ -1284,6 +1308,7 @@ test("registered price reads use the recorded native catalog outcome and preserv
   let nativeReadFails = false
   let fetchCalls = 0
   const harness = await register(repository, {
+    live: true,
     sourceConnections,
     sourceAccessCalls,
     permissionCalls,
@@ -1326,11 +1351,7 @@ test("registered price reads use the recorded native catalog outcome and preserv
   })
   repository.close()
   const methods = harness.methods()
-  const decisionInput = {
-    sessionID: "ses-native",
-    scope: { projectDirectory: fixture.projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
+  const streams = decisionStreams(harness, fixture.path, { directory: fixture.projectDirectory })
 
   try {
     expect(
@@ -1404,10 +1425,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
       readStore.close()
     }
 
-    const currentOverview = (await Effect.runPromise(methods.overview(decisionInput))) as {
-      context: { priceIndex: { source: string; freshness: string; pins: unknown[] } }
-    }
-    expect(currentOverview.context.priceIndex).toMatchObject({
+    const currentView = await streams.read()
+    expect(currentView.context.priceIndex).toMatchObject({
       source: "opencode",
       freshness: "current",
       pins: [
@@ -1435,10 +1454,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
     expect(
       await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
     ).toMatchObject({ access: { openrouter: "not-configured", opencode: "configured" } })
-    const staleOverview = (await Effect.runPromise(methods.overview(decisionInput))) as {
-      context: { priceIndex: { source: string; freshness: string; pins: unknown[] } }
-    }
-    expect(staleOverview.context.priceIndex).toMatchObject({
+    const staleView = await streams.read(currentView.context.snapshotID)
+    expect(staleView.context.priceIndex).toMatchObject({
       source: "opencode",
       freshness: "stale",
       pins: [
@@ -1462,10 +1479,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
     expect(
       await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
     ).toMatchObject({ access: { opencode: "unknown" } })
-    const cacheOnlyOverview = (await Effect.runPromise(methods.overview(decisionInput))) as {
-      context: { priceIndex: { source: string; freshness: string; pins: unknown[] } }
-    }
-    expect(cacheOnlyOverview.context.priceIndex).toMatchObject({
+    const cacheOnlyView = await streams.read(staleView.context.snapshotID)
+    expect(cacheOnlyView.context.priceIndex).toMatchObject({
       source: "unavailable",
       freshness: "unavailable",
       pins: [],
@@ -1481,6 +1496,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
       ),
     ).toHaveLength(2)
   } finally {
+    await streams.close()
+    await harness.close()
     fixture.close()
   }
 })
@@ -2342,8 +2359,10 @@ test("registered ModelsDecision reuses revision-bound unavailable contexts and i
   const fixture = makeLedgerFixture()
   const storage = new Map<string, unknown>()
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository, { storage })
+  const harness = await register(repository, { storage, live: true })
   repository.close()
+  new ModelEvidenceStore(fixture.path, fixture.projectDirectory).close()
+  const streams = decisionStreams(harness, fixture.path, { directory: fixture.projectDirectory })
   const writer = new Database(fixture.path, { strict: true })
   const revision = () =>
     writer
@@ -2351,45 +2370,19 @@ test("registered ModelsDecision reuses revision-bound unavailable contexts and i
         "SELECT revision FROM observation_revisions WHERE project_directory=?",
       )
       .get(fixture.projectDirectory)?.revision
-  const input = {
-    sessionID: "ses-native",
-    scope: { projectDirectory: fixture.projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
   try {
     const beforeRename = revision()
     if (beforeRename === undefined) throw new Error("Fixture observation revision is absent")
     writer.exec("ALTER TABLE tasks RENAME TO unavailable_tasks")
     expect(revision()).toBe(beforeRename)
 
-    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string; availability: string; priceIndex: { note: string } }
-      configurationCount: number
-    }
-    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
-      context: { snapshotID: string; availability: string; priceIndex: { note: string } }
-      rows: unknown[]
-      totalCount: number
-    }
-    const configurations = (await Effect.runPromise(
-      harness.methods().configurations({ ...input, limit: 100 }),
-    )) as {
-      context: { snapshotID: string; availability: string; priceIndex: { note: string } }
-      configurations: unknown[]
-      totalCount: number
-    }
-    expect(overview.context.availability).toBe("backend-not-ready")
-    expect(overview.context.priceIndex.note).toContain(
+    const unavailable = await streams.read()
+    expect(unavailable.context.availability).toBe("backend-not-ready")
+    expect(unavailable.context.priceIndex.note).toContain(
       `project observation revision ${beforeRename}`,
     )
-    expect(rows.context.snapshotID).toBe(overview.context.snapshotID)
-    expect(configurations.context.snapshotID).toBe(overview.context.snapshotID)
-    expect(rows.context.availability).toBe("backend-not-ready")
-    expect(configurations.context.availability).toBe("backend-not-ready")
-    expect(rows.rows).toEqual([])
-    expect(configurations.configurations).toEqual([])
-    expect(rows.totalCount).toBe(overview.configurationCount)
-    expect(configurations.totalCount).toBe(overview.configurationCount)
+    expect(unavailable.points).toEqual([])
+    expect(unavailable.counts.configurationCount).toBe(0)
 
     expect(
       await Effect.runPromise(
@@ -2400,35 +2393,25 @@ test("registered ModelsDecision reuses revision-bound unavailable contexts and i
         }),
       ),
     ).toMatchObject({ status: "updated", policy: { revision: 1, sources: ["opencode"] } })
-    const afterPriceChange = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string; priceIndex: { sourcePolicyRevision: number; note: string } }
-    }
-    const afterPriceRows = (await Effect.runPromise(
-      harness.methods().rows({ ...input, limit: 100 }),
-    )) as { context: { snapshotID: string } }
-    expect(afterPriceChange.context.snapshotID).not.toBe(overview.context.snapshotID)
+    const afterPriceChange = await streams.read(unavailable.context.snapshotID)
+    expect(afterPriceChange.context.snapshotID).not.toBe(unavailable.context.snapshotID)
     expect(afterPriceChange.context.priceIndex.sourcePolicyRevision).toBe(1)
     expect(afterPriceChange.context.priceIndex.note).toContain(
       `project observation revision ${beforeRename}`,
     )
-    expect(afterPriceRows.context.snapshotID).toBe(afterPriceChange.context.snapshotID)
 
     writer
       .query("UPDATE observation_revisions SET revision=revision+1 WHERE project_directory=?")
       .run(fixture.projectDirectory)
-    const afterRevisionChange = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string; priceIndex: { note: string } }
-    }
-    const afterRevisionRows = (await Effect.runPromise(
-      harness.methods().rows({ ...input, limit: 100 }),
-    )) as { context: { snapshotID: string } }
+    const afterRevisionChange = await streams.read(afterPriceChange.context.snapshotID)
     expect(afterRevisionChange.context.snapshotID).not.toBe(afterPriceChange.context.snapshotID)
     expect(afterRevisionChange.context.priceIndex.note).toContain(
       `project observation revision ${beforeRename + 1}`,
     )
-    expect(afterRevisionRows.context.snapshotID).toBe(afterRevisionChange.context.snapshotID)
   } finally {
     writer.close()
+    await streams.close()
+    await harness.close()
     fixture.close()
   }
 })
@@ -2495,34 +2478,24 @@ test("registered inspector maps exact configured Go routes to independently sour
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
   const harness = await register(repository, {
     sourceConnections: { openrouter: { status: { status: "connected" } } },
+    live: true,
   })
   repository.close()
-  const input = {
-    sessionID: "ses-native",
-    scope: { projectDirectory: fixture.projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
+  const streams = decisionStreams(harness, fixture.path, { directory: fixture.projectDirectory })
 
   try {
-    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string }
-    }
-    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
-      rows: Array<{ configuration: { configurationID: string; route: typeof kimiRoute } }>
-    }
+    const view = await streams.read()
     const cases = [
       {
         route: kimiRoute,
         productID: "moonshotai/kimi-k3.1-pro",
         scenarioID: "configured-current-market",
-        selectedTaskID: fixture.tasks.retry!.id,
         value: 0.00006,
       },
       {
         route: qwenRoute,
         productID: "qwen/qwen3.8-flash",
         scenarioID: "configured-current-market",
-        selectedTaskID: fixture.tasks.adoption!.id,
         value: 0.000003,
       },
     ] as const
@@ -2532,22 +2505,9 @@ test("registered inspector maps exact configured Go routes to independently sour
         item.route.modelID,
         item.route.variant,
       )}`
-      expect(rows.rows.some((row) => row.configuration.configurationID === configurationID)).toBe(
-        true,
-      )
-      const inspection = ModelDecisionInspectOutputSchema.parse(
-        await Effect.runPromise(
-          harness.methods().inspect({
-            ...input,
-            snapshotID: overview.context.snapshotID,
-            configurationID,
-            selectedTaskID: item.selectedTaskID,
-            contributorLimit: 100,
-          }),
-        ),
-      )
+      const inspection = view.find(configurationID)
+      expect(inspection).toBeDefined()
       expect(inspection).toMatchObject({
-        status: "found",
         knownUsageMarket: {
           route: item.route,
           identity: {
@@ -2573,10 +2533,11 @@ test("registered inspector maps exact configured Go routes to independently sour
           ],
         },
       })
-      if (inspection.status === "found")
-        expect(inspection.knownUsageMarket?.scenarios[0]?.valueUSD).toBeCloseTo(item.value, 12)
+      expect(inspection?.knownUsageMarket?.scenarios[0]?.valueUSD).toBeCloseTo(item.value, 12)
     }
   } finally {
+    await streams.close()
+    await harness.close()
     endpointEvidence.store.close()
     fixture.close()
   }
@@ -2635,39 +2596,26 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
   const harness = await register(repository, {
     sourceConnections: { openrouter: { status: { status: "connected" } } },
+    live: true,
   })
   repository.close()
-  const input = {
-    sessionID: "ses-native",
-    scope: { projectDirectory: fixture.projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
+  const streams = decisionStreams(harness, fixture.path, { directory: fixture.projectDirectory })
 
   try {
-    const overview = ModelDecisionOverviewOutputSchema.parse(
-      await Effect.runPromise(harness.methods().overview(input)),
-    )
-    const rows = ModelDecisionRowsOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().rows({ ...input, snapshotID: overview.context.snapshotID, limit: 100 }),
-      ),
-    )
+    const view = await streams.read()
     const cases = [
       {
         route: ambiguousRoute,
-        selectedTaskID: fixture.tasks.retry!.id,
         identityStatus: "ambiguous",
         estimateStatus: "zero-accepted",
       },
       {
         route: absentRoute,
-        selectedTaskID: fixture.tasks.retry!.id,
         identityStatus: "supported-but-absent",
         estimateStatus: "unavailable",
       },
       {
         route: unsupportedRoute,
-        selectedTaskID: fixture.tasks.adoption!.id,
         identityStatus: "unsupported",
         estimateStatus: "unavailable",
       },
@@ -2678,19 +2626,9 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
         item.route.modelID,
         item.route.variant,
       )}`
-      const inspection = ModelDecisionInspectOutputSchema.parse(
-        await Effect.runPromise(
-          harness.methods().inspect({
-            ...input,
-            snapshotID: overview.context.snapshotID,
-            configurationID,
-            selectedTaskID: item.selectedTaskID,
-            contributorLimit: 100,
-          }),
-        ),
-      )
+      const inspection = view.find(configurationID)
+      expect(inspection).toBeDefined()
       expect(inspection).toMatchObject({
-        status: "found",
         knownUsageMarket: {
           route: item.route,
           status: "not-applicable",
@@ -2698,12 +2636,7 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
           scenarios: [],
         },
       })
-      const referenceEstimate = rows.rows.find(
-        (row) =>
-          row.configuration.route.providerID === item.route.providerID &&
-          row.configuration.route.modelID === item.route.modelID &&
-          row.configuration.route.variant === item.route.variant,
-      )?.referenceEstimate
+      const referenceEstimate = inspection?.referenceEstimate
       expect(referenceEstimate).toMatchObject({
         status: item.estimateStatus,
         route: item.route,
@@ -2722,12 +2655,14 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
     expect(endpointEvidence.generations["openai/gpt-6-luna"]).toBeGreaterThan(0)
     expect(endpointEvidence.generations["moonshotai/kimi-k3.1-pro"]).toBeGreaterThan(0)
   } finally {
+    await streams.close()
+    await harness.close()
     endpointEvidence.store.close()
     fixture.close()
   }
 })
 
-test("registered inspector pins scenario pages across retained writes and reprices only market evidence", async () => {
+test("registered inspector keeps a scenario's snapshot generation across retained writes and reprices only market evidence", async () => {
   const fixture = makeLedgerFixture()
   const route = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
   rewriteAttemptForMarket(fixture.path, fixture.projectID, fixture.attempts.failed.id, route, [100])
@@ -2743,53 +2678,21 @@ test("registered inspector pins scenario pages across retained writes and repric
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
   const harness = await register(repository, {
     sourceConnections: { openrouter: { status: { status: "connected" } } },
+    live: true,
   })
   repository.close()
-  const input = {
-    sessionID: "ses-native",
-    scope: { projectDirectory: fixture.projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
+  const streams = decisionStreams(harness, fixture.path, { directory: fixture.projectDirectory })
   const configurationID = `configuration:${modelConfigurationID(
     route.providerID,
     route.modelID,
     route.variant,
   )}`
-  const inspect = async (snapshotID: string, contributorCursor?: string) =>
-    ModelDecisionInspectOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().inspect({
-          ...input,
-          snapshotID,
-          configurationID,
-          selectedTaskID: fixture.tasks.retry!.id,
-          contributorLimit: 1,
-          ...(contributorCursor ? { contributorCursor } : {}),
-        }),
-      ),
-    )
 
   try {
-    const firstOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string }
-    }
-    const firstRows = (await Effect.runPromise(
-      harness.methods().rows({ ...input, limit: 100 }),
-    )) as {
-      rows: Array<{
-        configuration: { configurationID: string }
-        efficiency: unknown
-        nativeReportedCost: unknown
-      }>
-    }
-    const firstRow = firstRows.rows.find(
-      (candidate) => candidate.configuration.configurationID === configurationID,
-    )
-    expect(firstRow).toBeDefined()
-    const firstInspection = await inspect(firstOverview.context.snapshotID)
-    expect(firstInspection.status).toBe("found")
-    if (firstInspection.status !== "found") return
-    const firstScenario = firstInspection.knownUsageMarket?.scenarios[0]
+    const first = await streams.read()
+    const firstFacts = first.find(configurationID)
+    expect(firstFacts).toBeDefined()
+    const firstScenario = firstFacts?.knownUsageMarket?.scenarios[0]
     expect(firstScenario).toMatchObject({
       status: "range",
       freshness: "current",
@@ -2801,8 +2704,6 @@ test("registered inspector pins scenario pages across retained writes and repric
     })
     expect(firstScenario?.rangeUSD?.minimum).toBeCloseTo(0.000015, 12)
     expect(firstScenario?.rangeUSD?.maximum).toBeCloseTo(0.00003, 12)
-    const contributorCursor = firstInspection.contributorPage.nextCursor
-    expect(contributorCursor).not.toBeNull()
 
     const staleGeneration = sourceEvidenceStore.beginRefresh()["openrouter-models"]
     rewriteAttemptForMarket(
@@ -2812,33 +2713,9 @@ test("registered inspector pins scenario pages across retained writes and repric
       route,
       [40, 60],
     )
-    const pinnedPage = await inspect(firstOverview.context.snapshotID, contributorCursor!)
-    expect(pinnedPage).toMatchObject({
-      status: "found",
-      knownUsageMarket: {
-        scenarios: [
-          {
-            freshness: "current",
-            provenance: { snapshotGeneration: 1, currentGeneration: 1 },
-            coverage: { categories: { uncachedInput: { tokens: 150 } } },
-          },
-        ],
-      },
-    })
-
-    const staleOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string }
-    }
-    const staleRows = (await Effect.runPromise(
-      harness.methods().rows({ ...input, limit: 100 }),
-    )) as typeof firstRows
-    const staleRow = staleRows.rows.find(
-      (candidate) => candidate.configuration.configurationID === configurationID,
-    )
-    expect(staleRow).toBeDefined()
-    const staleInspection = await inspect(staleOverview.context.snapshotID)
-    expect(staleInspection).toMatchObject({
-      status: "found",
+    const stale = await streams.read(first.context.snapshotID)
+    const staleFacts = stale.find(configurationID)
+    expect(staleFacts).toMatchObject({
       knownUsageMarket: {
         status: "range",
         scenarios: [
@@ -2857,32 +2734,15 @@ test("registered inspector pins scenario pages across retained writes and repric
         ],
       },
     })
-    if (staleInspection.status !== "found") return
-    expect(staleInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
-      0.00002,
-      12,
-    )
-    expect(staleInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
-      0.00004,
-      12,
-    )
+    expect(staleFacts?.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(0.00002, 12)
+    expect(staleFacts?.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(0.00004, 12)
 
     writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory, {
       promptRate: "0.0000002",
     })
-    const refreshedOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string }
-    }
-    const refreshedRows = (await Effect.runPromise(
-      harness.methods().rows({ ...input, limit: 100 }),
-    )) as typeof firstRows
-    const refreshedRow = refreshedRows.rows.find(
-      (candidate) => candidate.configuration.configurationID === configurationID,
-    )
-    expect(refreshedRow).toBeDefined()
-    const refreshedInspection = await inspect(refreshedOverview.context.snapshotID)
-    expect(refreshedInspection).toMatchObject({
-      status: "found",
+    const refreshed = await streams.read(stale.context.snapshotID)
+    const refreshedFacts = refreshed.find(configurationID)
+    expect(refreshedFacts).toMatchObject({
       knownUsageMarket: {
         scenarios: [
           {
@@ -2897,20 +2757,20 @@ test("registered inspector pins scenario pages across retained writes and repric
         ],
       },
     })
-    if (refreshedInspection.status === "found") {
-      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
-        0.00004,
-        12,
-      )
-      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
-        0.00004,
-        12,
-      )
-    }
-    expect(refreshedRow?.efficiency).toEqual(staleRow?.efficiency)
-    expect(refreshedRow?.nativeReportedCost).toEqual(staleRow?.nativeReportedCost)
-    expect(firstRow?.efficiency).not.toEqual(staleRow?.efficiency)
+    expect(refreshedFacts?.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+      0.00004,
+      12,
+    )
+    expect(refreshedFacts?.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+      0.00004,
+      12,
+    )
+    expect(refreshedFacts?.efficiency).toEqual(staleFacts?.efficiency)
+    expect(refreshedFacts?.nativeReportedCost).toEqual(staleFacts?.nativeReportedCost)
+    expect(firstFacts?.efficiency).not.toEqual(staleFacts?.efficiency)
   } finally {
+    await streams.close()
+    await harness.close()
     sourceEvidenceStore.close()
     fixture.close()
   }
@@ -2933,41 +2793,18 @@ test("registered inspector omits an amount when the configured source has no pub
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
   const harness = await register(repository, {
     sourceConnections: { openrouter: { status: { status: "connected" } } },
+    live: true,
   })
   repository.close()
+  const streams = decisionStreams(harness, fixture.path, { directory: fixture.projectDirectory })
   try {
-    const input = {
-      sessionID: "ses-native",
-      scope: { projectDirectory: fixture.projectDirectory },
-      filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-    }
-    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string }
-    }
-    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
-      rows: Array<{ configuration: { configurationID: string } }>
-    }
+    const view = await streams.read()
     const configurationID = `configuration:${modelConfigurationID(
       route.providerID,
       route.modelID,
       route.variant,
     )}`
-    const inspection = ModelDecisionInspectOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().inspect({
-          ...input,
-          snapshotID: overview.context.snapshotID,
-          configurationID,
-          selectedTaskID: fixture.tasks.retry!.id,
-          contributorLimit: 100,
-        }),
-      ),
-    )
-    expect(rows.rows.some((row) => row.configuration.configurationID === configurationID)).toBe(
-      true,
-    )
-    expect(inspection).toMatchObject({
-      status: "found",
+    expect(view.find(configurationID)).toMatchObject({
       knownUsageMarket: {
         identity: { status: "exact", productID: "openai/gpt-6-luna" },
         status: "unavailable",
@@ -2977,11 +2814,13 @@ test("registered inspector omits an amount when the configured source has no pub
     expect(tableExists(fixture.path, "model_endpoint_pricing_refreshes")).toBe(true)
     expect(tableExists(fixture.path, "model_endpoint_pricing_snapshots")).toBe(true)
   } finally {
+    await streams.close()
+    await harness.close()
     fixture.close()
   }
 })
 
-test("ModelsDecision foreign scope, denial and pre-abort do not read price sources", async () => {
+test("a decision view stream narrows a foreign scope, denies without a permission and reads no price source on the main thread", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
@@ -2989,82 +2828,73 @@ test("ModelsDecision foreign scope, denial and pre-abort do not read price sourc
   let evidenceReads = 0
   const harness = await register(repository, {
     denied: () => denied,
+    live: true,
     evidenceReadStoreFactory: (databasePath, directory) => {
       evidenceReads++
       return new ModelEvidenceReadStore(databasePath, directory)
     },
   })
   repository.close()
-  const input = {
-    sessionID: "ses-native",
-    scope: { projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
+  const streams = decisionStreams(harness, path)
   try {
-    await expect(
-      Effect.runPromise(
-        harness.methods().overview({
-          ...input,
-          scope: { projectDirectory: `${projectDirectory}/foreign` },
-        }),
-      ),
-    ).rejects.toThrow()
-    expect(harness.permissionCalls).toHaveLength(0)
+    // The project is the service's own, whatever the caller sent.
+    const foreign = await streams.authorize({
+      projectDirectory: `${projectDirectory}/foreign`,
+      sessionID: "ses-native",
+      view: { filters: ALL_FILTERS },
+    })
+    expect(foreign.projectDirectory).toBe(projectDirectory)
+    expect(harness.permissionCalls).toHaveLength(1)
     expect(evidenceReads).toBe(0)
 
     denied = true
-    await expect(Effect.runPromise(harness.methods().overview(input))).rejects.toThrow(
-      "native permission denied",
-    )
+    await expect(streams.authorize()).rejects.toThrow("native permission denied")
     expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
     expect(evidenceReads).toBe(0)
     expect(harness.storageCalls.get).toBe(0)
 
+    // A session that is not the project's cannot open a view.
     denied = false
-    const controller = new AbortController()
-    controller.abort()
-    await expect(
-      Effect.runPromise(harness.methods().overview(input), { signal: controller.signal }),
-    ).rejects.toThrow()
+    harness.setActor(null)
+    await expect(streams.authorize()).rejects.toThrow()
     expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
     expect(evidenceReads).toBe(0)
   } finally {
+    await streams.close()
+    await harness.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("a decision read never opens evidence on the main thread and a cancelled one cannot publish", async () => {
+test("a decision view builds in the worker without opening evidence on the main thread, and a closed registration opens none", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
-  const controller = new AbortController()
   let evidenceOpens = 0
   const harness = await register(repository, {
+    live: true,
     evidenceReadStoreFactory: (databasePath, directory) => {
       evidenceOpens++
       return new ModelEvidenceReadStore(databasePath, directory)
     },
   })
   repository.close()
+  new ModelEvidenceStore(path, projectDirectory).close()
+  const streams = decisionStreams(harness, path)
   try {
-    const input = {
-      sessionID: "ses-native",
-      scope: { projectDirectory },
-      filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-    }
-    const live = await Effect.runPromiseExit(harness.methods().overview(input))
-    expect(live._tag).toBe("Success")
+    const view = await streams.read()
+    expect(view.context.availability).toBeDefined()
     // The worker reads catalogs and endpoint pricing from SQLite itself; only price inputs are
-    // read here, so the main thread opened no evidence store for the decision read.
+    // read here, so the main thread opened no evidence store for the view's build.
     expect(evidenceOpens).toBe(0)
 
-    setTimeout(() => controller.abort(), 0)
-    const exit = await Effect.runPromiseExit(harness.methods().overview(input), {
-      signal: controller.signal,
-    })
-    expect(exit._tag).toBe("Failure")
+    // Once the registration is closed its opener is gone: no view is opened or published.
+    await harness.close()
+    await expect(streams.authorize()).rejects.toThrow("Models scope is unavailable")
     expect(evidenceOpens).toBe(0)
   } finally {
+    await streams.close()
+    await harness.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
