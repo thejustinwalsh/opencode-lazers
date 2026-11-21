@@ -86,6 +86,9 @@ test("idle ticks write nothing and read a constant amount, however many run", as
     console.log(`[idle-churn] 5 ticks ${JSON.stringify(few)}; 25 ticks ${JSON.stringify(many)}`)
   expect(few.writes).toBe(0)
   expect(many.writes).toBe(0)
+  // A tick that changes nothing takes no write lock at all, even for a read.
+  expect(few.atomics).toBe(0)
+  expect(many.atomics).toBe(0)
   expect(many.reads).toBe(few.reads * 5)
   expect(many.host).toBe(few.host * 5)
   // Nothing changed, so the source's history is not read again.

@@ -1585,7 +1585,7 @@ export class ProgressRecorder {
     inputID: string | null | undefined,
   ): boolean {
     if (!inputID) return false
-    return this.store.atomic((db) => {
+    return this.store.read((db) => {
       const assignment = this.assignmentQuery(db, "attempt", attemptID)
       if (
         !assignment ||
