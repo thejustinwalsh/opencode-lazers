@@ -8,6 +8,8 @@ import { startHostSessionFold } from "../host-sessions/fold.ts"
 import { startTaskEffortFold } from "../trajectory/effort-store.ts"
 import { startTranscriptMetaFold } from "../transcript-meta/fold.ts"
 import { workerTaskEffort } from "../trajectory/effort-worker-client.ts"
+import { bindHostRuntime } from "../streams/host-source.ts"
+import type { TrajectoryHostRuntime } from "../streams/sources/trajectory-host.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
 import {
   ensureProjectOverviewSchema,
@@ -334,6 +336,15 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
+  // The host access the Trajectory host sources (`trajectory.transcript`, `trajectory.effort`) read.
+  const unbindHostRuntime = bindHostRuntime(repository.projectDirectory, {
+    messages: nativeRunnerHost.messages,
+    events: host,
+    databasePath: repository.path,
+    read: (run) => repository.read(run),
+    effortDetail: effortCompute.detail,
+    touchEffort: (taskID) => taskEffort.fold.touch(taskID),
+  } satisfies TrajectoryHostRuntime)
   // Sized once at load; a value set in Settings wins over the plugin option on the next load.
   const historyBytes = historyCacheBytes(
     globalSettings(repository, {
@@ -427,6 +438,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   }
   const disposeCore = async () => {
     scheduler = undefined
+    unbindHostRuntime()
     displayBackfill.stop()
     taskEventsLease.release()
     nativeCallLease.release()
