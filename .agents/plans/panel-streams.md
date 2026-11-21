@@ -865,14 +865,14 @@ against the sketch in 3.2, from the code:
   `public_score`/`benchmark_score` are not stored: the score depends on the chosen basis
   (`chooseScoreBasis`), so it belongs to the decision view (Task 9).
 - ★ Not written inside `saveSnapshot`: a trigger on `model_evidence_refreshes.latest_snapshot_id`
-  (and snapshot insert/delete) queues the project; only the projection owner drains it (the queue
-  is not enrolled in the writer drain hook). The five saves of one refresh commit in one turn, so
-  one build follows. Measured on the live-sized copy (1,466 candidates, 6.2 MB of detail): build
-  with five body parses 115 ms, plus 30 ms when every row is rewritten (a new native snapshot
-  changes every row's evidence references); unchanged set 3.5 ms, zero writes. Over the 50 ms page
-  guideline; it runs once per snapshot-set change (about hourly), where the old read ran it on a
-  Models open with cold caches. Moving it into the decision worker is the fallback if the
-  `atomic` timing probe flags it.
+  (and snapshot insert/delete) queues the project, and `CandidateBuilds` (`candidate-builds.ts`,
+  on the decision worker registry) builds it in the next turn; the queue is not enrolled in the
+  writer drain hook. The decision worker reads the stamps, parses the five bodies and builds on its
+  read-only connection, and returns only rows whose digest moved; the main thread writes them 250
+  per transaction, then deletions and the set stamp. Measured (seeded fixture at the live count,
+  1,467 candidates, 4.9 MB): 7 transactions, slowest 13.7 ms, largest main-loop gap 39 ms
+  (receiving the rows plus one page); before, 115–180 ms of parse and build on the main thread.
+  The project core installs the schema; a database without it is not touched.
 - ★ `nativeCatalogAccess` needs no new column: it already accepts a stamp-only read
   (`price-state.ts` `snapshotFacts`), so `priceSources` stops reading bodies with
   `stampOnly: true` (Task 10).
@@ -920,8 +920,10 @@ Built (`src/models/decision-view.ts` worker computation, `decision-store.ts` tab
   projection's 7-day `PROJECTION_IDLE_DROP_MS`, not inside `DecisionProjectionOwner`.
 - Measured on the live-sized copy: a view is 56 entries, 2–3 points and 84–127 contributors; the
   first write is 142–186 rows in 3 transactions, slowest 2.3 ms; an unchanged rewrite writes 0 rows
-  (0.5 ms). In the worker: candidate read 22 ms, catalog 1.0–1.1 s (`buildCatalog` over 1,466
-  candidates, which the GUI ran in a memo before), snapshot as before.
+  (0.5 ms). In the worker: candidate read 22 ms, catalog about 20 ms. ★ The catalog took 1.3 s, all
+  but 28 ms of it labels: `modelDisplayLabel` is cubic over a route list; `modelDisplayLabeler`
+  gives the same labels in linear time (equal output on the live catalog, read-only), so no
+  incremental rebuild is needed.
 - Parity (recorded ledger fixture plus evidence corpus): catalog entries and summary equal
   `buildCatalog` of the old GUI inputs (comparison pages, live catalog names, overview) for four
   persona × task kind filters and two bases; points and references equal the overview's; every
