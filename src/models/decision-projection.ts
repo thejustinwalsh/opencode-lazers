@@ -104,25 +104,33 @@ const TASK_TRIGGERS: Array<{
   table: string
   project: (row: "OLD" | "NEW") => string
   task: string
+  /** Columns whose update re-derives the task; omitted, any update does. */
+  updateOf?: string
 }> = [
   { table: "task_references", project: (row) => `${row}.project_directory`, task: "task_id" },
   { table: "task_classifications", project: (row) => `${row}.project_directory`, task: "task_id" },
   { table: "task_dispositions", project: (row) => `${row}.project_directory`, task: "task_id" },
   { table: "runner_nodes", project: viaPlan, task: "task_id" },
   { table: "runner_attempts", project: viaPlan, task: "task_id" },
-  { table: "runner_transitions", project: viaPlan, task: "task_id" },
+  {
+    table: "runner_transitions",
+    project: viaPlan,
+    task: "task_id",
+    // Not `plan_n`: the integer-key backfill updates every older row and changes no fact.
+    updateOf: "plan_id,task_id,version,event,payload,created_at",
+  },
   { table: "runner_adoptions", project: viaPlan, task: "task_id" },
 ]
 
 function taskTriggerSQL() {
   const sql: string[] = []
-  for (const { table, project, task } of TASK_TRIGGERS)
+  for (const { table, project, task, updateOf } of TASK_TRIGGERS)
     for (const event of ["INSERT", "UPDATE", "DELETE"] as const) {
       const rows = event === "INSERT" ? ["NEW"] : event === "DELETE" ? ["OLD"] : ["NEW", "OLD"]
       const name = `model_decision_task_${table}_${event.toLowerCase()}`
       sql.push(
         `DROP TRIGGER IF EXISTS ${name};
-      CREATE TRIGGER ${name} AFTER ${event} ON ${table} BEGIN${rows
+      CREATE TRIGGER ${name} AFTER ${event}${event === "UPDATE" && updateOf ? ` OF ${updateOf}` : ""} ON ${table} BEGIN${rows
         .map((row) => queueTask(project(row as "OLD" | "NEW"), `${row}.${task}`))
         .join("")}
       END;`,
