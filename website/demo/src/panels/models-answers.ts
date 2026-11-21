@@ -1,6 +1,5 @@
 import { Models } from "../../../../src/models/contract.ts"
 import type { ModelSettingsOutput } from "../../../../src/models/contract.ts"
-import { ModelsDecision } from "../../../../src/models/decision-contract.ts"
 import type {
   ModelDecisionConfiguration,
   ModelDecisionContext,
@@ -760,11 +759,6 @@ export function rpc(data: () => ModelsData): Handlers {
 
 /** Every distinct read this data answers, with the contract schema that must accept it. */
 export function reads(data: ModelsData): Read[] {
-  const filters: ModelDecisionFilters = {
-    persona: null,
-    taskKind: null,
-    period: { from: null, to: null },
-  }
   const out: Read[] = [
     {
       label: "lazers.models.refreshSources",
@@ -776,18 +770,7 @@ export function reads(data: ModelsData): Read[] {
       schema: Models.methods.priceSources.output,
       value: { policy: POLICY, access: { openrouter: "configured", opencode: "configured" } },
     },
-    {
-      label: "lazers.models.decision overview",
-      schema: ModelsDecision.methods.overview.output,
-      value: overview(data, filters),
-    },
   ]
-  for (const model of observedModels(data))
-    out.push({
-      label: `lazers.models.decision inspect ${routeKey(model)}`,
-      schema: ModelsDecision.methods.inspect.output,
-      value: inspect(data, { filters, configurationID: configurationID(model) }),
-    })
   const taskOut = tasksReads(tasksOf(data)).filter(
     (read) =>
       read.label.startsWith("lazers.tasks.query") || read.label.startsWith("lazers.tasks.get"),

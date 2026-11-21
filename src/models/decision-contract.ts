@@ -90,23 +90,6 @@ export type ModelDecisionConfigurationsInput = z.input<
 export type ModelDecisionInspectInput = z.input<typeof ModelDecisionInspectInputSchema>
 
 const RPCScope = { sessionID: z.string().min(1).max(200) }
-export const ModelDecisionOverviewRPCInputSchema = z.strictObject({
-  ...RPCScope,
-  ...ModelDecisionReadInputSchema.shape,
-})
-export const ModelDecisionRowsRPCInputSchema = z.strictObject({
-  ...RPCScope,
-  ...ModelDecisionRowsInputSchema.shape,
-})
-export const ModelDecisionConfigurationsRPCInputSchema = z.strictObject({
-  ...RPCScope,
-  ...ModelDecisionConfigurationsInputSchema.shape,
-})
-export const ModelDecisionInspectRPCInputSchema = z.strictObject({
-  ...RPCScope,
-  ...ModelDecisionInspectInputSchema.shape,
-})
-
 const ModelDecisionAccountingSchema = z.strictObject({
   id: z.literal(MODELS_DECISION_ACCOUNTING_BASIS),
   numerator: z.literal("all-attributable-cohort-failed-retry-and-accepted-effort"),
@@ -761,10 +744,6 @@ export const ModelsDecision = Rpc.define({
   id: MODELS_DECISION_RPC_ID,
   events: {},
   methods: {
-    overview: {
-      input: ModelDecisionOverviewRPCInputSchema,
-      output: ModelDecisionOverviewOutputSchema,
-    },
     overviewAll: {
       input: ModelDecisionOverviewAllRPCInputSchema,
       output: ModelDecisionOverviewAllOutputSchema,
@@ -772,10 +751,6 @@ export const ModelsDecision = Rpc.define({
     rowsAll: {
       input: ModelDecisionRowsAllRPCInputSchema,
       output: ModelDecisionRowsAllOutputSchema,
-    },
-    inspect: {
-      input: ModelDecisionInspectRPCInputSchema,
-      output: ModelDecisionInspectOutputSchema,
     },
   },
 })

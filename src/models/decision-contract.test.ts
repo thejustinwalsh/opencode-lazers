@@ -27,8 +27,6 @@ import {
   ModelDecisionGraphPointSchema,
   ModelDecisionRowsInputSchema,
   ModelDecisionConfigurationsInputSchema,
-  ModelDecisionRowsRPCInputSchema,
-  ModelDecisionConfigurationsRPCInputSchema,
   ModelDecisionRowSchema,
   ModelDecisionRowsOutputSchema,
   ModelsDecision,
@@ -206,7 +204,7 @@ test("global reference chart labels and actual effort coordinates are backward-c
   ])
 })
 
-test("first-page snapshot pins are additive to legacy v2 inputs and registered RPC schemas", () => {
+test("first-page snapshot pins are additive to legacy v2 inputs", () => {
   const legacyRows = ModelDecisionRowsInputSchema.parse(decisionRead)
   const legacyConfigurations = ModelDecisionConfigurationsInputSchema.parse(decisionRead)
   const snapshotID = "models-decision-v2:retained-snapshot"
@@ -215,23 +213,11 @@ test("first-page snapshot pins are additive to legacy v2 inputs and registered R
     ...decisionRead,
     snapshotID,
   })
-  const rpcRows = ModelDecisionRowsRPCInputSchema.parse({
-    ...decisionRead,
-    sessionID: "ses-native",
-    snapshotID,
-  })
-  const rpcConfigurations = ModelDecisionConfigurationsRPCInputSchema.parse({
-    ...decisionRead,
-    sessionID: "ses-native",
-    snapshotID,
-  })
 
   expect(legacyRows.snapshotID).toBeUndefined()
   expect(legacyConfigurations.snapshotID).toBeUndefined()
   expect(pinnedRows.snapshotID).toBe(snapshotID)
   expect(pinnedConfigurations.snapshotID).toBe(snapshotID)
-  expect(rpcRows.snapshotID).toBe(snapshotID)
-  expect(rpcConfigurations.snapshotID).toBe(snapshotID)
 })
 
 test("inspection distinguishes complete accepted-task retry history and contributor membership", () => {
