@@ -11,6 +11,10 @@ import { TaskRepository } from "../storage.ts"
 import {
   ensureTranscriptMetaSchema,
   isAttemptSession,
+  isShownSession,
+  resetTranscriptCursor,
+  resyncHostSessions,
+  windowCutoff,
   markTranscriptUnavailable,
   queueTranscript,
   storedTranscriptSession,
@@ -86,6 +90,10 @@ function transcriptHint(event: unknown) {
   }
 }
 
+/**
+ * `message.list` of a session the host no longer has fails with `SessionNotFoundError` (HTTP
+ * 404; `@opencode/protocol` groups/message.js declares it), which the client rejects with.
+ */
 const notFound = (error: unknown) => {
   const info = record(error)
   return (
@@ -95,6 +103,9 @@ const notFound = (error: unknown) => {
     record(info?.response)?.status === 404
   )
 }
+
+/** `message.list` refuses a cursor it no longer knows (HTTP 400). */
+const invalidCursor = (error: unknown) => record(error)?._tag === "InvalidCursorError"
 
 export type TranscriptMetaFoldOptions = {
   onError?: (error: unknown) => void
@@ -114,8 +125,8 @@ export class TranscriptMetaFold {
   /** The hint sequence that last queued each session: a read begun before it leaves the entry. */
   private readonly hinted = new LruMap<string, number>(SESSION_MEMO_ENTRIES)
   private hintSeq = 0
-  /** Whether a session is a worker attempt session of this project (a point read, memoized). */
-  private readonly attempt = new LruMap<string, boolean>(SESSION_MEMO_ENTRIES)
+  /** Sessions the product shows (a point read, memoized when true). */
+  private readonly shown = new LruMap<string, boolean>(SESSION_MEMO_ENTRIES)
   private readonly range: readonly [string, string]
   private readonly now: () => number
   private readonly spacing: number
@@ -163,17 +174,20 @@ export class TranscriptMetaFold {
     void this.drain()
   }
 
-  /** A native event: queue its attempt session unless a read that began after the event covers it. */
+  /** A native event: queue its session, when shown, unless a read begun after the event covers it. */
   hint(event: unknown): void {
     if (this.closed) return
     const hint = transcriptHint(event)
     if (!hint) return
     try {
-      let known = this.attempt.get(hint.sessionID)
+      let known = this.shown.get(hint.sessionID)
       if (known === undefined) {
-        known = this.repository.read((db) => isAttemptSession(db, this.project, hint.sessionID))
-        // An unknown session may become an attempt's later; only a known one is remembered.
-        if (known) this.attempt.set(hint.sessionID, true)
+        known = this.repository.read((db) =>
+          isShownSession(db, this.project, hint.sessionID, windowCutoff(db, this.now())),
+        )
+        // An unknown session may be shown later (its host row is written, then its trigger queues
+        // it); only a shown one is remembered.
+        if (known) this.shown.set(hint.sessionID, true)
       }
       if (!known) return
       const readAt = this.readAt.get(hint.sessionID)
@@ -196,8 +210,9 @@ export class TranscriptMetaFold {
 
   /**
    * After a subscription attach: queue the active attempts' sessions and every attempt session
-   * not yet read in full, a page of attempt rows at a time. Finished, fully read sessions were
-   * queued by their last state change.
+   * not yet read in full, a page of attempt rows at a time (finished, fully read attempt sessions
+   * were queued by their last state change), then the windowed host sessions that are busy or not
+   * read in full.
    */
   resync(): void {
     if (this.closed) return
@@ -227,6 +242,13 @@ export class TranscriptMetaFold {
         if (rows.length < RESYNC_ROWS || this.closed) break
         after = rows.at(-1)!.id
       }
+      if (!this.closed)
+        resyncHostSessions(
+          (run) => this.repository.read(run),
+          (run) => this.repository.atomic(run),
+          this.project,
+          this.now(),
+        )
     } catch (error) {
       this.options.onError?.(error)
     }
@@ -238,15 +260,22 @@ export class TranscriptMetaFold {
     return this.loop.drain()
   }
 
+  /**
+   * The next due entries: hints first (`next_at` 0), then seeds and resyncs, newest host update
+   * first, so the sessions the Monitor shows now are read before old lineages.
+   */
   private due(): QueueEntry[] {
     const [low, high] = this.range
     return this.repository.read((db) =>
       db
-        .query<QueueEntry, [string, string, number, number]>(
-          `SELECT ref,attempts FROM ${TRANSCRIPT_META_QUEUE}
-           WHERE ref>=? AND ref<? AND next_at<=? ORDER BY next_at,ref LIMIT ?`,
+        .query<QueueEntry, [string, string, string, string, number, number]>(
+          `SELECT q.ref,q.attempts FROM ${TRANSCRIPT_META_QUEUE} q
+           LEFT JOIN host_session_state h
+             ON h.project_directory=? AND h.session_id=substr(q.ref, length(?)+1)
+           WHERE q.ref>=? AND q.ref<? AND q.next_at<=?
+           ORDER BY q.next_at, h.host_updated_at DESC, q.ref LIMIT ?`,
         )
-        .all(low, high, this.now(), DRAIN_BATCH),
+        .all(this.project, low, low, high, this.now(), DRAIN_BATCH),
     )
   }
 
@@ -263,6 +292,8 @@ export class TranscriptMetaFold {
     const seq = this.hintSeq
     this.readAt.set(sessionID, this.now())
     this.reads.sessions++
+    /** The cursor of the page being read: a refused cursor is reset only when there was one. */
+    let reading: string | null = null
     try {
       let from: StoredTranscriptSession = this.repository.read((db) =>
         storedTranscriptSession(db, this.project, sessionID),
@@ -270,6 +301,7 @@ export class TranscriptMetaFold {
       const seen = new Set<string>()
       for (;;) {
         this.reads.pages++
+        reading = from.cursor
         const page = await this.client.message.list({
           sessionID: sessionID as never,
           limit: this.pageSize,
@@ -297,6 +329,12 @@ export class TranscriptMetaFold {
       this.settled(ref, sessionID, seq)
     } catch (error) {
       this.readAt.delete(sessionID)
+      if (invalidCursor(error) && reading !== null) {
+        // The host no longer accepts the stored cursor: read again from the start (the rows are
+        // upserted by message id); the entry stays due.
+        this.repository.atomic((db) => resetTranscriptCursor(db, this.project, sessionID))
+        return
+      }
       try {
         this.repository.atomic((db) => markTranscriptUnavailable(db, this.project, sessionID))
         if (notFound(error)) {

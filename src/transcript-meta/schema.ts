@@ -4,13 +4,15 @@ import { ensureProjectionStateSchema, resetProjectionState } from "../projection
 import type { ProjectionSpec } from "../projections/owner.ts"
 import { queueRef, queueTableSQL } from "../projections/queue.ts"
 import { isTakeoverAttempt } from "../recovery/detector.ts"
+import { ensureHostSessionStateSchema } from "../host-sessions/state.ts"
 import { RunnerStore } from "../runner/store.ts"
 import type { TaskRepository } from "../storage.ts"
 import { transcriptStep, type TranscriptStep } from "./step.ts"
 
 /**
  * `transcript_steps` and `transcript_sessions`: the metadata LAZERS derives from the transcripts
- * of worker attempt sessions, folded by host cursor (`fold.ts`) and stored once (data-handling
+ * of the sessions the product shows (worker attempt sessions, and every session of the project in
+ * `host_session_state`: Architects, workers, unmanaged sessions), folded by host cursor (`fold.ts`) and stored once (data-handling
  * principle 4; owner decision 2026-11-21: store the metadata the product requires, skip the
  * text). OpenCode owns message text: no column here holds text, tool input or output, reasoning
  * or an error message.
@@ -29,13 +31,32 @@ import { transcriptStep, type TranscriptStep } from "./step.ts"
  *   reaches the end of the transcript, then `available`; `unavailable` when reads fail before
  *   one has. A session OpenCode no longer has keeps its rows and state.
  * - Tool calls are not stored here: `native_tool_call_display` holds them (session, message, call).
+ *
+ * Readers: the trajectory effort (attempt sessions: routes, count, read state), the Radar
+ * Monitor's Flow and Messages (every shown session: model phases, tokens, errors).
+ *
+ * Which sessions are folded (the window, sliding, never a cap): every worker attempt session, and
+ * every `host_session_state` session of the project that is not archived, or, when a retention
+ * age is set, archived but updated within it. The Monitor shows exactly these; an archived
+ * session past the age is one retention removes (below). Live: 1,007 non-attempt sessions hold
+ * 65,895 messages (an Architect lineage alone 11,547); the 7-day window keeps 945 of them, about
+ * 2,566 host pages. Sessions are read newest first (`host_updated_at`), each from its start by
+ * cursor, so the sessions the Monitor shows now are filled first.
+ *
+ * Lifecycle: an attempt session's rows go with its finished plan (retention kind
+ * `transcript-meta`); a session no plan holds goes when the host archived it and its last host
+ * update is older than the retention age, or when the host no longer has it (no
+ * `host_session_state` row) and its newest step is older than that age.
  */
 const MODULE = schemaModules["transcript-meta"]
 const TRANSCRIPT_META = "transcript-meta"
 export const TRANSCRIPT_META_QUEUE = "transcript_meta_dirty"
 
-/** Raise when the stored derivation changes: the seed queues every attempt session again. */
-const TRANSCRIPT_META_GENERATION = 1
+/**
+ * Raise when the stored derivation changes: the seed queues every session again. 2: every shown
+ * session, not only attempt sessions.
+ */
+const TRANSCRIPT_META_GENERATION = 2
 
 const TABLES_SQL = `
   CREATE TABLE transcript_steps (
@@ -65,14 +86,47 @@ const workerPolicy = (row: "NEW") =>
 const attemptRef = (row: "NEW") =>
   `COALESCE(${row}.project_directory,(SELECT p.project_directory FROM runner_plans p WHERE p.id=${row}.plan_id))||char(0)||${row}.session_id`
 
+/** A queue insert that never moves an entry already queued (a hint or a parked backoff). */
+const queueSeedSQL = (ref: string) =>
+  `INSERT INTO ${TRANSCRIPT_META_QUEUE}(ref,next_at) SELECT ${ref},1
+     WHERE NOT EXISTS (SELECT 1 FROM ${TRANSCRIPT_META_QUEUE} WHERE ref=${ref});`
+
 /**
  * An attempt's insert and each change of its state queue its session, so the start and the last
- * messages of an attempt are read without depending on a native event.
+ * messages of an attempt are read without depending on a native event. A session the host
+ * session fold adds (or unarchives) is queued as a seed: its events queue it after that.
  */
 const TRIGGERS = [
-  { name: "transcript_meta_q_attempt_insert", event: "INSERT" },
-  { name: "transcript_meta_q_attempt_update", event: "UPDATE OF state,session_id" },
+  {
+    name: "transcript_meta_q_attempt_insert",
+    sql: `AFTER INSERT ON runner_attempts WHEN ${workerPolicy("NEW")} BEGIN
+      ${queueRef(TRANSCRIPT_META_QUEUE, attemptRef("NEW"))} END;`,
+  },
+  {
+    name: "transcript_meta_q_attempt_update",
+    sql: `AFTER UPDATE OF state,session_id ON runner_attempts WHEN ${workerPolicy("NEW")} BEGIN
+      ${queueRef(TRANSCRIPT_META_QUEUE, attemptRef("NEW"))} END;`,
+  },
+  {
+    name: "transcript_meta_q_session_insert",
+    sql: `AFTER INSERT ON host_session_state WHEN NEW.archived=0 BEGIN
+      ${queueSeedSQL("NEW.project_directory||char(0)||NEW.session_id")} END;`,
+  },
+  {
+    name: "transcript_meta_q_session_unarchive",
+    sql: `AFTER UPDATE OF archived ON host_session_state WHEN NEW.archived=0 AND OLD.archived=1 BEGIN
+      ${queueSeedSQL("NEW.project_directory||char(0)||NEW.session_id")} END;`,
+  },
 ] as const
+
+/**
+ * Create the triggers that are missing. A source module that rebuilds its table (a generation
+ * bump of `host-sessions`) drops the table's triggers with it; each start puts them back.
+ */
+function createTriggers(db: Database) {
+  for (const trigger of TRIGGERS)
+    db.exec(`CREATE TRIGGER IF NOT EXISTS ${trigger.name} ${trigger.sql}`)
+}
 
 /** The tables and triggers, rebuilt from nothing; the seed and the fold refill them. */
 function installTranscriptMetaSchema(db: Database) {
@@ -83,22 +137,29 @@ function installTranscriptMetaSchema(db: Database) {
   )
   db.exec(TABLES_SQL)
   resetProjectionState(db, TRANSCRIPT_META)
-  for (const trigger of TRIGGERS)
-    db.exec(
-      `CREATE TRIGGER ${trigger.name} AFTER ${trigger.event} ON runner_attempts
-       WHEN ${workerPolicy("NEW")} BEGIN
-         ${queueRef(TRANSCRIPT_META_QUEUE, attemptRef("NEW"))}
-       END;`,
-    )
+  createTriggers(db)
 }
 
-/** Install through the module registry; the attempt triggers need the runner's tables first. */
+/**
+ * Install through the module registry; the triggers need the runner's tables and
+ * `host_session_state` first.
+ */
 export function ensureTranscriptMetaSchema(repository: TaskRepository) {
   void new RunnerStore(repository)
+  ensureHostSessionStateSchema(repository)
   ensureProjectionStateSchema(repository)
   repository.installSchema("transcript-meta", MODULE.generation, MODULE.tables, (db) =>
     installTranscriptMetaSchema(db),
   )
+  const present = repository.read(
+    (db) =>
+      db
+        .query<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'transcript_meta_q_%'`,
+        )
+        .get()!.n,
+  )
+  if (present < TRIGGERS.length) repository.atomic((db) => createTriggers(db))
 }
 
 export type TranscriptReadState = "not-read" | "available" | "unavailable"
@@ -246,6 +307,14 @@ export function markTranscriptUnavailable(db: Database, project: string, session
   })
 }
 
+/** Read a session again from its start; its rows stay and are upserted by message id. */
+export function resetTranscriptCursor(db: Database, project: string, sessionID: string) {
+  db.query(
+    `UPDATE transcript_sessions SET cursor=NULL,base_ordinal=0
+     WHERE project_directory=? AND session_id=?`,
+  ).run(project, sessionID)
+}
+
 /** The route facts of a session's steps below `ordinal`, in transcript order. */
 export type TranscriptRouteRow = {
   message_id: string
@@ -331,15 +400,56 @@ export function isAttemptSession(db: Database, project: string, sessionID: strin
   return row !== null && !isTakeoverAttempt(row.policy)
 }
 
+const DAY_MS = 86_400_000
+
 /**
- * Attempts per seed page: queue inserts only, no host read. Measured in `fold.test.ts` (seed):
- * 252 attempts, 2 pages.
+ * The oldest host update an archived session may have and still be folded: the finished-plan
+ * retention age when one is set (`retention_settings.auto_days`), else null (archived sessions
+ * are not folded: the Monitor lists the unarchived ones).
+ */
+export function windowCutoff(db: Database, now: number): number | null {
+  const table = db
+    .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retention_settings'")
+    .get()
+  if (!table) return null
+  const days = db
+    .query<{ auto_days: number | null }, []>("SELECT auto_days FROM retention_settings WHERE id=1")
+    .get()?.auto_days
+  return typeof days === "number" && days >= 1 ? now - days * DAY_MS : null
+}
+
+/** A `host_session_state` row (alias `h`) inside the window; binds the cutoff twice. */
+const IN_WINDOW = "(h.archived=0 OR (? IS NOT NULL AND h.host_updated_at>=?))"
+
+/**
+ * True when the product shows `sessionID`: a worker attempt session of the project, or a session
+ * of the project in `host_session_state` inside the window.
+ */
+export function isShownSession(
+  db: Database,
+  project: string,
+  sessionID: string,
+  cutoff: number | null,
+) {
+  const shown = db
+    .query<{ one: number }, [string, string, number | null, number | null]>(
+      `SELECT 1 AS one FROM host_session_state h
+       WHERE h.project_directory=? AND h.session_id=? AND ${IN_WINDOW}`,
+    )
+    .get(project, sessionID, cutoff, cutoff)
+  return shown !== null || isAttemptSession(db, project, sessionID)
+}
+
+/**
+ * Rows per seed page: queue inserts only, no host read. Measured in `fold.test.ts` (seed):
+ * attempts and host sessions, one page each.
  */
 const SEED_ROWS = 200
 
 /**
- * The seed: every worker attempt session of the project is queued once per generation; the fold
- * reads them by cursor. Scope: the project directory.
+ * The seed: every worker attempt session and every windowed `host_session_state` session of the
+ * project is queued once per generation; the fold reads them by cursor, newest first. Scope: the
+ * project directory.
  */
 export const transcriptMetaSeedProjection: ProjectionSpec = {
   name: TRANSCRIPT_META,
@@ -361,5 +471,66 @@ export const transcriptMetaSeedProjection: ProjectionSpec = {
         return { next: rows.at(-1)?.id ?? after, done: rows.length < SEED_ROWS }
       },
     },
+    {
+      name: "host-sessions",
+      page(db, scope, after) {
+        const cutoff = windowCutoff(db, Date.now())
+        const rows = db
+          .query<
+            { id: number; session_id: string },
+            [string, number, number | null, number | null, number]
+          >(
+            `SELECT h.id, h.session_id FROM host_session_state h
+             WHERE h.project_directory=? AND h.id>? AND ${IN_WINDOW}
+             ORDER BY h.id LIMIT ?`,
+          )
+          .all(scope, after, cutoff, cutoff, SEED_ROWS)
+        for (const row of rows) queueTranscript(db, scope, row.session_id, "seed")
+        return { next: rows.at(-1)?.id ?? after, done: rows.length < SEED_ROWS }
+      },
+    },
   ],
+}
+
+/** Windowed host sessions per resync page: an index range scan and queue inserts. */
+const RESYNC_ROWS = 500
+
+/**
+ * After a subscription attach (events may have been lost): queue the windowed host sessions of
+ * the project that are busy or not yet read in full, a page at a time, in the caller's
+ * transactions. Returns the sessions queued.
+ */
+export function resyncHostSessions(
+  read: <T>(run: (db: Database) => T) => T,
+  write: <T>(run: (db: Database) => T) => T,
+  project: string,
+  now: number,
+): number {
+  const cutoff = read((db) => windowCutoff(db, now))
+  let after = 0
+  let queued = 0
+  for (;;) {
+    const rows = read((db) =>
+      db
+        .query<
+          { id: number; session_id: string },
+          [string, string, number, number | null, number | null, number]
+        >(
+          `SELECT h.id, h.session_id FROM host_session_state h
+           LEFT JOIN transcript_sessions t
+             ON t.project_directory=? AND t.session_id=h.session_id
+           WHERE h.project_directory=? AND h.id>? AND ${IN_WINDOW}
+             AND (h.busy=1 OR t.read_state IS NULL OR t.read_state<>'available')
+           ORDER BY h.id LIMIT ?`,
+        )
+        .all(project, project, after, cutoff, cutoff, RESYNC_ROWS),
+    )
+    if (rows.length)
+      write((db) => {
+        for (const row of rows) queueTranscript(db, project, row.session_id, "seed")
+      })
+    queued += rows.length
+    if (rows.length < RESYNC_ROWS) return queued
+    after = rows.at(-1)!.id
+  }
 }
