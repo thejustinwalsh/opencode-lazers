@@ -150,7 +150,7 @@ function useAnnouncement(state: ChatState) {
 
 const LONG_PRESS_MS = 600
 
-export function LiveChat() {
+export function LiveChatPanel() {
   return (
     <figure class="lc-figure">
       <LiveChatBody />

@@ -1,4 +1,3 @@
-
 /** One recorded read and the contract schema that must accept it. */
 export interface Read {
   label: string

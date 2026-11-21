@@ -7,8 +7,8 @@
 import { closeAudio, playbackContext, SPEECH_RATE } from "./audio-context"
 import type { ChatEvent, Effect } from "./machine"
 import type { FromWorker, ToWorker } from "./protocol"
+import type { Meter } from "./ChatFrame"
 
-export type Meter = { bars: string; seconds: number } | null
 export type Controller = ReturnType<typeof createController>
 
 const PCM_RATE = 16_000
