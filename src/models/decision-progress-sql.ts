@@ -11,10 +11,10 @@ export const DECISION_PROGRESS_BATCH_SIZE = 512
 // dedupe index on every page. The payload is projected in JS, not in SQL: building the same
 // objects with json_object/json_each cost about a second on the live 111k-row table and was
 // parsed again here; a plain JSON.parse of the stored text takes a fraction of that.
-export const LIVE_PROGRESS_COLUMNS =
+const LIVE_PROGRESS_COLUMNS =
   "r.seq,r.attempt_id,r.session_id,r.at,r.recorded_at,r.source,r.sources_json,r.kind," +
   "r.event_ids_json,r.message_id,r.payload"
-export const LIVE_PROGRESS_JOIN = `
+const LIVE_PROGRESS_JOIN = `
   JOIN runner_plans p ON p.id=r.plan_id
   JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory`
 export const LIVE_TAIL_SQL = `

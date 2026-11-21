@@ -248,7 +248,7 @@ export const taskPlansSource = defineSource({
 })
 
 /** The reservations holding one queued task back, with the blocker's reference. */
-export const taskBlockersSource = defineSource({
+defineSource({
   name: TASK_SOURCES.blockers,
   table: `(SELECT b.task_id AS task_id, b.blocker_task_id AS blocker_task_id,
       t.reference AS reference, t.title AS title
@@ -343,7 +343,7 @@ export const taskSessionBucketCountsSource = defineSource({
 })
 
 /** Whether this project's list is indexed yet; false while the owner backfills. */
-export const taskIndexSource = defineSource({
+defineSource({
   name: TASK_SOURCES.index,
   table: "task_schedule_state",
   key: ["project_directory"],

@@ -27,7 +27,7 @@ import {
   workingTreeIdentity,
   writeCheckReceipt,
 } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { protectedPaths, scopeReportEmpty, type ScopeReport } from "./scope.ts"
 import { FALLOW_CHECK_ID } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
@@ -245,7 +245,7 @@ export class VerificationCandidate {
       // A clean shared checkout can contain a newly committed correction.
       // Preserve old receipts and prepare the new candidate independently.
       if (shared && !sharedDirty && effect.state === "completed") {
-        const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }).check
+        const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
         if (
           receipt?.preparation &&
           recorded.inputFingerprint !== inputFingerprint &&
@@ -289,9 +289,9 @@ export class VerificationCandidate {
         this.hold(plan, "Mechanical candidate preparation is uncertain and was not replayed")
         return "held"
       }
-      let receipt: CheckReceipt | undefined
+      let receipt: RunnerCheckReceipt | undefined
       try {
-        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: CheckReceipt }).check
+        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
       } catch {
         receipt = undefined
       }
@@ -412,7 +412,8 @@ export class VerificationCandidate {
         if (shared && !sharedDirty && effect.state === "completed") {
           try {
             const recorded = JSON.parse(effect.payload)
-            const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }).check
+            const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt })
+              .check
             if (
               receipt?.preparation &&
               recorded.inputFingerprint !== inputFingerprint &&
@@ -536,9 +537,9 @@ export class VerificationCandidate {
         this.hold(plan, "Mechanical candidate preparation is uncertain and was not replayed")
         return "held"
       }
-      let receipt: CheckReceipt | undefined
+      let receipt: RunnerCheckReceipt | undefined
       try {
-        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: CheckReceipt }).check
+        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
       } catch {
         receipt = undefined
       }
@@ -814,7 +815,7 @@ export class VerificationCandidate {
         // for the same candidate, attempt, command, and repair generation.
         const passed =
           e.state === "completed" && e.receipt
-            ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
+            ? (JSON.parse(e.receipt) as { check?: RunnerCheckReceipt }).check
             : undefined
         return (
           payload.artifact === artifact.commit &&
@@ -941,14 +942,14 @@ export class VerificationCandidate {
     artifact: { commit: string; identity: string },
     repairID: string | undefined,
     fence: number,
-  ): Promise<CheckReceipt[] | undefined> {
+  ): Promise<RunnerCheckReceipt[] | undefined> {
     const verificationEpoch =
       this.store.latestTransition<{ verificationEpoch: number }>(
         plan.id,
         attempt.task_id,
         "VERIFICATION_RESUMED",
       )?.verificationEpoch ?? 0
-    const receipts: CheckReceipt[] = []
+    const receipts: RunnerCheckReceipt[] = []
     for (const check of proposal.verification) {
       if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return undefined
       const deadline = this.verificationDeadline(
@@ -1036,7 +1037,7 @@ export class VerificationCandidate {
     plan: PlanRow,
     attempt: AttemptRow,
     artifact: Awaited<ReturnType<typeof commitArtifact>>,
-    receipts: CheckReceipt[],
+    receipts: RunnerCheckReceipt[],
     review: FallowReviewResult | undefined,
     repairID: string | undefined,
     fence: number,
@@ -1095,7 +1096,9 @@ export class VerificationCandidate {
         )
         .get(previous.id, FALLOW_CHECK_ID, LEGACY_FALLOW_CHECK_ID),
     )
-    const before = first ? (JSON.parse(first.body) as CheckReceipt).fallow?.package : undefined
+    const before = first
+      ? (JSON.parse(first.body) as RunnerCheckReceipt).fallow?.package
+      : undefined
     return before ? dispositionsAfterRepair(before, review.package) : undefined
   }
 }

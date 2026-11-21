@@ -40,7 +40,7 @@ const normalize = (pattern: string) => pattern.replaceAll("\\", "/").replace(/^\
 const WILDCARD = /[*?{}[\]!]/
 
 /** Every path the worker may not touch regardless of scope: outside the repository. */
-export function escapesRepository(path: string): boolean {
+function escapesRepository(path: string): boolean {
   return isAbsolute(path) || path.split("/").includes("..")
 }
 
@@ -196,7 +196,7 @@ export function scopedBy(path: string, owners: readonly ScopeOwner[]): string[] 
 /** Source files over this many lines are what the size signal reports on. */
 export const FILE_SIZE_WARNING_LINES = 1_000
 /** Net lines added to a file already over the limit that count as substantial. */
-export const LARGE_FILE_GROWTH_LINES = 40
+const LARGE_FILE_GROWTH_LINES = 40
 export const SIZED_SOURCE = /\.(ts|tsx|js|jsx|mjs|mts|cts)$/
 
 const PathText = z.string().min(1)
@@ -328,7 +328,7 @@ function divergenceLine(item: ScopeReport["divergences"][number]): string {
   return `${item.path} (${item.status === "added" ? "new file" : `existing file, ${item.status}`}${counts}${owner})`
 }
 
-export function warningLine(item: ScopeReport["warnings"][number]): string {
+function warningLine(item: ScopeReport["warnings"][number]): string {
   return item.kind === "crossed"
     ? `${item.path} is now ${item.lines} lines (was ${item.baseLines}), over ${FILE_SIZE_WARNING_LINES}`
     : `${item.path} is ${item.lines} lines and grew by ${item.added}`

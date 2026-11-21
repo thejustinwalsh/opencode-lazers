@@ -248,6 +248,23 @@ export const EndpointPricingReadSchema = z
   })
 export type EndpointPricingRead = z.infer<typeof EndpointPricingReadSchema>
 
+/** The one state that stands for every scenario's state: a shared state, else `refreshing`, else `partial`. */
+export function aggregateEndpointState(
+  states: EndpointPricingRead["state"][],
+): EndpointPricingRead["state"] {
+  return states.every((value) => value === "never")
+    ? "never"
+    : states.some((value) => value === "refreshing")
+      ? "refreshing"
+      : states.every((value) => value === "succeeded")
+        ? "succeeded"
+        : states.every((value) => value === "cancelled")
+          ? "cancelled"
+          : states.every((value) => value === "failed")
+            ? "failed"
+            : "partial"
+}
+
 const SENSITIVE_TEXT =
   /(?:authorization|bearer|api[\s_-]*key|secret|token(?:\b|[_=-])|password|sk-(?:or-)?[a-z0-9_-]{8,})/i
 

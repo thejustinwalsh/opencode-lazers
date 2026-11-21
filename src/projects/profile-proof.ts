@@ -4,7 +4,7 @@ import { buildRepoMap, deriveSourceDefinition, sourceFiles } from "../context/re
 import { currentRepoMap } from "../context/repo-map-store.ts"
 import { fingerprint } from "../identity.ts"
 import { runCheck } from "../runner/artifacts.ts"
-import type { CheckReceipt } from "../runner/artifacts.ts"
+import type { RunnerCheckReceipt } from "../runner/artifacts.ts"
 import { checkEnvironment, checkSucceeded } from "../runner/checks.ts"
 import {
   verificationCheckWithDefaults,
@@ -162,7 +162,7 @@ export async function proveProfile(input: {
       const started = Date.now()
       const id = key.replace(/[^a-z0-9-]/g, "-")
       const check = verificationCheckWithDefaults({ id, command: effective ?? command }, defaults)
-      let receipt: CheckReceipt
+      let receipt: RunnerCheckReceipt
       try {
         receipt = await runCheck(worktree, head.out, check, join(receipts, `${id}.json`), {
           environment: environment as Record<string, string>,

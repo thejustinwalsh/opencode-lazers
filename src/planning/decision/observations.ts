@@ -122,7 +122,7 @@ export function observationQuestion(observation: Observation): SystemOneQuestion
 }
 
 /** The one Score question, kept for the size record: levels are one change, two or three, four or more. */
-export const BREADTH_LEVELS = [
+const BREADTH_LEVELS = [
   "One change.",
   "Two or three separate changes.",
   "Four or more separate changes.",
@@ -138,8 +138,8 @@ export function breadthQuestion(): SystemOneQuestion {
 export const CHANGES_PER_LEVEL = [1, 2.5, 5] as const
 
 /** A yes at or above `YES_AT`, a no at or below `NO_AT`; between is the Architect's call. */
-export const YES_AT = 0.7
-export const NO_AT = 0.3
+const YES_AT = 0.7
+const NO_AT = 0.3
 export type Band = "yes" | "architect" | "no"
 export const bandOf = (score: number, yesAt = YES_AT, noAt = NO_AT): Band =>
   score >= yesAt ? "yes" : score <= noAt ? "no" : "architect"
@@ -148,7 +148,7 @@ export const bandOf = (score: number, yesAt = YES_AT, noAt = NO_AT): Band =>
 export const observationWord = (band: Band) => (band === "architect" ? "unsure" : band)
 
 /** At least this many pieces is itself a sign the text is long and may need an explanation. */
-export const MANY_PIECES = 8
+const MANY_PIECES = 8
 
 /**
  * Which observations feed which agent, as data. A rule's score is the largest of its observations

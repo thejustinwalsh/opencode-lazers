@@ -1,4 +1,5 @@
-import { Index, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Index, Show, createMemo } from "solid-js"
+import { hostWidth } from "./host-width.ts"
 import { fitText, layoutMap } from "./map-layout.ts"
 import { relatedNodes } from "./map-model.ts"
 import type { RadarMap } from "./map-model.ts"
@@ -14,19 +15,8 @@ export function RadarMapView(props: {
   selectedID: string | null
   onSelect: (id: string) => void
 }) {
-  const [width, setWidth] = createSignal(480)
   let host: HTMLDivElement | undefined
-  onMount(() => {
-    if (!host) return
-    setWidth(Math.max(240, Math.floor(host.clientWidth)) || 480)
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver((entries) => {
-      const next = Math.floor(entries[0]?.contentRect.width ?? 0)
-      if (next > 0) setWidth(next)
-    })
-    observer.observe(host)
-    onCleanup(() => observer.disconnect())
-  })
+  const width = hostWidth(() => host)
   const layout = createMemo(() => layoutMap(props.map, width()))
   const related = createMemo(() => relatedNodes(props.map, props.selectedID))
   const dim = (id: string) => {

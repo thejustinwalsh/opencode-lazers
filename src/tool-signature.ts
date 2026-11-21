@@ -53,7 +53,7 @@ export function leanResultSchema(schema: unknown): unknown {
  * The same schema for the host's output validation, with a leaner JSON Schema for the signature
  * Code Mode shows a model. Validation is Zod's own, unchanged.
  */
-export function leanResult<S extends z.ZodType>(schema: S): S {
+function leanResult<S extends z.ZodType>(schema: S): S {
   const standard = schema["~standard"] as StandardSchemaV1.Props & {
     jsonSchema: { input: (o: object) => object; output: (o: object) => object }
   }
@@ -69,7 +69,7 @@ export function leanResult<S extends z.ZodType>(schema: S): S {
 }
 
 /** The same schema for host input validation, with the redundant Zod additions left out of the signature. */
-export function leanInput<S extends z.ZodType>(schema: S): S {
+function leanInput<S extends z.ZodType>(schema: S): S {
   const standard = schema["~standard"] as StandardSchemaV1.Props & {
     jsonSchema: { input: (o: object) => object; output: (o: object) => object }
   }

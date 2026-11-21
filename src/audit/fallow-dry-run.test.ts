@@ -8,7 +8,7 @@ import { wasmFallowAnalyzer } from "./wasm-analyzer.ts"
 const root = fileURLToPath(new URL("../..", import.meta.url))
 
 test("the dry run is one engine call and reports what the three separate analyses reported", async () => {
-  const candidate = JSON.parse(readFileSync(join(root, ".fallowrc.json"), "utf8")) as object
+  const candidate = Bun.JSONC.parse(readFileSync(join(root, ".fallowrc.json"), "utf8")) as object
   let combinedCalls = 0
   const one = {
     ...wasmFallowAnalyzer,

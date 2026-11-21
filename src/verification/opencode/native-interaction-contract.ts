@@ -202,7 +202,7 @@ const NativeCommand = Schema.Struct({
 })
 
 const NativeState = Schema.Literals(["queued", "delivered", "completed", "unknown"])
-export const NativeAdmissionRefusal = Schema.Struct({
+const NativeAdmissionRefusal = Schema.Struct({
   requestID: shortText,
   operation: NativeOperation,
   delivery: Schema.Literals(["not-delivered"]),
@@ -210,7 +210,7 @@ export const NativeAdmissionRefusal = Schema.Struct({
 })
 export type NativeAdmissionRefusal = typeof NativeAdmissionRefusal.Type
 
-export const NativeEnqueueResult = Schema.Union([
+const NativeEnqueueResult = Schema.Union([
   Schema.Struct({ state: Schema.Literals(["queued", "existing", "completed"]) }),
   Schema.Struct({
     state: Schema.Literals(["refused"]),

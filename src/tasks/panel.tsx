@@ -11,6 +11,7 @@ import {
   usePanel,
 } from "@opencode/plugin/gui"
 import { refusalMessage } from "../audit/fallow-refusal.ts"
+import { linkSignal, linkedSession } from "../link-host.ts"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { createVirtualizer, defaultRangeExtractor } from "@tanstack/solid-virtual"
 import { Schema } from "effect"
@@ -38,7 +39,7 @@ import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import { createSelectedFacts, createTaskList, type TaskList } from "./panel-streams.ts"
 import { taskChanges } from "./events.ts"
-import type { PanelData } from "./panel-state.ts"
+import type { TasksPanelData } from "./panel-state.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { createPanelStatus, PanelSkeleton, PanelStatus } from "../panel-status.tsx"
@@ -284,7 +285,7 @@ function TaskPanel(
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
-  const [data, setData] = createSignal<PanelData>({
+  const [data, setData] = createSignal<TasksPanelData>({
     key: "",
     currentActivity: {},
     activityError: "",
@@ -2344,16 +2345,9 @@ export function setupTaskPanel(
           .rpc(Tasks)
           .get({ taskID: reference }, { location: session.location, signal })
       },
-      signal: () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)]),
+      signal: () => linkSignal(ctx),
       open(target) {
-        const session = ctx.sessions
-          .list()
-          .find(
-            (candidate) =>
-              candidate.id === target.session.id &&
-              candidate.server.id === target.session.server.id &&
-              candidate.location?.directory === target.sessionDirectory,
-          )
+        const session = linkedSession(ctx, target)
         if (!session) return
         const store = ctx.stores.taskView(session)
         store.update((draft) => {

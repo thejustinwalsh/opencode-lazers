@@ -2,7 +2,7 @@ import { sameProject } from "../project-key.ts"
 import { panelErrorMessage as errorMessage } from "../panel-error.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
 import type { TrajectoryResponse } from "../observability/contract.ts"
-import { readTaskEffortBasis } from "./comparison-presentation.ts"
+import { readTaskEffortBasis, type ModelCandidate } from "./comparison-presentation.ts"
 import type { ModelEvidenceOutput } from "./source-schema.ts"
 import type { ModelComparisonOutput } from "./comparison-schema.ts"
 import { ModelCatalogOutputSchema, ModelMappingWriteOutputSchema } from "./contract.ts"
@@ -112,7 +112,6 @@ type PendingAssignmentWrite = {
 }
 
 export type ModelTask = Extract<TaskDetail, { status: "found" }> | undefined
-export type ModelCandidate = ModelComparisonOutput["candidates"][number]
 
 export type ModelComparisonPanelData = {
   key: string

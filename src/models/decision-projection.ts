@@ -45,7 +45,7 @@ import { computeDecisionTasks, inspectDecisionSources } from "./observation-ledg
  * keeps paging until the project is caught up. Not measured; it changes only how many
  * transactions a catch-up takes (512 rows is roughly a few milliseconds of parsing).
  */
-export const FOLD_BATCH_SIZE = 512
+const FOLD_BATCH_SIZE = 512
 
 const KINDS_SQL = DECISION_PROGRESS_KINDS.map((kind) => `'${kind}'`).join(",")
 const MODULE = schemaModules["model-decision-projection"]

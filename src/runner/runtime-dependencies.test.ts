@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { git } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { TaskReads } from "../tasks/read.ts"
 import {
   TaskRuntime,
@@ -473,11 +473,10 @@ test("afterPlans dispatches after genuine combined-check recovery while preservi
   expect(accepted.state).toBe("accepted")
   const recoveredArtifact = accepted.artifact
   if (!recoveredArtifact) throw new Error("Expected genuine combined acceptance artifact")
-  const acceptedTransition = f.store.latestTransition<{ artifact: string; checks: CheckReceipt[] }>(
-    parentID,
-    null,
-    "PLAN_ACCEPTED",
-  )!
+  const acceptedTransition = f.store.latestTransition<{
+    artifact: string
+    checks: RunnerCheckReceipt[]
+  }>(parentID, null, "PLAN_ACCEPTED")!
   expect(acceptedTransition.artifact).toBe(recoveredArtifact)
   expect(acceptedTransition.checks.every((check) => check.exitCode === 0)).toBe(true)
   expect(f.store.effects(parentID).find((effect) => effect.id === failedReceipt.id)).toMatchObject({

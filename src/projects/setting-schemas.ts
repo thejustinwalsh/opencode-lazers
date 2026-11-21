@@ -12,7 +12,7 @@ import { z } from "zod"
  * file imports only zod so the GUI bundle can share it.
  */
 export type SettingDef<T extends z.ZodType = z.ZodType> = { schema: T; builtIn: z.output<T> }
-export const setting = <T extends z.ZodType>(schema: T, builtIn: z.output<T>): SettingDef<T> => ({
+const setting = <T extends z.ZodType>(schema: T, builtIn: z.output<T>): SettingDef<T> => ({
   schema,
   builtIn,
 })
@@ -59,3 +59,6 @@ const shape = <D extends Record<string, SettingDef>>(defs: D) =>
 /** The Settings RPC views, derived from the declarations. */
 export const GlobalSettingsView = z.strictObject(shape(globalSettingDefs))
 export const ProjectSettingsView = z.strictObject(shape(projectSettingDefs))
+
+/** The scope value of settings and pauses that apply to every project. */
+export const GLOBAL_SCOPE = "global"

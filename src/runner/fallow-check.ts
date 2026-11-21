@@ -3,7 +3,7 @@ import type { FallowAcceptance, FallowDisposition, FallowPackage } from "../audi
 import { renderRepair } from "../audit/fallow-render.ts"
 import type { FallowReviewInput, FallowReviewResult } from "../audit/review.ts"
 import { FALLOW_CHECK_ID } from "../task.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 
 /** Reserved verification ID: authored checks cannot use it. */
 export { FALLOW_CHECK_ID } from "../task.ts"
@@ -31,11 +31,11 @@ export const defaultFallowReview: FallowReview = async (input) =>
   (await import("../audit/review.ts")).fallowReview(input)
 
 /** The package of a review that ran; undefined when it was unavailable. */
-export const packageOf = (result: FallowReviewResult | undefined): FallowPackage | undefined =>
+const packageOf = (result: FallowReviewResult | undefined): FallowPackage | undefined =>
   result?.package
 
 /** Findings the change introduced or worsened (what the worker is asked about). */
-export function liveFindingCount(result: FallowReviewResult | undefined): number {
+function liveFindingCount(result: FallowReviewResult | undefined): number {
   const pkg = packageOf(result)
   return pkg ? pkg.summary.errors + pkg.summary.warnings : 0
 }
@@ -59,7 +59,7 @@ export function fallowCheckReceipt(input: {
   result: FallowReviewResult
   /** The plan-level review reports but never fails: exit 0 whatever it found. */
   advisory?: boolean
-}): CheckReceipt {
+}): RunnerCheckReceipt {
   const pkg = packageOf(input.result)
   const failing = !input.advisory && needsRepair(pkg)
   return {

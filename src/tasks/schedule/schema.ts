@@ -11,7 +11,6 @@ export { BUCKETS, type Bucket }
 export type DirtyKind = "task" | "plan" | "reservations" | "pause"
 
 const MODULE = schemaModules["task-schedule"]
-export const TASK_SCHEDULE_TABLES = MODULE.tables
 
 /** Rows of each projection table, dropped together on a generation change. */
 export const TABLES_SQL = `

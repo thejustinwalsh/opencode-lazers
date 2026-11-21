@@ -18,7 +18,7 @@ export class UnknownStreamError extends Error {
     this.name = "UnknownStreamError"
   }
 }
-export class StreamFailedError extends Error {
+class StreamFailedError extends Error {
   constructor(
     readonly stream: string,
     message: string,

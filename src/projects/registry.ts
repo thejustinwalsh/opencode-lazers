@@ -155,7 +155,7 @@ export function setProjectCode(repository: TaskRepository, key: string, code: st
   repository.atomic((db) => setProjectCodeIn(db, key, code))
 }
 
-export function setProjectCodeIn(db: Database, key: string, code: string): void {
+function setProjectCodeIn(db: Database, key: string, code: string): void {
   const owner = db
     .query<{ key: string }, [string]>("SELECT key FROM lazers_projects WHERE code=?")
     .get(code)

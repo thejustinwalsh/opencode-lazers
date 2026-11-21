@@ -62,7 +62,7 @@ export function perMillionRate(perToken: string | null | undefined) {
 }
 
 /** A short date and time, `Nov 19, 8:59 AM`; nothing for a missing or unparsable value. */
-export function readTime(value: string | null | undefined) {
+function readTime(value: string | null | undefined) {
   if (!value) return undefined
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return undefined
@@ -119,14 +119,14 @@ export const outcomeLabels: Record<ModelDecisionContributor["contribution"], str
   retry: "Retry",
 }
 
-export const usageKindLabels = {
+const usageKindLabels = {
   uncachedInput: "Input",
   output: "Output",
   reasoning: "Reasoning",
   cacheRead: "Cache read",
   cacheWrite: "Cache write",
 } as const
-export type UsageKind = keyof typeof usageKindLabels
+type UsageKind = keyof typeof usageKindLabels
 const usageKinds = Object.keys(usageKindLabels) as UsageKind[]
 
 export const rateCoverageLabels: Record<
@@ -172,7 +172,7 @@ export type SelectedFacts = {
 }
 
 /** A small sample is fewer terminal tasks than the chart's threshold; it labels, never hides. */
-export function isSmallSample(terminal: number | undefined) {
+function isSmallSample(terminal: number | undefined) {
   return terminal !== undefined && terminal < SMALL_SAMPLE_TERMINAL_TASKS
 }
 
@@ -246,7 +246,7 @@ export function runsCoverage(
   }
 }
 
-export function runRows(contributors: readonly ModelDecisionContributor[]): RunRow[] {
+function runRows(contributors: readonly ModelDecisionContributor[]): RunRow[] {
   return contributors.map((contributor) => ({
     task: contributor.taskReference,
     outcome: outcomeLabels[contributor.contribution],
@@ -316,7 +316,7 @@ function sourceDetail(source: ModelSource) {
 }
 
 /** Snapshot sources as rows: name, record count, read time. */
-export function snapshotSourceRows(sources: readonly ModelSource[]): SourceRow[] {
+function snapshotSourceRows(sources: readonly ModelSource[]): SourceRow[] {
   return sources.map((source) => ({
     name: sourceTitle(source.source),
     detail: sourceDetail(source),
@@ -325,7 +325,7 @@ export function snapshotSourceRows(sources: readonly ModelSource[]): SourceRow[]
 }
 
 /** The price pins the estimate was valued with: which source, how it was quoted, when read. */
-export function priceSourceRows(inspection: Inspection): SourceRow[] {
+function priceSourceRows(inspection: Inspection): SourceRow[] {
   return inspection.context.priceIndex.pins.map((pin) => ({
     name: `${priceSourceLabels[pin.source]} prices`,
     detail: joinSegments([
@@ -337,7 +337,7 @@ export function priceSourceRows(inspection: Inspection): SourceRow[] {
 }
 
 /** At most three short lines that replace the repeated disclaimers. */
-export function runsCaveats(inspection: Inspection): string[] {
+function runsCaveats(inspection: Inspection): string[] {
   const lines: string[] = []
   if (inspection.cohort.acceptedTaskCount > 0)
     lines.push("Cost includes failed and retried attempts, divided by accepted tasks.")
@@ -356,7 +356,7 @@ export function runsCaveats(inspection: Inspection): string[] {
 }
 
 /** Raw ids, hashes and snapshot ids; the only place they appear. */
-export function runsIdentifiers(
+function runsIdentifiers(
   inspection: Inspection,
   runs: readonly ModelDecisionContributor[],
 ): IdentifierItem[] {
@@ -423,7 +423,7 @@ export function benchmarkStats(price: BenchmarkPrice | null): StatItem[] {
 }
 
 /** Secondary indices, present only when the source reports them. */
-export function benchmarkScoreRows(scores: BenchmarkScores): SourceRow[] {
+function benchmarkScoreRows(scores: BenchmarkScores): SourceRow[] {
   return [
     ["Agentic", scores.agenticIndex],
     ["Intelligence", scores.intelligenceIndex],
@@ -445,7 +445,7 @@ export function benchmarkCaveats(input: {
   ].filter((line): line is string => Boolean(line))
 }
 
-export function benchmarkSourceRows(input: {
+function benchmarkSourceRows(input: {
   citation: string | undefined
   scoreRetrievedAt: string | null | undefined
   price: BenchmarkPrice | null

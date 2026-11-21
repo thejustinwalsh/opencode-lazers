@@ -16,7 +16,7 @@ import {
 import type { FileProgress } from "./machine"
 import { Sha256 } from "./sha256"
 
-export const SEGMENT_BYTES = 32 * 1024 * 1024
+const SEGMENT_BYTES = 32 * 1024 * 1024
 const RETRIES = 3
 
 export class DownloadError extends Error {
@@ -31,10 +31,10 @@ export class DownloadError extends Error {
 export const isAbort = (error: unknown) =>
   error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError")
 
-export const gb = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`
+const gb = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`
 
 /** Where an interrupted download picks up: the last whole segment inside what was written. */
-export const resumeOffset = (written: number, total: number, segment = SEGMENT_BYTES) =>
+const resumeOffset = (written: number, total: number, segment = SEGMENT_BYTES) =>
   written >= total ? total : Math.floor(written / segment) * segment
 
 async function directory() {

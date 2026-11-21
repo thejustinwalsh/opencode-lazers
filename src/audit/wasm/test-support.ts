@@ -23,7 +23,7 @@ import {
 } from "../fallow-wasi.ts"
 
 export const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
-export const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
+const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
 export const wasmModule = new WebAssembly.Module(wasmBytes)
 export const threadedWasmModule = new WebAssembly.Module(
   readFileSync(new URL("./fallow-threads.wasm", import.meta.url)),
@@ -73,12 +73,6 @@ export function runOp(
   }
   if (parsed.error) throw new Error(`${parsed.error.code}: ${parsed.error.message}`)
   return { report: parsed.report ?? {}, git, stderr: outcome.stderr }
-}
-
-/** Error code of a request that must fail. */
-export function errorCode(op: string, root: string, extra: Record<string, unknown> = {}) {
-  const outcome = runFallowModule(wasmModule, { op, root, ...extra })
-  return (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code
 }
 
 export function trackedSources(root: string): string[] {
@@ -133,7 +127,7 @@ ${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k
 }
 `
 
-export const fixtureFiles: Record<string, string> = {
+const fixtureFiles: Record<string, string> = {
   "package.json": JSON.stringify({
     name: "fixture",
     type: "module",

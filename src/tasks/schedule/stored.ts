@@ -25,10 +25,7 @@ export function scheduleReady(db: Database, project: string): boolean {
 }
 
 /** Tasks per bucket of one project, retired tasks excluded (at most one row per bucket). */
-export function storedBucketCounts(
-  db: Database,
-  project: string,
-): Record<Bucket, number> | undefined {
+function storedBucketCounts(db: Database, project: string): Record<Bucket, number> | undefined {
   if (!scheduleReady(db, project)) return undefined
   const counts = Object.fromEntries(BUCKETS.map((bucket) => [bucket, 0])) as Record<Bucket, number>
   for (const row of db

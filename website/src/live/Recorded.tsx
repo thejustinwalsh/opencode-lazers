@@ -12,12 +12,12 @@ import { FLAT_METER } from "./meter"
  * the dimmed chat and a play button only; the reason is read to assistive technology. Nothing is
  * fetched until the visitor clicks play.
  */
-export type Step =
+type Step =
   | { type: "user"; text: string }
   | { type: "answer"; text: string; audio?: string; seconds: number }
   | { type: "dictate"; text: string; seconds: number }
 
-export type Session = {
+type Session = {
   version: 1
   steps: Step[]
   audio: Record<string, { webm: string; m4a: string }>

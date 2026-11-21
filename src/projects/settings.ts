@@ -4,6 +4,7 @@ import { z } from "zod"
 import { schemaModules } from "../database-schema.ts"
 import type { TaskRepository } from "../storage.ts"
 import {
+  GLOBAL_SCOPE,
   globalSettingDefs,
   projectSettingDefs,
   type GlobalSettings,
@@ -28,7 +29,6 @@ const builtInsOf = <T>(defs: Record<string, SettingDef>) =>
 const globalSchema = schemasOf(globalSettingDefs)
 const projectSchema = schemasOf(projectSettingDefs)
 
-export const GLOBAL_SCOPE = "global"
 const builtInGlobal = builtInsOf<GlobalSettings>(globalSettingDefs)
 const builtInProject = builtInsOf<ProjectSettings>(projectSettingDefs)
 

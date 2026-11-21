@@ -15,7 +15,7 @@ export type DrainResult = {
  * a cap: nothing is refused or dropped, the owner keeps draining in its own transactions. About a
  * thousand node refreshes is tens of milliseconds (see the drain overhead test).
  */
-export const DRAIN_BUDGET = 1000
+const DRAIN_BUDGET = 1000
 
 /** True when work is queued: the only statement a transaction with nothing queued pays. */
 const QUEUED = "SELECT 1 FROM task_schedule_dirty LIMIT 1"
@@ -83,7 +83,7 @@ export function retryParked(db: Database, now = Date.now()): number {
     .run(now).changes
 }
 
-export function parkedCount(db: Database): number {
+function parkedCount(db: Database): number {
   return db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_schedule_failed").get()!.n
 }
 

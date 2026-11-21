@@ -21,7 +21,7 @@ import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import {
   verificationActivitiesForDatabase,
   forgetVerificationActivity,
@@ -1077,7 +1077,7 @@ test("registered verify-retained checks a blocked verifying candidate without se
   for (const row of checks) {
     expect(row.artifact).toBe(f.artifact)
     expect(row.state).toBe("completed")
-    const receipt = JSON.parse(row.receipt!) as CheckReceipt
+    const receipt = JSON.parse(row.receipt!) as RunnerCheckReceipt
     expect(receipt.command).toBe(check)
     expect(receipt.exitCode).toBe(0)
     expect(receipt.cwd).not.toBe(f.attempt.workspace)
@@ -1270,7 +1270,7 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
   expect(checks.map((row) => row.phase)).toEqual(["task"])
   for (const row of checks) {
     expect(row.state).toBe("completed")
-    const receipt = JSON.parse(row.receipt!) as CheckReceipt
+    const receipt = JSON.parse(row.receipt!) as RunnerCheckReceipt
     expect(receipt.command).toBe("bun test src/runner/retained-check.test.ts")
     expect(receipt.exitCode).toBe(0)
     expect(receipt.cwd).not.toBe(f.attempt.workspace)
@@ -1331,7 +1331,7 @@ test("stopped-plan verify-retained preserves failed sealed-source check receipts
       .get(operationID),
   )
   expect(check).toMatchObject({ phase: "task", artifact: f.artifact, state: "completed" })
-  const receipt = JSON.parse(check!.receipt!) as CheckReceipt
+  const receipt = JSON.parse(check!.receipt!) as RunnerCheckReceipt
   expect(receipt.exitCode).not.toBe(0)
   expect(`${receipt.stdout}\n${receipt.stderr}`).toContain("fixture retained check failure")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
@@ -1483,7 +1483,7 @@ test("retained bun run verify may perform a no-op formatter and use its passing 
       .get(operation.id),
   )!
   if (!check.receipt) throw new Error(`No retained formatter receipt: ${JSON.stringify(snapshot)}`)
-  const receipt = JSON.parse(check.receipt!) as CheckReceipt
+  const receipt = JSON.parse(check.receipt!) as RunnerCheckReceipt
   expect(receipt.command).toBe("bun run verify")
   expect(receipt.exitCode).toBe(0)
   expect(check.state).toBe("completed")
@@ -1523,7 +1523,7 @@ test("retained verification does not accept a verifier that actually changes its
       )
       .get(operation.id),
   )!
-  const receipt = JSON.parse(check.receipt!) as CheckReceipt
+  const receipt = JSON.parse(check.receipt!) as RunnerCheckReceipt
   expect(receipt.exitCode).toBe(0)
   expect(check.state).toBe("completed")
   expect(operation.state).toBe("failed")
@@ -2280,7 +2280,7 @@ for (const action of ["cancel"] as const)
           .get(requested.operationID),
       )!
       expect(row.state).toBe("intended")
-      const original = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
+      const original = JSON.parse(readFileSync(row.receipt_path, "utf8")) as RunnerCheckReceipt
       const changed = structuredClone(original)
       const isolation = changed.isolation as { resources: { inode: number }[] }
       if (kind === "missing") rmSync(row.receipt_path)
@@ -2596,7 +2596,7 @@ test.each(["cancel"] as const)(
     )!
     expect(cancelledCheck).toMatchObject({ state: "completed", cleanup_state: "complete" })
     if (!cancelledCheck.receipt) throw new Error("Cancelled check did not retain its actual result")
-    const cancelledReceipt = JSON.parse(cancelledCheck.receipt) as CheckReceipt
+    const cancelledReceipt = JSON.parse(cancelledCheck.receipt) as RunnerCheckReceipt
     expect(cancelledReceipt.exitCode === 0 && !cancelledReceipt.timedOut).toBe(false)
     expect(delayed.store.plan(delayed.planID)?.state).toBe(
       action === "cancel" ? "cancelled" : "blocked",

@@ -602,7 +602,7 @@ export function tickStep(spanMs: number, maxTicks = 6) {
 }
 
 /** Compact elapsed label: 45s, 1m30s, 12m, 1h, 1h30m. */
-export function elapsedLabel(elapsedMs: number) {
+export function elapsedDurationLabel(elapsedMs: number) {
   const total = Math.round(elapsedMs / SECOND)
   if (total === 0) return "0"
   const hours = Math.floor(total / 3_600)
@@ -729,7 +729,7 @@ export function buildTimeline(
   const durationMs = span > 0 ? span : step
   const ticks: TimelineTick[] = []
   for (let elapsed = 0; elapsed <= durationMs; elapsed += step)
-    ticks.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
+    ticks.push({ elapsedMs: elapsed, label: elapsedDurationLabel(elapsed) })
   const axis = buildAxis(
     durationMs,
     values.map((value) => value - origin),
@@ -738,7 +738,7 @@ export function buildTimeline(
   const position = (at: number) => axis.place(at - origin)
   const breaks = axis.idle.map((span) => ({
     ...span,
-    label: `${elapsedLabel(span.endMs - span.startMs)} idle`,
+    label: `${elapsedDurationLabel(span.endMs - span.startMs)} idle`,
     left: axis.place(span.startMs),
     width: axis.place(span.endMs) - axis.place(span.startMs),
   }))

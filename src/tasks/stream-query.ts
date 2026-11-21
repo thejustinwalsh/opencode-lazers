@@ -39,7 +39,7 @@ export type TaskToolPage = {
 }
 
 /** Where a search matched, read from the stored specification of a task on the page. */
-export function matchesOf(
+function matchesOf(
   task: TaskSpec,
   reference: string,
   search: string,

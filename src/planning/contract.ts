@@ -21,14 +21,14 @@ export type PlanningAgentId = z.infer<typeof PlanningAgentId>
 const line = z.string().trim().min(1)
 
 /** blocker: the plan would produce wrong or redone work. */
-export const FindingSeverity = z.enum(["blocker", "major", "minor", "nit"])
+const FindingSeverity = z.enum(["blocker", "major", "minor", "nit"])
 export type FindingSeverity = z.infer<typeof FindingSeverity>
 
 /** confirmed: traced in the code or the plan text. likely: strong reading, not traced. suspicion: a hunch worth a look. */
-export const FindingConfidence = z.enum(["confirmed", "likely", "suspicion"])
-export type FindingConfidence = z.infer<typeof FindingConfidence>
+const FindingConfidence = z.enum(["confirmed", "likely", "suspicion"])
+type FindingConfidence = z.infer<typeof FindingConfidence>
 
-export const TARGET_FIELDS = [
+const TARGET_FIELDS = [
   "objective",
   "acceptance",
   "verification",
@@ -39,17 +39,17 @@ export const TARGET_FIELDS = [
   "design-decision",
   "other",
 ] as const
-export const TargetField = z.enum(TARGET_FIELDS)
+const TargetField = z.enum(TARGET_FIELDS)
 export type TargetField = z.infer<typeof TargetField>
 
-export const FindingTarget = z.strictObject({
+const FindingTarget = z.strictObject({
   /** The task title or id, or the plan section heading, exactly as written in the plan. */
   unit: line,
   field: TargetField,
 })
-export type FindingTarget = z.infer<typeof FindingTarget>
+type FindingTarget = z.infer<typeof FindingTarget>
 
-export const PlanningFinding = z
+const PlanningFinding = z
   .strictObject({
     id: line,
     severity: FindingSeverity,
@@ -74,10 +74,10 @@ export const PlanningFinding = z
 export type PlanningFinding = z.infer<typeof PlanningFinding>
 
 /** changes-design: a different architecture. changes-scope: different tasks or files. changes-detail: same shape, different behaviour. */
-export const QuestionWeight = z.enum(["changes-design", "changes-scope", "changes-detail"])
-export type QuestionWeight = z.infer<typeof QuestionWeight>
+const QuestionWeight = z.enum(["changes-design", "changes-scope", "changes-detail"])
+type QuestionWeight = z.infer<typeof QuestionWeight>
 
-export const PlanningQuestion = z
+const PlanningQuestion = z
   .strictObject({
     id: line,
     /** One sentence, answerable without reading code. */
@@ -90,7 +90,7 @@ export const PlanningQuestion = z
     weight: QuestionWeight,
   })
   .strict()
-export type PlanningQuestion = z.infer<typeof PlanningQuestion>
+type PlanningQuestion = z.infer<typeof PlanningQuestion>
 
 const base = {
   agent: PlanningAgentId,

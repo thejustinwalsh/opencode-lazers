@@ -16,7 +16,7 @@ import {
   combineArtifacts,
   gitAsync,
 } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { checkSucceeded } from "./checks.ts"
 import { PlanInput } from "./schema.ts"
 import type { PlanRow } from "./store.ts"
@@ -208,7 +208,7 @@ export class PlanFinish {
     // Explicit reconciliation may follow a conclusive verifier/environment
     // failure. Keep prior effects and give the requested check run its own ID;
     // never replay uncertain effects or silently retry on ordinary ticks.
-    const receipts: CheckReceipt[] = []
+    const receipts: RunnerCheckReceipt[] = []
     for (const check of input.verification) {
       const deadline = this.verificationDeadline(
         this.verificationTarget(plan, "combined", check, artifact, null, null, null),
@@ -228,7 +228,7 @@ export class PlanFinish {
           }
           const previous =
             e.state === "completed" && e.receipt
-              ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
+              ? (JSON.parse(e.receipt) as { check?: RunnerCheckReceipt }).check
               : undefined
           return (
             payload.artifact === artifact &&
