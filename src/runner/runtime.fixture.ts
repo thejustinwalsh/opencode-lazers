@@ -77,6 +77,53 @@ export function useRuntimeFixtureCleanup() {
   })
 }
 
+const RAW = Symbol("raw")
+let sessionClock = 0
+
+/**
+ * A fixture session whose every change, however deep (`busy = true`, `messages.push(..)`), moves
+ * its `updatedAt` the way the native `time.updated` moves, so tests need not remember to.
+ */
+function observedSession(root: HostSession): HostSession {
+  const touch = () => {
+    root.updatedAt = ++sessionClock
+  }
+  const wrap = <T extends object>(target: T): T =>
+    new Proxy(target, {
+      get(object, key, receiver) {
+        if (key === RAW) return object
+        const value = Reflect.get(object, key, receiver)
+        return typeof value === "object" && value !== null ? wrap(value) : value
+      },
+      set(object, key, value) {
+        if (!(object === root && key === "updatedAt")) touch()
+        return Reflect.set(object, key, value)
+      },
+      deleteProperty(object, key) {
+        touch()
+        return Reflect.deleteProperty(object, key)
+      },
+    })
+  touch()
+  return wrap(root)
+}
+
+/** The sessions map of a fixture host: stored sessions are observed, so mutations bump `updatedAt`. */
+function observedSessions() {
+  const sessions = new Map<string, HostSession>()
+  const set = sessions.set.bind(sessions)
+  sessions.set = (key, value) => set(key, observedSession(value))
+  return sessions
+}
+
+function plainClone<T>(value: T): T {
+  if (typeof value !== "object" || value === null) return value
+  if (Array.isArray(value)) return value.map(plainClone) as T
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, plainClone(entry)]),
+  ) as T
+}
+
 export function fixture(
   options: {
     fail?: boolean
@@ -220,7 +267,7 @@ export function fixture(
   const tasks = taskFiles.map((file, index) =>
     createTask(file.name, file.path, file.scope ?? [file.path], index === 0),
   )
-  const sessions = new Map<string, HostSession>()
+  const sessions = observedSessions()
   sessions.set("owner", {
     id: "owner",
     projectID: "project",
@@ -259,7 +306,7 @@ export function fixture(
     removeWorktree: async (directory) => {
       git(root, ["worktree", "remove", directory])
     },
-    session: async (id) => structuredClone(sessions.get(id) ?? null),
+    session: async (id) => plainClone(sessions.get(id) ?? null),
     create: async (input) => {
       events.push(`create:${input.id}`)
       sessions.set(input.id, {
@@ -390,20 +437,50 @@ export function fixture(
       events.push(`instruction:${input.key}`)
     },
     outcomeInbox: async (targetSessionID) => structuredClone(inbox.get(targetSessionID) ?? []),
-    architectInputPage: async (targetSessionID) => ({
-      inbox: structuredClone(inbox.get(targetSessionID) ?? []).map((entry) => ({
-        id: entry.id,
-        type: entry.type,
-        ...(entry.delivery ? { delivery: entry.delivery } : {}),
-        ...(entry.metadata ? { metadata: entry.metadata } : {}),
-      })),
-      messages: (sessions.get(targetSessionID)?.messages ?? []).map((message) => ({
-        id: message.id,
-        type: message.type ?? "user",
-        ...(message.metadata ? { metadata: message.metadata } : {}),
-      })),
-      nextCursor: null,
-    }),
+    architectInputPage: async (targetSessionID, cursor, known) => {
+      const entries = structuredClone(inbox.get(targetSessionID) ?? [])
+      const session = sessions.get(targetSessionID)
+      const observation = {
+        updatedAt: session?.updatedAt ?? 0,
+        inbox: JSON.stringify(
+          entries.map((entry) => ({
+            id: entry.id,
+            type: entry.type,
+            delivery: entry.delivery ?? null,
+          })),
+        ),
+      }
+      if (
+        !cursor &&
+        known &&
+        known.updatedAt === observation.updatedAt &&
+        known.inbox === observation.inbox
+      )
+        return {
+          inbox: [],
+          messages: [],
+          nextCursor: null,
+          observation,
+          unchanged: true,
+          archived: session?.archived ?? false,
+        }
+      return {
+        inbox: entries.map((entry) => ({
+          id: entry.id,
+          type: entry.type,
+          ...(entry.delivery ? { delivery: entry.delivery } : {}),
+          ...(entry.metadata ? { metadata: entry.metadata } : {}),
+        })),
+        messages: (session?.messages ?? []).map((message) => ({
+          id: message.id,
+          type: message.type ?? "user",
+          ...(message.metadata ? { metadata: message.metadata } : {}),
+        })),
+        nextCursor: null,
+        observation,
+        archived: session?.archived ?? false,
+      }
+    },
     cancelOutcome: async (input) => {
       const entries = inbox.get(input.sessionID) ?? []
       const index = entries.findIndex((entry) => entry.id === input.inboxID)

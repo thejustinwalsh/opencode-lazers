@@ -108,7 +108,16 @@ export class ArchitectSources {
     for (const id of [...this.sourceEpochs.keys()])
       if (!current.has(id)) this.sourceEpochs.delete(id)
     for (const id of current) if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
-    for (const id of current) this.scheduleSourceInvalidation(id)
+    // A resync (a plugin reload, or a lost event stream) keeps every stored observation and
+    // cursor. Each source is verified once against the host instead: unchanged `time.updated`
+    // and inbox cost one cheap read and no page scan; a changed one scans again (a mutable
+    // assistant result or a disappeared input can sit anywhere in a history, so a changed
+    // session is swept from its first page); an interrupted scan resumes from its cursor.
+    for (const id of this.store.architectSourceSessionIDs()) {
+      this.sourceEpochs.set(id, (this.sourceEpochs.get(id) ?? 0) + 1)
+      this.sourceVerified.delete(id)
+      this.sourceResyncVerify.add(id)
+    }
     this.sourceResyncPending = false
   }
   /** Leading edge writes at once; further events in the 250ms window coalesce into one trailing write. */
@@ -322,12 +331,46 @@ export class ArchitectSources {
   }
   private readonly sourceScanFailures = new Map<string, string>()
   /**
+   * After a resync a retired source is asked once whether it is still archived and unchanged; only
+   * a change reactivates it (through the same durable invalidation a native event makes).
+   */
+  private async verifyRetiredSources() {
+    for (const id of [...this.sourceResyncVerify]) {
+      const head = this.store.architectSourceHead(id)
+      if (!head) {
+        this.sourceResyncVerify.delete(id)
+        continue
+      }
+      if (head.state !== "retired") continue
+      const epoch = this.sourceEpochs.get(id)
+      try {
+        const source = this.store.architectSource(id)
+        let known: import("./host.ts").ArchitectSourceObservation | undefined
+        try {
+          if (source?.observation_json) known = JSON.parse(source.observation_json)
+        } catch {
+          known = undefined
+        }
+        const page = await this.host.architectInputPage!(id, undefined, known)
+        if (epoch !== this.sourceEpochs.get(id)) continue
+        if (!(page.unchanged && page.archived !== false))
+          this.store.invalidateArchitectSource(id, this.now())
+        this.sourceResyncVerify.delete(id)
+      } catch {
+        // No live location or a failed read: stay in the set and verify on the next tick.
+      }
+    }
+  }
+  /** Sources a resync has not yet verified against the host. */
+  private readonly sourceResyncVerify = new Set<string>()
+  /**
    * Sources this process has read to the end and found current: the event epoch and renewal state
    * it was read at. While neither moved, nothing new can be in the host, so the tick asks nothing.
    */
   private readonly sourceVerified = new Map<string, { epoch: number; renewalState: string }>()
   async reconcileArchitectSources(fence: number) {
     if (!this.host.architectInputPage) return
+    await this.verifyRetiredSources()
     for (const source of this.store.architectSources()) {
       const renewal = this.store.architectRenewal(source.renewal_id)
       if (!renewal) continue
@@ -341,6 +384,8 @@ export class ArchitectSources {
       try {
         const epoch = this.sourceEpochs.get(source.session_id) ?? 0
         const result = await this.inspectArchitectSourcePage(renewal, fence)
+        if (result.nextCursor === null && epoch === this.sourceEpochs.get(source.session_id))
+          this.sourceResyncVerify.delete(source.session_id)
         if (result.nextCursor === null && epoch === this.sourceEpochs.get(source.session_id))
           this.sourceVerified.set(source.session_id, { epoch, renewalState: renewal.state })
         else this.sourceVerified.delete(source.session_id)
