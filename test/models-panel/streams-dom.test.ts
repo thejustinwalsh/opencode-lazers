@@ -265,6 +265,11 @@ const runRows = (root: ParentNode) =>
 test("contributors: the selected task's lead and Load more runs grows the window", async () => {
   const { host, root } = mount({ data: manyRuns(), preferences: { taskFilter: true, open: true } })
   await until(() => runRows(root).length > 0, "the runs")
+  // The task picker shows once the selected task's detail and effort windows have read.
+  await until(
+    () => root.querySelector('button[aria-label="LZ-228"][aria-haspopup=menu]') !== null,
+    "the task picker",
+  )
   menuPick(root, "LZ-228", "LZ-226")
   const rest = (window: number) =>
     host.lastOpen(
