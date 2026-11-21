@@ -14,8 +14,10 @@ import {
 type Fixture = ReturnType<typeof makeFixture>
 
 /**
- * A host message list over `transcripts`, paged like OpenCode's: the first page names the order,
- * later pages only the cursor (both together is rejected), and the last page has no next cursor.
+ * A host message list over `transcripts`, paged like OpenCode's (verified live, 2026-11-21): the
+ * first page names the order, later pages only the cursor (both together is rejected); every page
+ * that has messages carries a keyset `next` cursor (after its last message), the last page too;
+ * reading past the end returns an empty page with no cursors.
  */
 function fakeClient(transcripts: Map<string, unknown[]>) {
   const calls: Array<{ sessionID: string; cursor?: string }> = []
@@ -34,8 +36,9 @@ function fakeClient(transcripts: Map<string, unknown[]>) {
         const offset = input.cursor ? Number(input.cursor.slice(2)) : 0
         const limit = input.limit ?? 50
         const data = all.slice(offset, offset + limit)
-        const next = offset + limit < all.length ? `c:${offset + limit}` : undefined
-        return { data, cursor: { next } }
+        const next = data.length > 0 ? `c:${offset + data.length}` : null
+        const previous = data.length > 0 ? `p:${offset}` : null
+        return { data, cursor: { next, previous } }
       },
     },
   } as unknown as HostMessageClient
@@ -109,7 +112,7 @@ test("pages by cursor; a restart resumes at the stored cursor; redelivery adds n
       fixture.repository.read((db) =>
         storedTranscriptSession(db, fixture.directory, "ses-accepted"),
       ),
-    ).toEqual({ cursor: "c:100", base: 100, messageCount: 120, state: "available" })
+    ).toMatchObject({ cursor: "c:100", base: 100, messageCount: 120, state: "available" })
     folding.close()
 
     // A restart reads from the tail page only; the same messages again write nothing.
@@ -211,7 +214,11 @@ test("privacy: no text column exists and no message text reaches the database fi
       "session_id",
       "cursor",
       "base_ordinal",
+      "compaction_base",
+      "compaction_base_at",
       "message_count",
+      "compactions",
+      "last_compaction_at",
       "read_state",
     ])
     const errorTypes = fixture.repository.read((db) =>
@@ -478,6 +485,96 @@ test("a cursor the host refuses is read again from the start; the rows stay", as
     expect(host.calls.map((call) => call.cursor ?? null)).toEqual(["c:50", null, "c:50"])
     expect(steps(fixture, "ses-accepted")).toHaveLength(30)
     expect(folding.idle()).toBe(true)
+    folding.close()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("the stored cursor is the last non-empty page's: a resume is one read, growth is read through it", async () => {
+  const fixture = makeFixture()
+  try {
+    const stored = () =>
+      fixture.repository.read((db) =>
+        storedTranscriptSession(db, fixture.directory, "ses-accepted"),
+      )
+    // An exact multiple of the page: the page after the last is empty.
+    const transcripts = new Map([["ses-accepted", transcript(100)]])
+    const host = fakeClient(transcripts)
+    const folding = fold(fixture, host.client)
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(host.calls.map((call) => call.cursor ?? null)).toEqual([null, "c:50", "c:100"])
+    expect(stored()).toMatchObject({ cursor: "c:50", base: 50, messageCount: 100 })
+
+    // Growth: read through the stored cursor, the tail page and the new messages.
+    transcripts.get("ses-accepted")!.push(...transcript(10, "g"))
+    host.calls.length = 0
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(host.calls.map((call) => call.cursor)).toEqual(["c:50", "c:100"])
+    expect(stored()).toMatchObject({ cursor: "c:100", base: 100, messageCount: 110 })
+    expect(steps(fixture, "ses-accepted").at(-1)).toEqual({ message_id: "g-9", ordinal: 109 })
+
+    // Nothing new: the tail page is short, so one read and no write.
+    host.calls.length = 0
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(host.calls.map((call) => call.cursor)).toEqual(["c:100"])
+
+    // A cursor stored at the end (an older fold) reads the empty page: read again from the start.
+    fixture.repository.atomic((db) =>
+      db.query("UPDATE transcript_sessions SET cursor='c:110', base_ordinal=110").run(),
+    )
+    host.calls.length = 0
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(host.calls.map((call) => call.cursor ?? null)).toEqual(["c:110", null, "c:50", "c:100"])
+    expect(stored()).toMatchObject({ cursor: "c:100", base: 100, messageCount: 110 })
+    expect(steps(fixture, "ses-accepted")).toHaveLength(55)
+    folding.close()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("compactions are counted once across re-read tail pages, with the newest one's time", async () => {
+  const fixture = makeFixture()
+  try {
+    const compaction = (id: string, created: number) => ({
+      id,
+      type: "compaction",
+      time: { created },
+      status: "completed",
+      reason: "auto",
+      summary: "private summary",
+    })
+    const messages: unknown[] = [
+      ...transcript(49),
+      compaction("k-1", 7_000),
+      ...transcript(10, "t"),
+    ]
+    const transcripts = new Map([["ses-accepted", messages]])
+    const host = fakeClient(transcripts)
+    const folding = fold(fixture, host.client)
+    const stored = () =>
+      fixture.repository.read((db) =>
+        storedTranscriptSession(db, fixture.directory, "ses-accepted"),
+      )
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(stored()).toMatchObject({ compactions: 1, lastCompactionAt: 7_000 })
+    messages.push(compaction("k-2", 9_000))
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    queue(fixture, "ses-accepted")
+    await folding.settle()
+    expect(stored()).toMatchObject({
+      compactions: 2,
+      lastCompactionAt: 9_000,
+      compactionsBefore: 1,
+      messageCount: 61,
+    })
     folding.close()
   } finally {
     fixture.close()

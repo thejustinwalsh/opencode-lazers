@@ -8,6 +8,7 @@ import { ensureHostSessionStateSchema, writeHostSession } from "../../src/host-s
 import { ensureNativeCallDisplaySchema } from "../../src/progress/native-call-display.ts"
 import {
   ensureTranscriptMetaSchema,
+  UNREAD_TRANSCRIPT,
   writeTranscriptPage,
 } from "../../src/transcript-meta/schema.ts"
 import { ProgressRecorder } from "../../src/progress/recorder.ts"
@@ -382,7 +383,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       time: { created: at, streamed: at + 200, completed: at + 600 },
       tokens: { input: 1_200, output: 40 },
     })
-    const unread = { cursor: null, base: 0, messageCount: 0, state: "not-read" as const }
+    const unread = UNREAD_TRANSCRIPT
     fixture.repository.atomic((db) => {
       const now = Date.now()
       writeTranscriptPage(

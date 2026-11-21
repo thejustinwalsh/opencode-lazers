@@ -43,7 +43,7 @@ function pricedProvider(): TaskValuationProvider {
   })
 }
 
-/** The host's message list over the fixture's transcripts, paged as OpenCode pages it. */
+/** The host's message list over the fixture's transcripts, paged as OpenCode pages it (live). */
 function messageClient(fixture: Fixture): HostMessageClient {
   return {
     message: {
@@ -52,8 +52,11 @@ function messageClient(fixture: Fixture): HostMessageClient {
         const all = (fixture.sessions.get(input.sessionID)?.messages ?? []) as unknown[]
         const offset = input.cursor ? Number(input.cursor) : 0
         const limit = input.limit ?? 50
-        const next = offset + limit < all.length ? String(offset + limit) : undefined
-        return { data: all.slice(offset, offset + limit), cursor: { next } }
+        // As the real host pages: a keyset `next` on every page that has messages, the last one
+        // too; past the end an empty page with no cursors.
+        const data = all.slice(offset, offset + limit)
+        const next = data.length > 0 ? String(offset + data.length) : null
+        return { data, cursor: { next, previous: null } }
       },
     },
   } as unknown as HostMessageClient

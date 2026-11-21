@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { makeFixture } from "../../../test/trajectory/fixture.ts"
 import { ensureHostSessionStateSchema, writeHostSession } from "../../host-sessions/state.ts"
-import { ensureTranscriptMetaSchema, writeTranscriptPage } from "../../transcript-meta/schema.ts"
+import {
+  ensureTranscriptMetaSchema,
+  UNREAD_TRANSCRIPT,
+  writeTranscriptPage,
+} from "../../transcript-meta/schema.ts"
 import { readFrame } from "../frame.ts"
 import { base64ToBytes } from "../gui.ts"
 import { readerPool, type ReaderPool } from "../pool.ts"
@@ -34,7 +38,7 @@ beforeAll(() => {
   ensureHostSessionStateSchema(fixture.repository)
   ensureTranscriptMetaSchema(fixture.repository)
   ensureNativeCallDisplaySchema(fixture.repository)
-  const fresh = { cursor: null, base: 0, messageCount: 0, state: "not-read" as const }
+  const fresh = UNREAD_TRANSCRIPT
   fixture.repository.atomic((db) => {
     writeTranscriptPage(db, project, "ses-worker", fresh, [step("m1", 1), step("m2", 2)], undefined)
     writeTranscriptPage(db, project, "ses-child", fresh, [step("c1", 3)], "next-page")
