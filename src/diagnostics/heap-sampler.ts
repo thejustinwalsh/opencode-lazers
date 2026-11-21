@@ -12,7 +12,12 @@ import { appendFile, mkdir, rename, stat } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { readerPoolSnapshot } from "../streams/pool.ts"
 import { scheduleParkedCount } from "../tasks/schedule/hook.ts"
-import { drainStorageReport, setStorageTiming, type StorageTiming } from "./storage-timing.ts"
+import {
+  drainStorageReport,
+  setStorageTiming,
+  type SampledSite,
+  type StorageTiming,
+} from "./storage-timing.ts"
 
 export type HeapContext = { locations: number; cores: number }
 export type HeapSamplerOptions = {
@@ -65,6 +70,9 @@ export type HeapRecord = {
   storage: StorageTiming[]
   /** Total synchronous database ms since the previous sample. */
   storageSyncMs: number
+  /** Call sites of fast calls, one in `storageSampleRate` sampled; estimate counts as samples x rate. */
+  storageSampled: SampledSite[]
+  storageSampleRate: number
   /** Stream reader pools of this process; absent when none exists. Worker counters lag one sample. */
   readerPools?: ReturnType<typeof readerPoolSnapshot>
   /** Schedule projection refreshes parked after throwing; absent when none. */
@@ -147,9 +155,12 @@ export class HeapSampler {
         protectedObjectTypeCounts: top(protectedObjectTypeCounts),
         ...context,
         sampleMs,
-        ...(({ storage, syncMs }) => ({ storage, storageSyncMs: Math.round(syncMs * 100) / 100 }))(
-          drainStorageReport(20),
-        ),
+        ...(({ storage, syncMs, sampled, sampleRate }) => ({
+          storage,
+          storageSyncMs: Math.round(syncMs * 100) / 100,
+          storageSampled: sampled,
+          storageSampleRate: sampleRate,
+        }))(drainStorageReport(20)),
         ...(pools.length > 0 ? { readerPools: pools } : {}),
         ...(scheduleParkedCount() > 0 ? { scheduleParked: scheduleParkedCount() } : {}),
       }
