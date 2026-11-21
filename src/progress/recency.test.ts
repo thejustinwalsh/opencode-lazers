@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { asLegacyHistory } from "../runner/identity.fixture.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { ProgressRecorder } from "./recorder.ts"
 
@@ -12,6 +13,8 @@ test("S8-3 observation recency migration preserves facts and updates once for le
       created: 1000,
       data: { sessionID: "ses-failed", assistantMessageID: "recency-message" },
     })
+    // A database from before both the recency column and the integer keys.
+    asLegacyHistory(f.repository)
     f.store.atomic((db) => {
       db.exec(
         "DROP TRIGGER runner_progress_recency_inserted; DROP TRIGGER runner_progress_recency_updated; DROP INDEX runner_progress_plan_recency; ALTER TABLE runner_progress DROP COLUMN latest_observed_at",
