@@ -1,6 +1,7 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite"
 import { RECOVERY_FACT_WINDOW } from "../recovery/journal.ts"
 import { AUDIT_RUNS_KIND, measureAuditRuns, retireAuditRunBatch } from "./audit-runs.ts"
+import { planIn, planIs, samePlan } from "../runner/identity-read.ts"
 
 /**
  * Retention: retire recorded detail of finished work. A purge is one bounded command, not a
@@ -200,6 +201,7 @@ function outsideFactWindow(db: Database): Array<[string, number]> {
 }
 
 const inPlans = "(SELECT value FROM json_each(?))"
+const PLAN_LIST = "SELECT value FROM json_each(?)"
 
 export const KINDS: Kind[] = [
   {
@@ -207,10 +209,10 @@ export const KINDS: Kind[] = [
     label: "Worker activity",
     detail: "tool calls, steps and observations of finished attempts",
     ageIndependent: false,
-    specs: (ctx) => [
+    specs: (ctx, db) => [
       {
         table: "runner_progress",
-        where: `plan_id IN ${inPlans} AND kind IN (${DETAIL_PROGRESS_KINDS.map((k) => `'${k}'`).join(",")})`,
+        where: `${planIn(db, "runner_progress", PLAN_LIST)} AND kind IN (${DETAIL_PROGRESS_KINDS.map((k) => `'${k}'`).join(",")})`,
         bind: [ctx.retiredJSON],
         bytes:
           "length(payload)+length(sources_json)+length(event_ids_json)+length(dedupe_key)+length(session_id)+length(attempt_id)+length(project_directory)+96",
@@ -261,10 +263,10 @@ export const KINDS: Kind[] = [
     label: "Delivery history",
     detail: "delivery and renewal churn events; each plan and task keeps its latest transition",
     ageIndependent: false,
-    specs: (ctx) => [
+    specs: (ctx, db) => [
       {
         table: "runner_transitions",
-        where: `plan_id IN ${inPlans} AND event IN (${NOISE_TRANSITION_EVENTS.map((e) => `'${e}'`).join(",")}) AND id < (SELECT MAX(l.id) FROM runner_transitions l WHERE l.plan_id=runner_transitions.plan_id) AND id < (SELECT MAX(l.id) FROM runner_transitions l WHERE l.plan_id=runner_transitions.plan_id AND l.task_id IS runner_transitions.task_id)`,
+        where: `${planIn(db, "runner_transitions", PLAN_LIST)} AND event IN (${NOISE_TRANSITION_EVENTS.map((e) => `'${e}'`).join(",")}) AND id < (SELECT MAX(l.id) FROM runner_transitions l WHERE ${samePlan(db, "runner_transitions", "l", "runner_transitions")}) AND id < (SELECT MAX(l.id) FROM runner_transitions l WHERE ${samePlan(db, "runner_transitions", "l", "runner_transitions")} AND l.task_id IS runner_transitions.task_id)`,
         bind: [ctx.retiredJSON],
         bytes: "length(payload)+length(event)+length(plan_id)+length(COALESCE(task_id,''))+96",
       },
@@ -437,7 +439,7 @@ export function classifyPlans(db: Database, now: number, days: number) {
   const plans = db
     .query<{ id: string; project: string; state: string; at: number | null }, []>(
       `SELECT p.id, p.project_directory AS project, p.state,
-              MAX(COALESCE((SELECT t.created_at FROM runner_transitions t WHERE t.id=(SELECT MAX(l.id) FROM runner_transitions l WHERE l.plan_id=p.id AND l.event NOT IN (${NOISE_LIST}))),0),
+              MAX(COALESCE((SELECT t.created_at FROM runner_transitions t WHERE t.id=(SELECT MAX(l.id) FROM runner_transitions l WHERE ${planIs(db, "runner_transitions", "l", "p.id")} AND l.event NOT IN (${NOISE_LIST}))),0),
                   COALESCE((SELECT MAX(a.started_at) FROM runner_attempts a WHERE a.plan_id=p.id),0)) AS at
          FROM runner_plans p`,
     )

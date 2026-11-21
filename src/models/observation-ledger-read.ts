@@ -61,6 +61,7 @@ import type {
   ObservationLedgerOutput,
   ObservationLedgerReadInput,
 } from "./observation-ledger-schema.ts"
+import { planJoin } from "../runner/identity-read.ts"
 
 type SourceStatus = ObservationLedgerOutput["completeness"]["sources"][number]
 type RawTask = { id: string; created_at: string; body: string }
@@ -688,7 +689,7 @@ function readRunnerRows(
       db,
       `SELECT r.id,r.plan_id,r.task_id,r.version,r.event,r.payload,r.created_at
          FROM runner_transitions r
-         JOIN runner_plans p ON p.id=r.plan_id
+         JOIN runner_plans p ON ${planJoin(db, "runner_transitions", "r", "p.id")}
          JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? ORDER BY r.id`,
       [projectDirectory],
@@ -715,7 +716,7 @@ function readRunnerRows(
         `SELECT r.seq,r.project_directory,r.project_id,r.dedupe_key,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
                 r.source,r.sources_json,r.kind,r.event_ids_json,r.call_id,r.message_id,r.payload
            FROM runner_progress r
-           JOIN runner_plans p ON p.id=r.plan_id
+           JOIN runner_plans p ON ${planJoin(db, "runner_progress", "r", "p.id")}
            JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
            WHERE r.project_directory=? AND p.project_directory=?
            ORDER BY r.seq`,
@@ -2067,7 +2068,7 @@ export function computeDecisionTasks(
           db,
           `SELECT r.id,r.plan_id,r.task_id,r.version,r.event,r.payload,r.created_at
            FROM runner_transitions r
-           JOIN runner_plans p ON p.id=r.plan_id
+           JOIN runner_plans p ON ${planJoin(db, "runner_transitions", "r", "p.id")}
            JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
            WHERE p.project_directory=? AND r.task_id IN (${inTasks}) ORDER BY r.id`,
           params,

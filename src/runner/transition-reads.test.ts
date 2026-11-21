@@ -7,6 +7,9 @@ import { gitAsync } from "./artifacts.ts"
 import { AdoptionPreparation } from "./adoption-preparation.ts"
 import { meterReads } from "./read-meter.fixture.ts"
 import { RETAINED_REPAIR_EVENTS, RetainedRepairRecords } from "./retained-repair-records.ts"
+import { RetentionService } from "../retention/service.ts"
+import { forgetKeysReady, planIs } from "./identity-read.ts"
+import { asLegacyHistory } from "./identity.fixture.ts"
 import { RunnerStore } from "./store.ts"
 
 /**
@@ -220,4 +223,41 @@ test("the adoption baseline is the newest qualifying integration, found without 
   show("adoption baseline", old.of(/runner_transitions/), meter.of(/runner_transitions/))
   expect(meter.of(/runner_transitions/).rows).toBeLessThanOrEqual(5)
   expect(old.of(/runner_transitions/).rows).toBeGreaterThan(1_500)
+})
+
+test("retained repair reads the same history on text keys and on integer keys, planned on an integer index", async () => {
+  const f = seeded()
+  for (let index = 0; index < 700; index++)
+    f.record(
+      "plan-a",
+      index % 2 ? "task-1" : null,
+      index % 5 ? "NODE_UPDATED" : "ATTEMPT_RESUMED",
+      {
+        index,
+      },
+    )
+  f.record("plan-b", "task-1", "ATTEMPT_RESUMED", { other: true })
+  // Rows written before the integer keys existed: readers start on the text predicate.
+  asLegacyHistory(f.repository)
+  f.repository.read((db) => expect(planIs(db, "runner_transitions")).toBe("plan_id=?"))
+  const history = (planID: string) =>
+    RetainedRepairRecords.prototype.transitionHistory.call({ store: f.store }, planID, "task-1")
+  const before = [history("plan-a"), history("plan-b")]
+  expect(before[0]!.length).toBeGreaterThan(100)
+  await new RetentionService({ repository: f.repository, host: {} as never }).backfillKeys(30_000)
+  forgetKeysReady(f.repository.read((db) => db))
+  expect([history("plan-a"), history("plan-b")]).toEqual(before)
+  f.repository.read((db) => {
+    const plan = db
+      .query<{ detail: string }, string[]>(
+        `EXPLAIN QUERY PLAN SELECT id,task_id,event,payload FROM runner_transitions
+          WHERE ${planIs(db, "runner_transitions")} AND (task_id=? OR task_id IS NULL) AND event IN (?) AND id>? ORDER BY id LIMIT 500`,
+      )
+      .all("x", "y", "z", "0")
+      .map((row) => row.detail)
+      .join(" | ")
+    if (process.env.EXPLAIN_VERBOSE) console.log("retained repair =>", plan)
+    expect(plan).toContain("plan_n")
+    expect(plan).not.toMatch(/SCAN runner_transitions(?! USING)/)
+  })
 })

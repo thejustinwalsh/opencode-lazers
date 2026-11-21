@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite"
+import { planIs } from "./identity-read.ts"
 
 export type RetiredGateMove = {
   planID: string
@@ -291,7 +292,7 @@ export function retireRetainedVerificationGates(db: Database): {
             db
               .query(
                 `SELECT 1 FROM runner_transitions
-                 WHERE plan_id=? AND event IN ('RETAINED_TASK_CANDIDATE_ACCEPTED','RETAINED_CANDIDATE_ACCEPTED')
+                 WHERE ${planIs(db, "runner_transitions")} AND event IN ('RETAINED_TASK_CANDIDATE_ACCEPTED','RETAINED_CANDIDATE_ACCEPTED')
                    AND json_extract(payload,'$.operationID')=? LIMIT 1`,
               )
               .get(operation.plan_id, operation.id),

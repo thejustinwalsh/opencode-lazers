@@ -64,14 +64,14 @@ export const historyTables = (): Set<string> => {
   return all
 }
 
-const isSourceFile = (path: string) =>
+export const isSourceFile = (path: string) =>
   /\.tsx?$/.test(path) &&
   !/\.test\.tsx?$/.test(path) &&
   !/\.fixture\.tsx?$/.test(path) &&
   !/(^|\/)test-[^/]*$/.test(path) &&
   !/(^|\/)migrat[^/]*$/.test(path)
 
-function walk(directory: string, found: string[] = []): string[] {
+export function walk(directory: string, found: string[] = []): string[] {
   for (const name of readdirSync(directory)) {
     const path = join(directory, name)
     if (statSync(path).isDirectory()) walk(path, found)
@@ -81,7 +81,7 @@ function walk(directory: string, found: string[] = []): string[] {
 }
 
 /** Index just past the string literal that starts at `start` (a quote or backtick). */
-function skipString(text: string, start: number): number {
+export function skipString(text: string, start: number): number {
   const quote = text[start]!
   let i = start + 1
   while (i < text.length) {

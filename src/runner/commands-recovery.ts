@@ -16,6 +16,7 @@ import type { Dispatch } from "./dispatch.ts"
 import type { StartupSettlement } from "./startup-settlement.ts"
 import type { AttemptRow, EffectRow, PlanRow } from "./store.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import { planIs } from "./identity-read.ts"
 
 /** What `CommandsRecovery` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type CommandsRecoveryDeps = {
@@ -560,7 +561,7 @@ export class CommandsRecovery {
       const aliases = db
         .query<{ id: number; payload: string }, [string, string]>(
           `SELECT id,payload FROM runner_transitions
-       WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
+       WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
        ORDER BY id`,
         )
         .all(plan.id, binding.taskID)

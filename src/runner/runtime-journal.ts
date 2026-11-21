@@ -19,6 +19,7 @@ import {
   UNCERTAIN_EFFECT_RECEIPT_SCHEMA,
 } from "./startup-recovery.ts"
 import type { AttemptRow, EffectRow, PlanRow } from "./store.ts"
+import { planIs } from "./identity-read.ts"
 
 /** What the journal reads from the coordinator's other regions; each call is a lazy arrow. */
 export type JournalDeps = {
@@ -92,7 +93,7 @@ export class RuntimeJournal {
       if (!current) throw new Error("Plan not found")
       const previousBlocked = db
         .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event='BLOCKED' ORDER BY id DESC LIMIT 1",
+          `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id IS NULL AND event='BLOCKED' ORDER BY id DESC LIMIT 1`,
         )
         .get(plan.id)
       let previousObservation: unknown

@@ -18,6 +18,7 @@ import type { PlanRow, AttemptRow, AdoptionRow } from "./store.ts"
 import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import { planJoin } from "./identity-read.ts"
 
 /** What `AdoptionPreparation` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 /** Integration events read per page when looking for the reviewed baseline. */
@@ -162,7 +163,7 @@ export class AdoptionPreparation {
           >(
             `SELECT t.id,json_extract(t.payload,'$.artifact') AS artifact,
                json_extract(t.payload,'$.head') AS head
-             FROM runner_transitions t JOIN runner_plans p ON p.id=t.plan_id
+             FROM runner_transitions t JOIN runner_plans p ON ${planJoin(db, "runner_transitions", "t", "p.id")}
              WHERE p.project_directory=?
                AND t.event IN ('INTEGRATION_RECORDED','TASK_INTEGRATION_RECORDED')
                AND json_valid(t.payload) AND json_extract(t.payload,'$.branch')=?

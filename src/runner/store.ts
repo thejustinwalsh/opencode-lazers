@@ -1,7 +1,15 @@
 import { installProgressDisplayBackfill } from "../progress/display-backfill.ts"
 import { installProgressDisplaySchema } from "../progress/display-store.ts"
 import { ensureTaskScheduleSchema } from "../tasks/schedule/schema.ts"
-import { ensureTransitionIndexes } from "./transition-indexes.ts"
+import {
+  installIdentityKeys,
+  installKeyColumns,
+  installOwnerKeys,
+  planKey,
+} from "./identity-keys.ts"
+import { planIs, attemptIs, attemptIn } from "./identity-read.ts"
+import { installIdentityState } from "./identity-migration.ts"
+import { ensureTransitionIndexes, installTextKeyIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
   type AttemptLifecycleState,
@@ -1049,6 +1057,7 @@ export class RunnerStore {
       (db) => {
         retireConflictScans(db)
         retireUnusedIndexes(db)
+        installIdentityKeys(db)
         db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
@@ -1093,8 +1102,6 @@ export class RunnerStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT,
         version INTEGER NOT NULL, event TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS runner_transitions_lookup
-        ON runner_transitions(plan_id,task_id,event,id);
       CREATE TABLE IF NOT EXISTS runner_leases (
         project_directory TEXT PRIMARY KEY, owner TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
@@ -1243,8 +1250,6 @@ export class RunnerStore {
         call_id TEXT, message_id TEXT, dedupe_key TEXT NOT NULL, payload TEXT NOT NULL,
         UNIQUE(project_directory,dedupe_key)
       );
-      CREATE INDEX IF NOT EXISTS runner_progress_attempt_seq
-        ON runner_progress(project_directory,attempt_id,seq);
       CREATE TABLE IF NOT EXISTS native_tool_calls (
         project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
         session_id TEXT NOT NULL, identity_kind TEXT NOT NULL
@@ -1302,8 +1307,6 @@ export class RunnerStore {
           )
         }
         db.exec(`
-          CREATE INDEX IF NOT EXISTS runner_progress_plan_recency
-            ON runner_progress(plan_id,latest_observed_at DESC,seq DESC);
           CREATE TRIGGER IF NOT EXISTS runner_progress_recency_inserted
           AFTER INSERT ON runner_progress BEGIN
             UPDATE runner_progress SET latest_observed_at=${progressRecencySQL("NEW")} WHERE seq=NEW.seq;
@@ -1361,6 +1364,12 @@ export class RunnerStore {
             UPDATE runner_attempts SET project_directory=NEW.project_directory WHERE plan_id=NEW.id;
           END;
       `)
+        installOwnerKeys(db)
+        installKeyColumns(db)
+        // A new database keys its empty history tables at once; an existing one keeps its text
+        // indexes until the retention idle step has keyed and indexed every row.
+        installIdentityState(db)
+        installTextKeyIndexes(db)
         const reminderColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
@@ -3649,7 +3658,7 @@ export class RunnerStore {
       db
         .query<ActivityRow, (string | number)[]>(
           `SELECT id,task_id,event,payload,created_at FROM runner_transitions
-           WHERE plan_id=? AND task_id=? ${where}
+           WHERE ${planIs(db, "runner_transitions")} AND task_id=? ${where}
            ORDER BY id ${filter.newest ? "desc" : ""} ${filter.limit ? "LIMIT ?" : ""}`,
         )
         .all(planID, taskID, ...binds, ...(filter.limit ? [filter.limit] : [])),
@@ -3661,7 +3670,7 @@ export class RunnerStore {
       (db) =>
         db
           .query<{ n: number }, (string | number)[]>(
-            `SELECT count(*) AS n FROM runner_transitions WHERE plan_id=? AND task_id=? ${where}`,
+            `SELECT count(*) AS n FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ${where}`,
           )
           .get(planID, taskID, ...binds)!.n,
     )
@@ -3672,7 +3681,7 @@ export class RunnerStore {
       this.read((db) =>
         db
           .query<{ one: number }, (string | number)[]>(
-            `SELECT 1 AS one FROM runner_transitions WHERE plan_id=? AND task_id=? ${where} LIMIT 1`,
+            `SELECT 1 AS one FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ${where} LIMIT 1`,
           )
           .get(planID, taskID, ...binds),
       ) !== null
@@ -3693,7 +3702,7 @@ export class RunnerStore {
           },
           [string, string]
         >(
-          "SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id",
+          `SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ORDER BY id`,
         )
         .all(planID, taskID),
     )
@@ -3889,7 +3898,7 @@ export class RunnerStore {
                AND a.state IN ('pending','task-checks','combined-checks')
            ) OR NOT EXISTS(
              SELECT 1 FROM runner_transitions ti
-             WHERE ti.plan_id=d.plan_id AND ti.task_id=d.prerequisite
+             WHERE ${planIs(db, "runner_transitions", "ti", "d.plan_id")} AND ti.task_id=d.prerequisite
                AND ti.event='TASK_INTEGRATION_RECORDED' AND json_valid(ti.payload)
                AND json_extract(ti.payload,'$.artifact')=n.artifact
            ))`,
@@ -4105,8 +4114,16 @@ export class RunnerStore {
     if (!plan) throw new Error("Plan not found")
     this.atomic((db) => {
       db.query(
-        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,?,?,?)",
-      ).run(planID, taskID, plan.version, event, JSON.stringify(payload), Date.now())
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at,plan_n) VALUES(?,?,?,?,?,?,?)",
+      ).run(
+        planID,
+        taskID,
+        plan.version,
+        event,
+        JSON.stringify(payload),
+        Date.now(),
+        planKey(db, planID),
+      )
       this.repository.changed()
     })
   }
@@ -4145,7 +4162,7 @@ export class RunnerStore {
         db
           .query<{ payload: string }, [string, string]>(
             `SELECT payload FROM runner_transitions
-             WHERE plan_id=? AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
+             WHERE ${planIs(db, "runner_transitions")} AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
                AND json_extract(payload,'$.sourceSessionID')=? ORDER BY id DESC LIMIT 1`,
           )
           .get(planID, payload.sourceSessionID),
@@ -4160,7 +4177,7 @@ export class RunnerStore {
     const row = this.read((db) =>
       db
         .query<{ payload: string }, [string, string | null, string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
+          `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1`,
         )
         .get(planID, taskID, event),
     )
@@ -4176,7 +4193,7 @@ export class RunnerStore {
       (db) =>
         db
           .query<{ version: number }, [string, string | null, string]>(
-            "SELECT version FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
+            `SELECT version FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1`,
           )
           .get(planID, taskID, event)?.version,
     )
@@ -4186,7 +4203,7 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EXTENDED' ORDER BY id",
+          `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND event='VERIFICATION_DEADLINE_EXTENDED' ORDER BY id`,
         )
         .all(planID)
         .map((row) => VerificationTimeoutAmendmentSchema.parse(JSON.parse(row.payload))),
@@ -4198,12 +4215,12 @@ export class RunnerStore {
       taskID === undefined
         ? db
             .query<{ payload: string }, [string]>(
-              "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+              `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1`,
             )
             .get(planID)
         : db
             .query<{ payload: string }, [string, string]>(
-              "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+              `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1`,
             )
             .get(planID, taskID),
     )
@@ -4608,10 +4625,10 @@ export class RunnerStore {
               `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
                  n.artifact,
                  (SELECT tr.id FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_id,
                  (SELECT tr.payload FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_payload
                FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
                WHERE p.project_directory=? AND n.plan_id=?
@@ -4686,7 +4703,7 @@ export class RunnerStore {
            )
            SELECT n.*,p.sequence,p.priority,t.body AS task_body,r.reference,
              (SELECT tr.payload FROM runner_transitions tr
-              WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id AND tr.event='SCOPE_AMENDED'
+              WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id AND tr.event='SCOPE_AMENDED'
               ORDER BY tr.id DESC LIMIT 1) AS scope_payload
            FROM runner_nodes n JOIN selected_plans p ON p.id=n.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=n.task_id
@@ -4752,10 +4769,10 @@ export class RunnerStore {
               `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
                  n.artifact,
                  (SELECT tr.id FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_id,
                  (SELECT tr.payload FROM runner_transitions tr
-                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                  WHERE ${planIs(db, "runner_transitions", "tr", "n.plan_id")} AND tr.task_id=n.task_id
                     AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_payload
                FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
                WHERE p.project_directory=? AND n.task_id IN (${batch.map(() => "?").join(",")})`,
@@ -4792,17 +4809,17 @@ export class RunnerStore {
                  integration.id AS integration_id,integration.version AS integration_version,
                  integration.payload AS integration_payload,
                  (SELECT tr.id FROM runner_transitions tr
-                  WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='CANCEL_REQUESTED'
+                  WHERE ${planIs(db, "runner_transitions", "tr", "p.id")} AND tr.task_id IS NULL AND tr.event='CANCEL_REQUESTED'
                   ORDER BY tr.id DESC LIMIT 1) AS invalidation_id
                FROM runner_plans p
                LEFT JOIN runner_transitions accepted ON accepted.id=(
                  SELECT tr.id FROM runner_transitions tr
-                 WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='PLAN_ACCEPTED'
+                 WHERE ${planIs(db, "runner_transitions", "tr", "p.id")} AND tr.task_id IS NULL AND tr.event='PLAN_ACCEPTED'
                  ORDER BY tr.id DESC LIMIT 1
                )
                LEFT JOIN runner_transitions integration ON integration.id=(
                  SELECT tr.id FROM runner_transitions tr
-                 WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='INTEGRATION_RECORDED'
+                 WHERE ${planIs(db, "runner_transitions", "tr", "p.id")} AND tr.task_id IS NULL AND tr.event='INTEGRATION_RECORDED'
                  ORDER BY tr.id DESC LIMIT 1
                )
                WHERE p.project_directory=? AND p.id IN (${batch.map(() => "?").join(",")})
@@ -4844,7 +4861,7 @@ export class RunnerStore {
         .query<ProgressRow, [string, ...string[], number]>(
           `SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM (
              SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM runner_progress WHERE project_directory=?
-               AND attempt_id IN (${placeholders}) ORDER BY seq DESC LIMIT ?
+               AND ${attemptIn(db, placeholders)} ORDER BY seq DESC LIMIT ?
            ) ORDER BY seq`,
         )
         .all(this.repository.projectDirectory, ...attemptIDs, bounded),
@@ -4869,7 +4886,7 @@ export class RunnerStore {
       (db) =>
         db
           .query<{ seq: number }, (string | number)[]>(
-            `SELECT seq FROM runner_progress WHERE project_directory=? AND attempt_id IN (${placeholders})
+            `SELECT seq FROM runner_progress WHERE project_directory=? AND ${attemptIn(db, placeholders)}
              ORDER BY seq DESC LIMIT 1 OFFSET ${Math.trunc(visible)}`,
           )
           .get(directory, ...attemptIDs)?.seq,
@@ -4879,7 +4896,7 @@ export class RunnerStore {
         db
           .query<ProgressReportRow, (string | number)[]>(
             `SELECT ${progressColumns(db, PROGRESS_REPORT_COLUMNS)} FROM runner_progress
-             WHERE project_directory=? AND attempt_id IN (${placeholders}) AND seq>?
+             WHERE project_directory=? AND ${attemptIn(db, placeholders)} AND seq>?
              ORDER BY seq LIMIT ${Math.trunc(pageSize)}`,
           )
           .all(directory, ...attemptIDs, after),
@@ -4908,7 +4925,7 @@ export class RunnerStore {
         db
           .query<{ one: number }, [string, string]>(
             `SELECT 1 AS one FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND NOT (${gapShape}) LIMIT 1`,
+              WHERE project_directory=? AND ${attemptIs(db)} AND NOT (${gapShape}) LIMIT 1`,
           )
           .get(directory, attemptID)
       )
@@ -4920,7 +4937,7 @@ export class RunnerStore {
         const rows = db
           .query<ProgressRow, [string, string, number, number]>(
             `SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND seq>? AND ${gapShape}
+              WHERE project_directory=? AND ${attemptIs(db)} AND seq>? AND ${gapShape}
               ORDER BY seq LIMIT ?`,
           )
           .all(directory, attemptID, after, page)

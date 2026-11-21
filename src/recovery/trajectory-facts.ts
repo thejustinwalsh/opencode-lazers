@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { holdFamily } from "../runner/hold-actions.ts"
 import { classifyChange, type ScopeModel } from "../runner/scope.ts"
+import { attemptIn, attemptIs, planIs } from "../runner/identity-read.ts"
 
 /**
  * The recorded trajectory of one task, read-only. Two readers, both parameterized by "as of" so
@@ -104,7 +105,7 @@ export function readTrajectoryFacts(
               CASE WHEN event='BLOCKED' THEN json_extract(payload,'$.reason') END AS reason,
               count(*) AS n
          FROM runner_transitions
-        WHERE plan_id=? AND task_id=? AND created_at<=? AND event IN
+        WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND created_at<=? AND event IN
           ('VERIFY','REPAIR','RESUME','RETAINED_REPAIR','RETRY_REQUESTED','BLOCKED')
         GROUP BY event,from_state,reason ORDER BY min(id)`,
     )
@@ -115,7 +116,7 @@ export function readTrajectoryFacts(
               CASE WHEN event='WORKER_STOPPED' THEN json_extract(payload,'$.outcome') END AS outcome,
               created_at
          FROM runner_transitions
-        WHERE plan_id=? AND task_id=? AND created_at<=? AND event IN
+        WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND created_at<=? AND event IN
           ('WORKER_STARTED','ATTEMPT_RESUMED','WORKER_STOPPED')
         ORDER BY id`,
     )
@@ -181,14 +182,14 @@ export function readTrajectoryFacts(
     const used = db
       .query<{ tokens: number | null }, [string, string, string, number, number]>(
         `SELECT sum(${STEP_TOKENS}) AS tokens FROM runner_progress
-          WHERE project_directory=? AND attempt_id IN (${attemptIDs}) AND kind='step' AND at<=?`,
+          WHERE project_directory=? AND ${attemptIn(db, attemptIDs)} AND kind='step' AND at<=?`,
       )
       .get(options.projectDirectory, planID, taskID, until, now)
     tokens = used?.tokens ?? 0
     const calls = db
       .query<{ n: number }, [string, string, string, number, number]>(
         `SELECT count(*) AS n FROM runner_progress
-          WHERE project_directory=? AND attempt_id IN (${attemptIDs})
+          WHERE project_directory=? AND ${attemptIn(db, attemptIDs)}
             AND kind='tool' AND call_id IS NOT NULL AND at<=?`,
       )
       .get(options.projectDirectory, planID, taskID, until, now)
@@ -233,14 +234,14 @@ export function readTrajectoryTail(
 ): TrajectoryTail {
   const last = db
     .query<{ seq: number | null }, [string, string, number]>(
-      "SELECT max(seq) AS seq FROM runner_progress WHERE project_directory=? AND attempt_id=? AND seq<=?",
+      `SELECT max(seq) AS seq FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} AND seq<=?`,
     )
     .get(projectDirectory, attemptID, throughSequence)
   const recent = db
     .query<{ status: string | null }, [string, string, number, number]>(
       `SELECT json_extract(payload,'$.status') AS status
          FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND seq<=? AND kind='tool' AND call_id IS NOT NULL
+        WHERE project_directory=? AND ${attemptIs(db)} AND seq<=? AND kind='tool' AND call_id IS NOT NULL
         ORDER BY seq DESC LIMIT ?`,
     )
     .all(projectDirectory, attemptID, throughSequence, FAILURE_WINDOW)
@@ -260,7 +261,7 @@ export function readTrajectoryTail(
               CASE WHEN json_type(payload,'$.fileTargets.paths')='array' THEN NULL
                    ELSE substr(json_extract(payload,'$.content'),1,4000) END AS content
          FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND kind='tool' AND seq<=?
+        WHERE project_directory=? AND ${attemptIs(db)} AND kind='tool' AND seq<=?
           AND (json_extract(payload,'$.tool') IN ('edit','write','patch','multiedit')
                OR json_extract(payload,'$.fileTargets.operation') IN ('edit','patch'))
           AND coalesce(json_extract(payload,'$.status'),'') NOT IN ('failed','not-executed')
@@ -290,7 +291,7 @@ export function readTrajectoryTail(
       `SELECT sum(kind='tool' AND call_id IS NOT NULL) AS calls,
               sum(CASE WHEN kind='step' THEN ${STEP_TOKENS} ELSE 0 END) AS tokens
          FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND seq>? AND seq<=? AND kind IN ('tool','step')`,
+        WHERE project_directory=? AND ${attemptIs(db)} AND seq>? AND seq<=? AND kind IN ('tool','step')`,
     )
     .get(projectDirectory, attemptID, lastEditSeq, throughSequence)
   return {

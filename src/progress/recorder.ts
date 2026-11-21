@@ -17,6 +17,7 @@ import { toolDetail } from "./tool-detail.ts"
 import type { PathScope } from "./tool-detail.ts"
 import { homedir } from "node:os"
 import { sameProject } from "../project-key.ts"
+import { attemptKey, planKey } from "../runner/identity-keys.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
 import {
   installSessionStampSchema,
@@ -24,6 +25,7 @@ import {
   writeSessionStamp,
   type SessionStamp,
 } from "./session-stamps.ts"
+import { attemptIs } from "../runner/identity-read.ts"
 
 type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -1598,7 +1600,7 @@ export class ProgressRecorder {
       // These rows are captured from OpenCode messages, never from worker reports.
       const capturedInput = db
         .query<{ seq: number }, [string, string, string, string, string]>(
-          `SELECT seq FROM runner_progress WHERE project_directory=? AND attempt_id=?
+          `SELECT seq FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)}
            AND session_id=? AND message_id=? AND dedupe_key=?
            AND source='recovery' AND kind='visible-text'
            AND json_extract(payload,'$.messageType') IN ('user','synthetic') LIMIT 1`,
@@ -1710,8 +1712,8 @@ export class ProgressRecorder {
         .query(
           `INSERT OR IGNORE INTO runner_progress
            (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
-            sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload,plan_n,attempt_n)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           directory,
@@ -1730,6 +1732,8 @@ export class ProgressRecorder {
           fact.messageID ?? null,
           fact.dedupeKey,
           payload,
+          planKey(db, assignment.planID),
+          attemptKey(db, assignment.attemptID),
         )
       if (inserted.changes) {
         const seq = db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
@@ -3268,7 +3272,7 @@ export class ProgressRecorder {
         return false
       const row = db
         .query<{ seq: number; payload: string }, [string, string, string, string]>(
-          "SELECT seq,payload FROM runner_progress WHERE project_directory=? AND attempt_id=? AND dedupe_key=? AND message_id=?",
+          `SELECT seq,payload FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} AND dedupe_key=? AND message_id=?`,
         )
         .get(
           this.store.repository.projectDirectory,
@@ -3352,7 +3356,7 @@ export class ProgressRecorder {
     const nextStatus = claim.status === "admitted" && status === "unknown" ? "admitted" : status
     const existingProgress = db
       .query<{ seq: number; payload: string }, [string, string, string, string]>(
-        "SELECT seq,payload FROM runner_progress WHERE project_directory=? AND attempt_id=? AND dedupe_key=? AND message_id=?",
+        `SELECT seq,payload FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} AND dedupe_key=? AND message_id=?`,
       )
       .get(this.store.repository.projectDirectory, attemptID, `reminder:${attemptID}`, messageID)
     if (!existingProgress) return undefined

@@ -24,6 +24,7 @@ import type { JournalDeps } from "./runtime-journal.ts"
 import type { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 import type { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import type { fallowConfigGate } from "../audit/fallow-gate.ts"
+import { planIs } from "./identity-read.ts"
 
 /** What dispatch reads from the coordinator and its sibling modules; each call is a lazy arrow. */
 export type DispatchDeps = {
@@ -206,19 +207,19 @@ export class Dispatch {
                       -- Lifecycle labels can be stale; a cancellation invalidates
                       -- older acceptance until a new acceptance/integration pair.
                       (SELECT t.id FROM runner_transitions t
-                       WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='CANCEL_REQUESTED'
+                       WHERE ${planIs(db, "runner_transitions", "t", "p.id")} AND t.task_id IS NULL AND t.event='CANCEL_REQUESTED'
                        ORDER BY t.id DESC LIMIT 1) AS invalidation_id
                FROM runner_plans p
                LEFT JOIN runner_transitions accepted
                  ON accepted.id=(
                    SELECT t.id FROM runner_transitions t
-                   WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='PLAN_ACCEPTED'
+                   WHERE ${planIs(db, "runner_transitions", "t", "p.id")} AND t.task_id IS NULL AND t.event='PLAN_ACCEPTED'
                    ORDER BY t.id DESC LIMIT 1
                  )
                LEFT JOIN runner_transitions integration
                  ON integration.id=(
                    SELECT t.id FROM runner_transitions t
-                   WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='INTEGRATION_RECORDED'
+                   WHERE ${planIs(db, "runner_transitions", "t", "p.id")} AND t.task_id IS NULL AND t.event='INTEGRATION_RECORDED'
                    ORDER BY t.id DESC LIMIT 1
                  )
                WHERE p.project_directory=? AND p.id IN (${placeholders})
@@ -344,7 +345,7 @@ export class Dispatch {
         (db) =>
           db
             .query<{ event: string }, [string, string]>(
-              "SELECT event FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id DESC LIMIT 1",
+              `SELECT event FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ORDER BY id DESC LIMIT 1`,
             )
             .get(plan.id, task.id)?.event === "REPAIR",
       ),
@@ -526,7 +527,7 @@ export class Dispatch {
           db
             .query<{ payload: string }, [string, string]>(
               `SELECT payload FROM runner_transitions
-               WHERE plan_id=? AND task_id=? AND event='ATTEMPT_RESUMED' ORDER BY id DESC`,
+               WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND event='ATTEMPT_RESUMED' ORDER BY id DESC`,
             )
             .all(planID, currentAttempt.task_id),
         )

@@ -54,6 +54,7 @@ import { ObservationChangeTracker } from "./changes.ts"
 import { RadarInput, RadarOutput } from "./contract.ts"
 import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
+import { planIn } from "../runner/identity-read.ts"
 
 type PlanRecord = {
   id: string
@@ -423,7 +424,7 @@ function loadProjectionSource(
     ? db
         .query<TransitionRecord, string[]>(
           `SELECT id,plan_id,task_id,version,event,payload,created_at FROM runner_transitions
-           WHERE plan_id IN (${placeholders}) ORDER BY id DESC LIMIT 10001`,
+           WHERE ${planIn(db, "runner_transitions", placeholders)} ORDER BY id DESC LIMIT 10001`,
         )
         .all(...planIDs)
     : []
@@ -493,7 +494,7 @@ function loadTaskObservationSource(
     ? (db
         .query<{ sequence: number | null }, string[]>(
           `SELECT MAX(id) AS sequence FROM runner_transitions
-           WHERE plan_id IN (${planIDs.map(() => "?").join(",")})`,
+           WHERE ${planIn(db, "runner_transitions", planIDs.map(() => "?").join(","))}`,
         )
         .get(...planIDs)?.sequence ?? 0)
     : 0
@@ -645,11 +646,11 @@ function loadRadarSource(
   const recentProgress = progressColumns.has("latest_observed_at")
     ? `SELECT g.seq,g.latest_observed_at AS latest_at
          FROM runner_progress g
-        WHERE g.plan_id IN (${placeholders})
+        WHERE ${planIn(db, "runner_progress", placeholders, "g")}
         ORDER BY g.latest_observed_at DESC,g.seq DESC LIMIT 5001`
     : `SELECT g.seq,${progressRecencySQL("g")} AS latest_at
          FROM runner_progress g
-        WHERE g.plan_id IN (${placeholders})
+        WHERE ${planIn(db, "runner_progress", placeholders, "g")}
         ORDER BY latest_at DESC,g.seq DESC LIMIT 5001`
   const progressRows = db
     .query<ProgressRow, (string | number)[]>(

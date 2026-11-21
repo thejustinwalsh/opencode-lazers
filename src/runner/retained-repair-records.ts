@@ -1,4 +1,5 @@
 import { isRecord } from "./runtime-helpers.ts"
+import { planIs } from "./identity-read.ts"
 import type { RetainedRepairRecord } from "./runtime-helpers.ts"
 import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
@@ -199,7 +200,7 @@ export class RetainedRepairRecords {
         db
           .query<RunnerTransitionRecord, (string | number)[]>(
             `SELECT id,task_id,event,payload FROM runner_transitions
-             WHERE plan_id=? AND (task_id=? OR task_id IS NULL) AND event IN (${events}) AND id>?
+             WHERE ${planIs(db, "runner_transitions")} AND (task_id=? OR task_id IS NULL) AND event IN (${events}) AND id>?
              ORDER BY id LIMIT ${TRANSITION_PAGE}`,
           )
           .all(planID, taskID, ...RETAINED_REPAIR_EVENTS, after),

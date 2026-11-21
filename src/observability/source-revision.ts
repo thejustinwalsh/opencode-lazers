@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite"
 
+const DERIVED_COLUMNS: Record<string, readonly string[]> = {
+  runner_progress: ["latest_observed_at", "plan_n", "attempt_n"],
+  runner_transitions: ["plan_n"],
+}
+
 /** Transactional invalidation; panel polling never needs to scan historical payloads. */
 export function ensureObservationRevision(db: Database) {
   db.exec(`CREATE TABLE IF NOT EXISTS observation_revisions (
@@ -19,7 +24,9 @@ export function ensureObservationRevision(db: Database) {
     const columns = db
       .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
       .all()
-      .filter(({ name }) => table !== "runner_progress" || name !== "latest_observed_at")
+      // Derived columns: the recency stamp and the integer identity keys, filled by triggers and the
+      // paged backfill, are not changes an observer can see.
+      .filter(({ name }) => !DERIVED_COLUMNS[table]?.includes(name))
     for (const event of ["INSERT", "UPDATE", "DELETE"]) {
       const changed =
         event === "UPDATE"

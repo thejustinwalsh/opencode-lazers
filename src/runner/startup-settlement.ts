@@ -19,6 +19,7 @@ import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { Dispatch } from "./dispatch.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import { planIs } from "./identity-read.ts"
 
 /** What `StartupSettlement` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type StartupSettlementDeps = {
@@ -346,7 +347,7 @@ export class StartupSettlement {
       const latestAuthorization = db
         .query<{ payload: string }, [string, string]>(
           `SELECT payload FROM runner_transitions
-           WHERE plan_id=? AND task_id=? AND event='STARTUP_RECOVERY_AUTHORIZED'
+           WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND event='STARTUP_RECOVERY_AUTHORIZED'
            ORDER BY id DESC LIMIT 1`,
         )
         .get(plan.id, attempt.task_id)

@@ -1,6 +1,11 @@
 import { dirname } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { RETENTION_PRESET_DAYS } from "./contract.ts"
+import {
+  advanceIdentityKeys,
+  identityKeysFinished,
+  type IdentityKeysProgress,
+} from "../runner/identity-migration.ts"
 import { compactionDiskBytes, incrementalVacuum, spaceState, type AutoVacuum } from "./vacuum.ts"
 import {
   classifyPlans,
@@ -85,6 +90,8 @@ const AS_OF_WINDOW_MS = 24 * 3_600_000
 
 export class RetentionService {
   private running: Promise<RetentionSlice> | undefined
+  /** Set once every history table is keyed and indexed: an idle tick then reads nothing for it. */
+  private keysComplete = false
 
   constructor(private readonly deps: Dependencies) {
     installRetentionSchema(deps.repository)
@@ -269,6 +276,24 @@ export class RetentionService {
   }
 
   /**
+   * Idle step of the integer-key migration (`src/runner/identity-migration.ts`): key the rows of
+   * the two history tables written before the key columns existed, a page per transaction; then
+   * build each table's integer indexes and drop its text-id indexes one per transaction, handing
+   * the freed pages back in steps. While attempts run it keys one page and builds or drops
+   * nothing, so no index build holds the write lock under live work. A finished migration costs
+   * nothing: the instance remembers it.
+   */
+  async backfillKeys(budgetMs: number, quiet = true): Promise<IdentityKeysProgress> {
+    if (this.keysComplete) return { rows: 0, retired: [], finished: true }
+    const { repository } = this.deps
+    const started = Date.now()
+    const progress = await advanceIdentityKeys(repository, budgetMs, { structural: quiet })
+    if (progress.retired.length) await this.reclaim(started)
+    this.keysComplete = progress.finished || identityKeysFinished(repository)
+    return progress
+  }
+
+  /**
    * Returns true when no removable worktree remains to try. One native removal at a time, each
    * after a fresh look at what still owns the tree; anything left in place is reported with its
    * reason, and the next purge (manual, or automatic at its interval) looks again.
@@ -328,9 +353,10 @@ export class RetentionService {
    */
   async autoTick() {
     if (this.running) return
-    const due = this.deps.repository.read((db) =>
-      workIsActive(db) ? null : autoRetentionDue(db, this.now()),
-    )
+    // One page while attempts run, the whole slice at a quiet point.
+    const busy = this.deps.repository.read(workIsActive)
+    await this.backfillKeys(busy ? 1 : SLICE_MS, !busy)
+    const due = this.deps.repository.read((db) => (busy ? null : autoRetentionDue(db, this.now())))
     if (due === null) return
     await this.retire({ days: due.days, trigger: "auto" })
   }

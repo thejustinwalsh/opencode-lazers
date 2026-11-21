@@ -18,6 +18,7 @@ import {
 } from "./inspection.ts"
 import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
+import { planIs } from "./identity-read.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -768,12 +769,14 @@ test("history queries are served by plan-scoped indexes", () => {
         .map((row) => row.detail)
         .join(" "),
     )
+  // A new database is keyed at install: the plan predicate is the integer key.
+  const plan = f.store.read((db) => planIs(db, "runner_transitions"))
   expect(
-    explain("SELECT * FROM runner_transitions WHERE plan_id=? AND id<9 ORDER BY id DESC LIMIT 201"),
-  ).toContain("runner_transitions_plan_id")
+    explain(`SELECT * FROM runner_transitions WHERE ${plan} AND id<9 ORDER BY id DESC LIMIT 201`),
+  ).toContain("runner_transitions_plan_n_id")
   expect(
-    explain("SELECT event,COUNT(*) FROM runner_transitions WHERE plan_id=? GROUP BY event"),
-  ).toContain("runner_transitions_plan_event")
+    explain(`SELECT event,COUNT(*) FROM runner_transitions WHERE ${plan} GROUP BY event`),
+  ).toContain("runner_transitions_plan_n_event")
 })
 
 test("compact inspection omits tool and retry counts of an Architect takeover attempt", () => {

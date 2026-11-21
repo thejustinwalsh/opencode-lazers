@@ -10,6 +10,7 @@ import { decodePlanCursor, encodePlanCursor, type RunnerStore } from "./store.ts
 import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
 import type { DelegatedAgentStatus } from "./delegated-agent-capacity.ts"
 import { PlanInput, type ExecutionPlanWait } from "./schema.ts"
+import { planIs } from "./identity-read.ts"
 
 type DelegatedAgentInspection = DelegatedAgentStatus & {
   queuedRunnerTasks: Array<{ planID: string; taskID: string }>
@@ -288,7 +289,7 @@ function planRows(
 function nodeLatestTransitions(db: Database, planID: string) {
   const latest = new Map<string, TransitionRow>()
   const query = db.query<TransitionRow, [string, string]>(
-    "SELECT task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id DESC LIMIT 1",
+    `SELECT task_id,event,payload,created_at FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ORDER BY id DESC LIMIT 1`,
   )
   for (const node of db
     .query<{ task_id: string }, [string]>("SELECT task_id FROM runner_nodes WHERE plan_id=?")
@@ -325,7 +326,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow, capacity?: DelegatedAgen
       // Aggregated in SQL over runner_transitions_plan_event; never materializes history.
       transitionCounts: db
         .query<{ event: string; n: number }, [string]>(
-          "SELECT event,COUNT(*) AS n FROM runner_transitions WHERE plan_id=? GROUP BY event",
+          `SELECT event,COUNT(*) AS n FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} GROUP BY event`,
         )
         .all(plan.id),
       // One indexed point read per task (runner_transitions_task_latest).

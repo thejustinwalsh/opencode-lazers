@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { z } from "zod"
+import { attemptIs } from "../runner/identity-read.ts"
 
 /** Tool-call ticks one summary carries; a longer attempt has no lane rather than a partial one. */
 export const SUMMARY_TICKS = 1_000
@@ -57,7 +58,7 @@ export function readAttemptSummary(
 ): AttemptSummary {
   const last = db
     .query<{ at: number }, [string, string]>(
-      "SELECT at FROM runner_progress WHERE project_directory=? AND attempt_id=? ORDER BY seq DESC LIMIT 1",
+      `SELECT at FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)} ORDER BY seq DESC LIMIT 1`,
     )
     .get(projectDirectory, attemptID)
   const rows = db
@@ -66,7 +67,7 @@ export function readAttemptSummary(
               json_extract(payload,'$.fileTargets.operation') AS operation,
               json_extract(payload,'$.fileTargets.paths') AS paths
          FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND kind='tool' AND call_id IS NOT NULL
+        WHERE project_directory=? AND ${attemptIs(db)} AND kind='tool' AND call_id IS NOT NULL
         ORDER BY seq LIMIT ?`,
     )
     .all(projectDirectory, attemptID, SUMMARY_TICKS + 1)

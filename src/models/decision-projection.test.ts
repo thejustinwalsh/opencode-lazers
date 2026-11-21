@@ -681,6 +681,28 @@ test("a change to one task re-derives that task and no other", async () => {
   expect(queued).toBeLessThan(taskCount(fixture))
 })
 
+test("keying older transitions with their integer plan key re-derives no task", async () => {
+  const fixture = fixtureWithHistory(20)
+  const connection = writeConnection(fixture)
+  ensureDecisionProjectionSchema(connection)
+  await foldDecisionProgress(connection.db, fixture.projectDirectory)
+  const dirty = () =>
+    connection.db
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM model_decision_task_dirty")
+      .get()!.n
+  expect(dirty()).toBe(0)
+  // What the paged backfill does to every older row; it changes no fact the projection reads.
+  sql(fixture, "UPDATE runner_transitions SET plan_n=NULL")
+  sql(fixture, "UPDATE runner_transitions SET plan_n=1")
+  expect(dirty()).toBe(0)
+  // A change to a fact still queues the task.
+  sql(
+    fixture,
+    "UPDATE runner_transitions SET payload=payload WHERE id=(SELECT MAX(id) FROM runner_transitions WHERE task_id IS NOT NULL)",
+  )
+  expect(dirty()).toBe(1)
+})
+
 test("the task watermark resumes after a restart and no task is derived twice", async () => {
   const fixture = fixtureWithHistory(20)
   const connection = writeConnection(fixture)

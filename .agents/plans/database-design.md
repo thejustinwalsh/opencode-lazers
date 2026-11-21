@@ -69,7 +69,8 @@ retention of settled history.
 1. Trace readers and writers for every table above. **Done** (see "Traced facts" and
    "Corrections to the trace").
 2. Dimension tables and integer keys, with migrations that keep old rows readable.
-   **Not started: design below.**
+   **Done for `runner_transitions` and `runner_progress` (branch `feat/integer-keys`); see
+   "Integer identity: landed".**
 3. Per-table compaction. **Done:** `task_changes` (counter rows), `recovery_progress_facts`
    (bounded window), `runner_conflict_scans` (dropped), outbox receipts (child rows), the four
    unused indexes. **Left:** `native_tool_calls` / `runner_progress` payloads, check receipts,
@@ -105,7 +106,7 @@ retention of settled history.
 An age is the owner's choice, never a default: it decides how long finished work stays
 inspectable. Only rows with a superseding successor are removed without one.
 
-### Integer identity: design (not built)
+### Integer identity: design
 
 Counts of statements outside tests: `runner_transitions` 70 in 26 files, `runner_progress` 52
 in 16 files, `recovery_progress_facts` 10 in 5 files. The last is now bounded to 1024 rows
@@ -132,6 +133,58 @@ Saving estimate: `plan_id`, `task_id`, `attempt_id` and `session_id` are 36 to 4
 each and repeat on every row (117 k progress rows, 440 k transitions): about 150 bytes a
 row, 80 MB for progress and 60 MB for transitions plus their text indexes, before the
 retention of old plans.
+
+### Integer identity: built
+
+Fixture of 440 000 transitions and 117 000 progress rows with live-shaped ids and payloads
+(`bun scripts/measure-integer-keys.ts`, SQLite 3.54, 4 KiB pages).
+
+| Step                                                      | Done                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Key tables                                             | `lazers_plan_keys`, `lazers_attempt_keys` (`src/runner/identity-keys.ts`). A trigger on `runner_plans` and `runner_attempts` keys each new row; install keys the existing ones (thousands of rows).                                                                                                                                                                                                                                                                                                               |
+| 2. Nullable `plan_n`, `attempt_n`, written and backfilled | Writers (`RunnerStore.record`, the progress recorder) write the keys in their insert. An AFTER INSERT trigger keys any other insert (retire-gates, an older copy still loaded). `ALTER ADD COLUMN` at install is metadata only (10 ms). The retention idle step (`RetentionService.backfillKeys`, called from `autoTick`) fills old rows in pages of 1000 rowids, one transaction each, with a turn of the event loop between pages: one page per tick while attempts run, a whole 800 ms slice at a quiet point. |
+| 3. Integer indexes, readers                               | `KEY_INDEXES` (`transition-indexes.ts`) are built after a table's backfill (inline under 20 000 rows, otherwise by the existing worker). Readers moved: see below.                                                                                                                                                                                                                                                                                                                                                |
+
+Fallback rule while the backfill is incomplete: a per-table flag, `lazers_key_backfill.complete`,
+set only when the backfill has passed the last row and the integer indexes exist. Until then a
+reader runs the statement it always ran; afterwards the same statement with `plan_id=?` swapped
+for `plan_n=(SELECT n FROM lazers_plan_keys WHERE plan_id=?)` (`planIs` / `attemptIs` in
+`identity-read.ts`), same bound parameters. A flag, not COALESCE: `plan_n=K OR (plan_n IS NULL AND
+plan_id=?)` cannot serve the lookup and the ordering from one index and would keep the text indexes
+in every plan. Readers cache a true flag per connection; it never returns to 0.
+
+Measured on the fixture:
+
+| Page of 1000 rows    | p50      | p95      | max      | whole table          |
+| -------------------- | -------- | -------- | -------- | -------------------- |
+| `runner_transitions` | 6.2 ms   | 15-18 ms | 40-50 ms | 440 pages, 3.3-3.8 s |
+| `runner_progress`    | 27-31 ms | 30-43 ms | 34-54 ms | 117 pages, 3.2-3.8 s |
+
+| File and index bytes                                        | File     | Transitions table + indexes | Progress table + indexes |
+| ----------------------------------------------------------- | -------- | --------------------------- | ------------------------ |
+| Before (text only)                                          | 915.4 MB | 258.1 + 141.8 MB            | 480.4 + 33.7 MB          |
+| After step 2 (columns, backfilled)                          | 916.0 MB | same (+0.6 MB in rows)      | same                     |
+| After step 3 indexes (text and integer)                     | 990.4 MB | 258.1 + 216.2 MB            | 480.4 + 44.3 MB          |
+| Step 4 simulated (text indexes and columns dropped, VACUUM) | 826.8 MB | 258.1 + 64.4 MB             | 480.4 + 22.0 MB          |
+
+Index builds after the backfill: 1.1 s for transitions, 0.4 s for progress. Step 4 simulated on a
+copy takes 14.8 s, which is why it belongs to `scripts/compact-database.ts`. The saving is
+88.7 MB (9.7 %), all of it indexes. **The estimate of about 150 bytes a row is not realised for
+the table pages with plan and attempt keys alone:** a transitions row is about 540 bytes, so
+dropping 36 bytes leaves 7 rows per 4 KiB page either way, and a progress row (2.4 KB) occupies
+one page and its overflow either way. Table bytes shrink only if `task_id`, `session_id`,
+`project_directory` and `project_id` also become keys (the payload, 95 % of the bytes, is the
+other plan item). Step 4 as scoped is worth doing for the indexes; the table saving needs those
+dimensions first.
+
+Readers moved (parity test against the text statement on the same rows while incomplete and after
+completion, and `EXPLAIN QUERY PLAN` showing an integer index and no scan; run with
+`EXPLAIN_VERBOSE=1` to print the plans): `src/runner/store.ts` plan-scoped reads (`activityEvents`,
+`activityCount`, `hasActivity`, `activity`, `recordSourceScanFailure`, `latestTransition`,
+`latestTransitionVersion`, `verificationTimeoutAmendments`, `latestRetainedRepair`) and
+`src/runner/retained-repair-records.ts`. Each integer plan is a `SEARCH ... USING INDEX
+runner_transitions_*_n (plan_n=? ...)` plus one `SEARCH lazers_plan_keys` by its unique index; the
+text plans were the same shape on `runner_transitions_lookup`, `_task_latest`, `_plan_id`, `_plan_event`.
 
 ## Traced facts (read-only search, HEAD d1cb7900)
 
@@ -164,7 +217,45 @@ Fastest safe wins, in order: delete `runner_conflict_scans` rows; collapse
 `task_changes`; stop or window `recovery_progress_facts`; drop unused indexes. Together
 about 1 GB of the 2.58 GB, with no reader affected.
 
-## Integer identity: measured, not merged (2026-11-20)
+## Integer identity: landed (2026-11-21)
+
+The owner chose to finish the work above. What changed from the plan:
+
+- **Step 4 is online and drops indexes only.** Each history table moves through the
+  `identityKeys` lifecycle (`src/runner/lifecycle-machines.ts`):
+  `backfilling -> indexing -> keyed -> text-retired`. The retention idle step
+  (`advanceIdentityKeys`, `src/runner/identity-migration.ts`) keys a page of 1,000 rows per
+  transaction, builds the integer indexes at a quiet point (a worker on a large table), then drops
+  one text-id index per transaction and returns the pages with the existing incremental vacuum.
+  The stored state is the resume point. While attempts run it only keys pages.
+- **The text columns stay.** Dropping them is a table rewrite (about 15 s, offline) for the row
+  bytes alone; the measurement below shows the index drop holds nearly all of the saving. The
+  columns keep result columns, joins driven from the history row and the key triggers working.
+- **Every predicate moved.** All plan and attempt predicates on the two tables go through
+  `planIs`, `planIn`, `planJoin`, `samePlan`, `attemptIs`, `attemptIn`
+  (`src/runner/identity-read.ts`): the text form until the table is `keyed`, the integer form after.
+  `src/runner/identity-predicates.test.ts` fails on a new text-id predicate.
+- **A new database never builds a text-id index:** install settles its empty tables straight to
+  `text-retired`, so the test suite runs the integer path.
+
+Measured with `bun scripts/measure-integer-keys.ts --transitions 420000 --progress 80000` (the
+live row counts on 2026-11-21 are 418,298 and 78,764), `auto_vacuum=INCREMENTAL`, 4 KiB pages,
+while other test runs shared the machine:
+
+| Bytes                        | Before   | Migrated (pages free) | Pages returned | Full `VACUUM` |
+| ---------------------------- | -------- | --------------------- | -------------- | ------------- |
+| `runner_transitions` rows    | 246.4 MB | 246.4 MB              | 246.4 MB       | 246.4 MB      |
+| `runner_transitions` indexes | 119.7 MB | 61.5 MB               | 61.5 MB        | 61.5 MB       |
+| `runner_progress` rows       | 328.5 MB | 328.5 MB              | 328.5 MB       | 328.5 MB      |
+| `runner_progress` indexes    | 20.3 MB  | 14.8 MB               | 14.8 MB        | 14.8 MB       |
+| File                         | 717.9 MB | 780.1 MB              | 654.8 MB       | 654.8 MB      |
+
+The saving is 63.1 MB of the file (8.8 %), all indexes. The file peaks 62 MB larger while both
+index sets exist; the incremental vacuum returns the text indexes' pages, and a full `VACUUM`
+adds nothing. A page of 1,000 rows commits in 6 ms (p50, transitions) and 35 ms (progress); the
+whole migration took 7 slices of 800 ms (6.3 s of work), the integer index builds included.
+
+## Integer identity: measured, not merged (2026-11-20; superseded by "landed" above)
 
 Branch `fix/integer-keys` (not merged) built steps 1 and 2 (key tables for plans and attempts;
 nullable integer columns on `runner_transitions` and `runner_progress`, backfilled in pages of

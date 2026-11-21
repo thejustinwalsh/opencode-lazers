@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
+import { asLegacyHistory } from "./identity.fixture.ts"
 import { RunnerStore } from "./store.ts"
 import {
   TRANSITION_INDEXES,
@@ -29,9 +30,9 @@ function database() {
 const missing = (repository: TaskRepository) =>
   repository.read((db) => missingTransitionIndexes(db).map(([name]) => name))
 
+/** A database from before these indexes and before the integer keys (which retire them). */
 function dropIndexes(repository: TaskRepository) {
   repository.atomic((db) => {
-    for (const [name] of TRANSITION_INDEXES) db.exec(`DROP INDEX IF EXISTS ${name}`)
     // Rows make the table look populated so the off-thread path is exercised.
     db.exec(
       "INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body) VALUES('p','d','o',1,1,'queued','{}')",
@@ -40,13 +41,18 @@ function dropIndexes(repository: TaskRepository) {
       "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES('p',NULL,1,'E','{}',1)",
     )
   })
+  asLegacyHistory(repository)
+  repository.atomic((db) => {
+    for (const [name] of TRANSITION_INDEXES) db.exec(`DROP INDEX IF EXISTS ${name}`)
+  })
 }
 
 test("opening a database from before the indexes existed creates all three", async () => {
   const repository = database()
   const first = new RunnerStore(repository)
   await first.transitionIndexes
-  expect(missing(repository)).toEqual([])
+  // A new database is keyed at install: its readers use the integer indexes instead.
+  expect(missing(repository)).toHaveLength(3)
   dropIndexes(repository)
   expect(missing(repository)).toHaveLength(3)
 

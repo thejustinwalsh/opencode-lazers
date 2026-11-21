@@ -13,6 +13,7 @@ import { runbook } from "../guidance/index.ts"
 import { noticeMarker } from "./notice-marker.ts"
 import { addOutboxReceipt } from "./store.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
+import { planIs, planJoin } from "./identity-read.ts"
 
 /**
  * Recovery bundle: everything stale that waits for an Architect decision, delivered as one notice.
@@ -330,7 +331,7 @@ export class RecoveryBundles {
       (db) =>
         db
           .query<{ at: number | null }, string[]>(
-            `SELECT max(created_at) AS at FROM runner_transitions WHERE plan_id=? AND ${clauses}`,
+            `SELECT max(created_at) AS at FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND ${clauses}`,
           )
           .get(planID, ...NOISE_EVENT_PREFIXES.map((prefix) => `${prefix}%`))?.at ?? null,
     )
@@ -654,7 +655,7 @@ export class RecoveryBundles {
     const row = this.deps.store.read((db) =>
       db
         .query<{ payload: string }, [string, string]>(
-          `SELECT t.payload FROM runner_transitions t JOIN runner_plans p ON p.id=t.plan_id
+          `SELECT t.payload FROM runner_transitions t JOIN runner_plans p ON ${planJoin(db, "runner_transitions", "t", "p.id")}
            WHERE p.project_directory=? AND t.event=? ORDER BY t.id DESC LIMIT 1`,
         )
         .get(this.deps.directory, RECOVERY_BUNDLE_EVENT),
@@ -703,12 +704,13 @@ export class RecoveryBundles {
           .flatMap((row) => row.id ?? []),
       )
     const itemOwners = items.flatMap((item) => store.plan(item.planID)?.owner ?? [])
+    const ownerActivity = store.read((db) => planJoin(db, "runner_transitions", "t", "p.id"))
     return [
       ...new Set([
         ...itemOwners,
         ...column(
           `SELECT p.owner AS id FROM runner_plans p
-           LEFT JOIN runner_transitions t ON t.plan_id=p.id
+           LEFT JOIN runner_transitions t ON ${ownerActivity}
            WHERE p.project_directory=? GROUP BY p.owner ORDER BY max(t.id) DESC LIMIT 10`,
           directory,
         ),

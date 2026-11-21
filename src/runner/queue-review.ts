@@ -7,6 +7,7 @@ import type { RuntimeJournal } from "./runtime-journal.ts"
 import type { TaskRuntime } from "./runtime.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import { planIs } from "./identity-read.ts"
 
 /** What `QueueReview` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type QueueReviewDeps = {
@@ -81,7 +82,7 @@ export class QueueReview {
           `SELECT o.*, o.rowid AS sequence, CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
                 COALESCE(json_extract(o.payload,'$.requestedAt'),
                   (SELECT max(t.created_at) FROM runner_transitions t
-                   WHERE t.plan_id=o.plan_id AND t.event='QUEUE_REVIEW_REQUESTED'), 0) AS requestedAt
+                   WHERE ${planIs(db, "runner_transitions", "t", "o.plan_id")} AND t.event='QUEUE_REVIEW_REQUESTED'), 0) AS requestedAt
            FROM runner_outbox o
           WHERE o.plan_id=? AND json_extract(o.payload,'$.status')='queue-review'
             AND json_extract(o.payload,'$.waiting')=?

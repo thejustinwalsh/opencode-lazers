@@ -8,6 +8,7 @@ import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
 import { storedGroupHead, storedWorkload } from "../tasks/schedule/stored.ts"
 import { openConcerns } from "../recovery/detector.ts"
+import { attemptIs, planIs } from "../runner/identity-read.ts"
 
 function safeJSON(text: string): unknown {
   try {
@@ -274,12 +275,12 @@ function progressQuery(db: Database) {
   return db.query<ProgressRow, (string | number)[]>(
     `WITH recent AS (
        SELECT seq FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
-          AND plan_id=? AND task_id=? ORDER BY seq DESC LIMIT ?
+        WHERE project_directory=? AND ${attemptIs(db)} AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
+          AND ${planIs(db, "runner_progress")} AND task_id=? ORDER BY seq DESC LIMIT ?
      ), tools AS (
        SELECT seq FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
-          AND plan_id=? AND task_id=? AND kind='tool' AND call_id IS NOT NULL
+        WHERE project_directory=? AND ${attemptIs(db)} AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
+          AND ${planIs(db, "runner_progress")} AND task_id=? AND kind='tool' AND call_id IS NOT NULL
         ORDER BY seq DESC LIMIT ?
      ), selected AS (
        SELECT seq,MAX(recent_lane) AS recent_lane,MAX(tool_lane) AS tool_lane FROM (
@@ -704,8 +705,8 @@ export class LiveReadStore {
                         ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)} AS payload_bytes,
                         ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)}>? AS payload_omitted
                    FROM runner_progress
-                  WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
-                    AND plan_id=? AND task_id=? AND seq IN (${placeholders})
+                  WHERE project_directory=? AND ${attemptIs(db)} AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
+                    AND ${planIs(db, "runner_progress")} AND task_id=? AND seq IN (${placeholders})
                   ORDER BY seq DESC`,
               )
               .all(
@@ -795,7 +796,7 @@ export class LiveReadStore {
             db
               .query<{ one: number }, [string, string]>(
                 `SELECT 1 AS one FROM runner_progress_display_backfill b
-                  WHERE b.below_seq > (SELECT MIN(seq) FROM runner_progress WHERE project_directory=? AND attempt_id=?)`,
+                  WHERE b.below_seq > (SELECT MIN(seq) FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)})`,
               )
               .get(this.projectDirectory, row.id) !== null
         } catch {
