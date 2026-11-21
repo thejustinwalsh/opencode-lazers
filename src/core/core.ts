@@ -2,10 +2,6 @@ import { acquireScheduleOwner } from "../tasks/schedule/owner.ts"
 import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { startProjection } from "../projections/owner.ts"
 import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
-import {
-  ensureModelCandidatesSchema,
-  modelCandidatesProjection,
-} from "../models/candidate-store.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -199,23 +195,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
-  // This project's comparison candidates, built once per evidence snapshot set; the queue catches
-  // every later snapshot change.
-  ensureModelCandidatesSchema(repository)
-  const candidatesLease = startProjection(
-    repository.path,
-    info.projectDirectory,
-    modelCandidatesProjection,
-    {
-      scope: info.projectDirectory,
-      onError: (error) =>
-        void Effect.runPromise(
-          Effect.logWarning("LAZERS model candidates projection failed", {
-            error: String(error),
-          }),
-        ),
-    },
-  )
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
@@ -360,7 +339,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     displayBackfill.stop()
     taskEventsLease.release()
     nativeCallLease.release()
-    candidatesLease.release()
     scheduleLease.release()
     await registration.dispose()
     await schedulerStatus.stop()

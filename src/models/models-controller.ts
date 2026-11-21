@@ -26,6 +26,7 @@ import type { CatalogEntry } from "./catalog-projection.ts"
 import {
   chartPoints as chartPointsOf,
   chartReferences as chartReferencesOf,
+  modelDisplayLabeler,
   observedFactsByRoute as observedFactsOf,
   referenceTokenProfile,
   routedModels,
@@ -701,8 +702,11 @@ export function createModelsController(props: ModelsProps) {
     const panel = visible()
     if (!panel) return undefined
     const candidates = panel.candidates
-    const routes = candidates.map((candidate) => ({ ...candidate.identity, variant: null }))
-    const catalog = panel.catalog?.options ?? []
+    const label = modelDisplayLabeler(
+      candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
+      candidates,
+      panel.catalog?.options ?? [],
+    )
     return benchmarkBaseline({
       candidates,
       priceSources: priceSourceOrder().sources,
@@ -714,7 +718,7 @@ export function createModelsController(props: ModelsProps) {
       observedRoutes: observedRouteKeys(),
       preferredBasis: pickedBasis(),
       external: visible()?.comparison?.publicCatalog ?? [],
-      label: (route) => modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalog),
+      label: (route) => label({ ...route, variant: null }),
     })
   })
   const observedPlottedModels = () =>
@@ -733,8 +737,11 @@ export function createModelsController(props: ModelsProps) {
     const panel = visible()
     if (!panel) return { entries: [], summary: undefined }
     const candidates = panel.candidates
-    const routes = candidates.map((candidate) => ({ ...candidate.identity, variant: null }))
-    const catalogOptions = panel.catalog?.options ?? []
+    const label = modelDisplayLabeler(
+      candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
+      candidates,
+      panel.catalog?.options ?? [],
+    )
     return buildCatalog({
       candidates,
       priceSources: priceSourceOrder().sources,
@@ -748,8 +755,7 @@ export function createModelsController(props: ModelsProps) {
       routed: routedRoutes(),
       preferredBasis: pickedBasis(),
       external: visible()?.comparison?.publicCatalog ?? [],
-      label: (route) =>
-        modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalogOptions),
+      label: (route) => label({ ...route, variant: null }),
     })
   })
   const catalogEntries = () => catalog().entries

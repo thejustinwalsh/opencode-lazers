@@ -5,7 +5,7 @@ import type { ObservedFacts } from "./catalog-projection.ts"
 import { comparisonChartMarks, referenceAmount } from "./chart-data.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import type { PublicCatalogItem } from "./comparison-schema.ts"
-import { modelDisplayLabel } from "./comparison-presentation.ts"
+import { modelDisplayLabel, modelDisplayName, routeLabel } from "./comparison-presentation.ts"
 import type { ModelCandidate } from "./comparison-presentation.ts"
 import type { ModelDecisionOverview } from "./decision-contract.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
@@ -171,6 +171,42 @@ export type CatalogSetInput = {
   external: readonly PublicCatalogItem[]
 }
 
+type DisplayRoute = { providerID: string; modelID: string; variant?: string | null }
+
+/**
+ * `modelDisplayLabel` over one fixed route list, with the names computed once per model. The plain
+ * call recomputes every route's name against every candidate for each label (cubic in the
+ * catalog: 5.9 s for 368 labels over 1,466 candidates, measured 2026-11-21); this gives the same
+ * label (the name, plus the route when another listed route shares the name) in linear time.
+ */
+export function modelDisplayLabeler(
+  routes: readonly DisplayRoute[],
+  candidates: readonly ModelCandidate[],
+  catalog: CatalogNames,
+) {
+  const names = new Map<string, string>()
+  const nameOf = (route: DisplayRoute) => {
+    const key = `${route.providerID}\u0000${route.modelID}`
+    let name = names.get(key)
+    if (name === undefined) {
+      name = modelDisplayName(route, candidates, catalog)
+      names.set(key, name)
+    }
+    return name
+  }
+  const routesByName = new Map<string, Set<string>>()
+  for (const route of routes) {
+    const name = nameOf(route)
+    const set = routesByName.get(name) ?? new Set<string>()
+    set.add(`${route.providerID}\u0000${route.modelID}\u0000${route.variant ?? ""}`)
+    routesByName.set(name, set)
+  }
+  return (route: DisplayRoute) => {
+    const name = nameOf(route)
+    return (routesByName.get(name)?.size ?? 0) < 2 ? name : `${name} · ${routeLabel(route)}`
+  }
+}
+
 /** The ranked catalog of the panel's "All models" table and projected chart. */
 export function catalogFor(input: CatalogSetInput) {
   const references = input.overview
@@ -179,7 +215,11 @@ export function catalogFor(input: CatalogSetInput) {
   const points = input.overview
     ? chartPoints(input.overview, references, input.candidates, input.catalog)
     : []
-  const routes = input.candidates.map((candidate) => ({ ...candidate.identity, variant: null }))
+  const label = modelDisplayLabeler(
+    input.candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
+    input.candidates,
+    input.catalog,
+  )
   return buildCatalog({
     candidates: input.candidates,
     priceSources: input.priceSources,
@@ -189,7 +229,6 @@ export function catalogFor(input: CatalogSetInput) {
     routed: input.routed,
     preferredBasis: input.preferredBasis,
     external: input.external,
-    label: (route) =>
-      modelDisplayLabel({ ...route, variant: null }, routes, input.candidates, input.catalog),
+    label: (route) => label({ ...route, variant: null }),
   })
 }
