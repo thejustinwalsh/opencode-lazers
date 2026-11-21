@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test"
-import { makeFixture } from "../../test/trajectory/fixture.ts"
-import { readSourceStamp } from "./changes.ts"
+import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { observationRevisionStamp } from "../core/stamp-gate.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
 import { ensureObservationRevision } from "./source-revision.ts"
+
+/** The project's observation revision, the stamp the decision worker's keep-warm gate reads. */
+const revisionOf = (fixture: ReturnType<typeof makeFixture>) =>
+  fixture.repository.read((db) => observationRevisionStamp(db, fixture.directory))
 
 test("observation invalidation is transactional, project scoped, and ignores unchanged writes", () => {
   const fixture = makeFixture()
-  const stamp = () =>
-    readSourceStamp(fixture.repository.path, fixture.directory, new Uint8Array(32))
-      .sourceFingerprint
+  const stamp = () => revisionOf(fixture)
   try {
     const initial = stamp()
     fixture.store.atomic((db) => db.exec("UPDATE runner_plans SET state=state"))
@@ -46,6 +49,104 @@ test("observation invalidation is transactional, project scoped, and ignores unc
     const deleted = stamp()
     fixture.store.atomic(ensureObservationRevision)
     expect(stamp()).toBe(deleted)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("progress, continuation and outbox inserts and updates move the observation revision", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const stepStart = {
+      id: "evt-revision-step-start",
+      type: "session.step.started",
+      created: 10_000,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-revision",
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: "gpt-6-luna" },
+        started: 9_999,
+      },
+    }
+    let revision = revisionOf(fixture)
+    const assertChanged = () => {
+      const next = revisionOf(fixture)
+      expect(next).not.toBe(revision)
+      revision = next
+    }
+
+    recorder.recordNativeEvent(stepStart)
+    assertChanged()
+    recorder.recordNativeEvent(stepStart)
+    expect(revisionOf(fixture)).toBe(revision)
+    recorder.recordNativeEvent({
+      id: "evt-revision-step-end",
+      type: "session.step.ended",
+      created: 10_100,
+      data: { sessionID: "ses-failed", assistantMessageID: "msg-revision" },
+    })
+    assertChanged()
+
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_continuations(plan_id,session_id,parent_id,directory,model,generation)
+         VALUES(?,?,?,?,?,?)`,
+        )
+        .run(
+          fixture.receipt.planID,
+          "ses-continuation",
+          "ses-owner",
+          fixture.directory,
+          JSON.stringify({ providerID: "openai", id: "gpt-6-luna" }),
+          1,
+        ),
+    )
+    assertChanged()
+    fixture.store.atomic((db) =>
+      db
+        .query("UPDATE runner_continuations SET generation=generation+1 WHERE plan_id=?")
+        .run(fixture.receipt.planID),
+    )
+    assertChanged()
+
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_outbox
+         (id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt)
+         VALUES(?,?,?,?,?,'pending',0,NULL,NULL)`,
+        )
+        .run(
+          "outbox-revision",
+          fixture.receipt.planID,
+          "ses-owner",
+          "msg-outbox-revision",
+          "private payload",
+        ),
+    )
+    assertChanged()
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_outbox SET state='admitted' WHERE id=?").run("outbox-revision"),
+    )
+    assertChanged()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("runner tool-count changes move the revision even when the repository watermark is unchanged", () => {
+  const fixture = makeFixture()
+  try {
+    const repositoryVersion = fixture.repository.version()
+    const revision = revisionOf(fixture)
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID)
+    })
+    expect(fixture.repository.version()).toBe(repositoryVersion)
+    expect(revisionOf(fixture)).not.toBe(revision)
   } finally {
     fixture.close()
   }

@@ -1,6 +1,4 @@
-import { TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
-import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { ProjectRef } from "../projects/scope.ts"
 import { z } from "zod"
 
@@ -9,12 +7,6 @@ const ObservationScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("project"), sessionID: z.string().min(1).max(200) }),
   /** Every project the caller may read, a page per checkout. `sessionID` is the caller. */
   z.strictObject({ kind: z.literal("all"), sessionID: z.string().min(1).max(200) }),
-])
-
-const ObservationScopeView = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
-  z.strictObject({ kind: z.literal("project") }),
-  z.strictObject({ kind: z.literal("all") }),
 ])
 
 /** The all-projects additions every output carries: the page's project and the next cursor. */
@@ -35,90 +27,6 @@ function cursorOnlyForAll(
       message: "A cursor applies to the all-projects scope only",
     })
 }
-
-const Boundary = z.strictObject({
-  repositoryVersion: z.int().nonnegative(),
-  sourceRevision: z.int().nonnegative(),
-  sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  nativeRevision: z.int().nonnegative(),
-  eventSequence: z.int().nonnegative(),
-  transitionSequence: z.int().nonnegative(),
-})
-
-const MachineTransition = z.strictObject({ event: z.string(), target: TaskState })
-const MachineState = z.strictObject({
-  id: TaskState,
-  type: z.enum(["atomic", "final"]),
-  transitions: z.array(MachineTransition),
-})
-
-const NodeSnapshot = z.strictObject({
-  status: z.string(),
-  value: TaskState,
-})
-
-const ObservationNode = z.strictObject({
-  taskID: z.uuid(),
-  reference: z.string().optional(),
-  sourcePlan: TaskSourcePlanSchema.optional(),
-  revision: z.literal(1),
-  objective: z.string(),
-  ordinal: z.int().nonnegative(),
-  state: TaskState,
-  version: z.int().positive(),
-  reason: z.string().nullable(),
-  machineVersion: z.string(),
-  machineSupported: z.boolean(),
-  snapshot: NodeSnapshot.nullable(),
-  snapshotMatchesState: z.boolean(),
-  waitingOn: z.array(z.uuid()),
-})
-
-const ObservationPlan = z.strictObject({
-  /** Present in the all-projects scope only. */
-  project: ProjectRef.optional(),
-  dispatchPause: DispatchPause.optional(),
-  priority: z.int().optional(),
-  queuePosition: z.int().nonnegative().optional(),
-  id: z.uuid(),
-  revision: z.int().positive(),
-  version: z.int().positive(),
-  state: z.string(),
-  reason: z.string().nullable(),
-  title: z.string().max(120).nullable(),
-  afterPlans: z.array(z.uuid()).max(1000),
-  nodes: z.array(ObservationNode).max(100),
-  dependencies: z.array(z.strictObject({ prerequisite: z.uuid(), successor: z.uuid() })).max(500),
-})
-
-const UnplannedTask = z.strictObject({
-  /** Present in the all-projects scope only. */
-  project: ProjectRef.optional(),
-  taskID: z.uuid(),
-  revision: z.literal(1),
-  status: z.literal("submitted"),
-  title: z.string().max(120),
-})
-
-const SnapshotInput = z
-  .strictObject({ scope: ObservationScope, cursor: PageCursor })
-  .superRefine(cursorOnlyForAll)
-export const SnapshotOutput = z.strictObject({
-  schemaVersion: z.literal(1),
-  projectID: z.string().min(1),
-  scope: ObservationScopeView,
-  ...AllPage,
-  observedAt: z.iso.datetime(),
-  boundary: Boundary,
-  machine: z.strictObject({
-    id: z.string(),
-    version: z.string(),
-    initialState: TaskState,
-    states: z.array(MachineState),
-  }),
-  plans: z.array(ObservationPlan).max(1000),
-  unplannedTasks: z.array(UnplannedTask),
-})
 
 const ProgressDiagnosticsInput = z
   .strictObject({ scope: ObservationScope, cursor: PageCursor })
@@ -205,36 +113,15 @@ const ProgressDiagnosticsOutput = z.strictObject({
   processSchedulerTotals: ProcessSchedulerTotals,
 })
 
-export const ObservabilityChanged = z.strictObject({
-  projectID: z.string().min(1),
-  sequence: z.int().positive(),
-  repositoryVersion: z.int().nonnegative(),
-  sourceRevision: z.int().nonnegative(),
-  nativeRevision: z.int().nonnegative(),
-  cause: z.enum(["runner", "native", "gap"]),
-  resnapshotRequired: z.boolean(),
-})
-
 export const Observability = Rpc.define({
   id: "lazers.observability",
   methods: {
-    snapshot: { input: SnapshotInput, output: SnapshotOutput },
     progressDiagnostics: {
       input: ProgressDiagnosticsInput,
       output: ProgressDiagnosticsOutput,
     },
   },
-  events: { changed: { schema: ObservabilityChanged } },
+  events: {},
 })
 
 export type ObservationScope = z.infer<typeof ObservationScope>
-/** The scopes that read one project; every read except the all-projects ones takes this. */
-export type SingleScope = Exclude<ObservationScope, { kind: "all" }>
-const ALL_PROJECTS_UNAVAILABLE = "All-projects scope is not available for this read"
-export function singleScope(scope: ObservationScope): SingleScope {
-  if (scope.kind === "all") throw new Error(ALL_PROJECTS_UNAVAILABLE)
-  return scope
-}
-export type ObservationScopeView = z.infer<typeof ObservationScopeView>
-export type SnapshotResponse = z.infer<typeof SnapshotOutput>
-export type ObservationChange = z.infer<typeof ObservabilityChanged>

@@ -1,7 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
-import { ObservationChangeTracker } from "../observability/changes.ts"
-import { ObservationReads } from "../observability/read.ts"
 import { getTaskDetail } from "../tasks/stream-query.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { ModelEvidenceStore } from "../models/source-store.ts"
@@ -473,15 +471,9 @@ test("an interrupted purge resumes and ends with the same totals; a repeat finds
   expect(await purge(fixture, 30)).toEqual({})
 })
 
-test("a retired task still opens in Tasks, Radar and the snapshot reads", async () => {
+test("a retired task still opens in Tasks", async () => {
   const fixture = setup()
-  const secret = new Uint8Array(32).fill(5)
-  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
-  tracker.initialize()
-  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
   await purge(fixture, 30)
-  const snapshot = reads.snapshot({ kind: "session", sessionID: "ses-failed" }, tracker)
-  expect(snapshot.plans[0]?.nodes[0]).toMatchObject({ taskID, state: "accepted" })
   expect(
     await getTaskDetail(fixture.repository, { taskID: "LZ-1", session: "ses-failed" }),
   ).toMatchObject({
@@ -489,7 +481,6 @@ test("a retired task still opens in Tasks, Radar and the snapshot reads", async 
     reference: "LZ-1",
   })
   expect(fixture.repository.list(10, true)).toHaveLength(1)
-  tracker.close()
 })
 
 test("superseded counters, audit receipts and model snapshots: only what is never read again goes", async () => {
