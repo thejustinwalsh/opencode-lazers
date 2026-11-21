@@ -48,7 +48,7 @@ import { registerProfileTools } from "./projects/profile-tools.ts"
 import { ensureArchitectProfileGuidance, ensureSetupPointer } from "./projects/profile-guidance.ts"
 import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
-import { authorize as authorizeRead, registerObservability } from "./observability/rpc.ts"
+import { authorize as authorizeRead } from "./observability/rpc.ts"
 import { projectIdsFor } from "./project-key.ts"
 import { registerProgress } from "./progress/native.ts"
 import { registerRecoveryTools } from "./recovery/tools.ts"
@@ -407,9 +407,6 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:TrajectoryTools", () =>
         registerTrajectoryTools(ctx, runtime.store),
-      )
-      yield* sectionEffect("setup:Observability", () =>
-        registerObservability(ctx, core.reads, projectID).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:LocalInference", () =>
         registerLocalInference(ctx, undefined, core.inferenceBroker).pipe(Effect.orDie),

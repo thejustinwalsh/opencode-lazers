@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
-import { ObservationReads } from "../../src/observability/read.ts"
-import { registerObservability } from "../../src/observability/rpc.ts"
+import { authorize } from "../../src/observability/rpc.ts"
 import { Tasks } from "../../src/tasks/contract.ts"
 import { openStream } from "../../src/streams/client.ts"
 import { acquireReaderPool } from "../../src/streams/pool.ts"
@@ -111,24 +110,13 @@ test("registered Tasks reads discover durable worker links without widening proj
   }
 })
 
-test("registered observation RPC resolves scope through native sessions and enforces permission", async () => {
+test("the streams' read check resolves scope through native sessions and enforces permission", async () => {
   const fixture = makeFixture()
   const permissionCalls: unknown[] = []
   let denied = false
   let foreign = false
   let archived = false
-  let handlers:
-    | {
-        progressDiagnostics(input: unknown): Effect.Effect<unknown>
-      }
-    | undefined
   const ctx = {
-    rpc: {
-      register: (_definition: unknown, methods: typeof handlers) => {
-        handlers = methods
-        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
-      },
-    },
     session: {
       get: ({ sessionID }: { sessionID: string }) =>
         Effect.succeed({
@@ -144,25 +132,17 @@ test("registered observation RPC resolves scope through native sessions and enfo
         return denied ? Effect.fail(new Error("native permission denied")) : Effect.void
       },
     },
-  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session">
+  } as unknown as Pick<Plugin.Context, "permission" | "session">
   try {
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* registerObservability(
-            ctx,
-            new ObservationReads(fixture.store, "project"),
-            "project",
-          )
-        }),
-      ),
-    )
-    const scope = { kind: "session" as const, sessionID: "ses-failed" }
-    const read = (input: unknown) => Effect.runPromise(handlers!.progressDiagnostics(input))
-    expect(await read({ scope })).toMatchObject({ scope: { kind: "project" } })
-    expect(await read({ scope: { kind: "project", sessionID: "ses-failed" } })).toMatchObject({
-      scope: { kind: "project" },
-    })
+    const read = () =>
+      authorize(
+        ctx,
+        { sessionID: "ses-failed" },
+        "project",
+        fixture.repository.projectDirectory,
+        "read",
+      )
+    expect(String(await read())).toBe("architect")
     expect(permissionCalls.at(-1)).toMatchObject({
       sessionID: "ses-failed",
       agent: "architect",
@@ -171,16 +151,16 @@ test("registered observation RPC resolves scope through native sessions and enfo
     })
 
     denied = true
-    await expect(read({ scope })).rejects.toThrow()
+    await expect(read()).rejects.toThrow()
     denied = false
     foreign = true
-    await expect(read({ scope })).rejects.toThrow("Observation scope is unavailable")
+    await expect(read()).rejects.toThrow("Observation scope is unavailable")
     foreign = false
     // Archived sessions stay readable (60ba858c); native permission still gates them.
     archived = true
-    expect(await read({ scope })).toMatchObject({ scope: { kind: "project" } })
+    expect(String(await read())).toBe("architect")
     denied = true
-    await expect(read({ scope })).rejects.toThrow()
+    await expect(read()).rejects.toThrow()
     denied = false
     archived = false
   } finally {

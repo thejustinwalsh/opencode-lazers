@@ -30,7 +30,6 @@ import { UsageCache } from "../budget/server.ts"
 import { ProjectIndex } from "../context/index.ts"
 import { nativeContextPermission } from "../context/tools.ts"
 import { configuredAccess, createPriceSourceSettingsStore } from "../models/server.ts"
-import { ObservationReads } from "../observability/read.ts"
 import { projectKeyFor, registerProject } from "../project-key.ts"
 import { spendCeilingFor } from "../projects/settings.ts"
 import { startProgressDisplayBackfill } from "../progress/display-backfill.ts"
@@ -70,7 +69,6 @@ export type LazersCore = {
   readonly progress: ProgressRecorder
   readonly runtime: TaskRuntime
   readonly host: ReturnType<typeof nativeHost>
-  readonly reads: ObservationReads
   readonly managedUsageStore: ManagedUsageStore
   readonly usageCache: UsageCache
   readonly retention: RetentionService
@@ -326,8 +324,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     effortDetail: effortCompute.detail,
     touchEffort: (taskID) => taskEffort.fold.touch(taskID),
   } satisfies TrajectoryHostRuntime)
-  const reads = new ObservationReads(runnerStore, projectID)
-  built("observationReads")
   const usageCache = new UsageCache()
   const inferenceBroker = new InferenceBroker()
 
@@ -384,7 +380,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     progress,
     runtime,
     host: nativeRunnerHost,
-    reads,
     managedUsageStore,
     usageCache,
     retention,

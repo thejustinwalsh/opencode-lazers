@@ -1517,18 +1517,3 @@ function correctionRecord(row: CorrectionRow): TaskCorrectionRecordType {
     createdAt: row.created_at,
   })
 }
-
-/**
- * A checkout's repository for reads that must never write: every transaction is a deferred read,
- * so it takes no write lock and cannot block (or be blocked by) a writer in another connection.
- * It still opens the process-wide connection, whose schema was installed by the writable
- * repositories of this process.
- */
-export class ReadOnlyTaskRepository extends TaskRepository {
-  override atomic<T>(run: (db: Database) => T): T {
-    return this.read(run)
-  }
-  override async atomicAsync<T>(run: (db: Database) => T): Promise<T> {
-    return this.read(run)
-  }
-}
