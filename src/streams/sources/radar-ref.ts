@@ -63,6 +63,9 @@ const assignmentColumns = {
   plan_state: "text",
   plan_reason: "text",
   concern: "json",
+  /** The concern rule's recommended action and its reason, when one was recorded. */
+  concern_action: "text",
+  concern_because: "text",
 } as const satisfies Columns
 export const radarAssignmentColumns = assignmentColumns
 export const radarAttemptDetail = {

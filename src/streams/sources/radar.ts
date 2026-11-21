@@ -67,7 +67,7 @@ const ATTEMPTS = `(SELECT a.id AS id, a.project_directory AS project_directory, 
     a.workspace AS workspace, a.base_commit AS base_commit, a.artifact AS artifact,
     t.reference AS reference, t.title AS title, t.node_state AS node_state,
     t.node_reason AS node_reason, t.plan_state AS plan_state, t.plan_reason AS plan_reason,
-    t.concern AS concern
+    t.concern AS concern, t.concern_action AS concern_action, t.concern_because AS concern_because
   FROM runner_attempts a LEFT JOIN task_schedule t ON t.task_id=a.task_id) AS radar_attempts`
 
 export const radarAssignmentsSource = defineSource({

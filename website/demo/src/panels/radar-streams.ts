@@ -223,6 +223,8 @@ function attemptRow(worker: DemoWorker, ids: RadarIds): DemoRow {
     plan_state: "running",
     plan_reason: null,
     concern: worker.concern ? { line: worker.concern.line } : null,
+    concern_action: worker.concern?.action ?? null,
+    concern_because: worker.concern?.because ?? null,
     workspace: null,
     base_commit: null,
     artifact: null,

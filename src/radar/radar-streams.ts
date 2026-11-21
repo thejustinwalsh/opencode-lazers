@@ -132,10 +132,22 @@ function summaryOf(
   }
 }
 
-/** The stored concern (`task_schedule.concern`): its line. The rule's advice is not stored there. */
-function concernOf(value: unknown): WorkerAttempt["concern"] {
+const CONCERN_ACTIONS = new Set(["acknowledge", "steer", "takeover", "cancel"])
+
+/**
+ * The stored concern (`task_schedule.concern`): its line, with the rule's recommended action and
+ * reason (`concern_action`, `concern_because`) when the projection recorded them.
+ */
+function concernOf(value: unknown, action: unknown, because: unknown): WorkerAttempt["concern"] {
   const concern = value as { line?: unknown } | null
-  return typeof concern?.line === "string" && concern.line ? { line: concern.line } : undefined
+  if (typeof concern?.line !== "string" || !concern.line) return undefined
+  return {
+    line: concern.line,
+    ...(typeof action === "string" && CONCERN_ACTIONS.has(action)
+      ? { action: action as NonNullable<WorkerAttempt["concern"]>["action"] }
+      : {}),
+    ...(typeof because === "string" && because ? { because } : {}),
+  }
 }
 
 function workerAttemptOf(
@@ -144,7 +156,7 @@ function workerAttemptOf(
 ): WorkerAttempt {
   const value = readerOf(row)
   const model = AttemptModel.safeParse(value.model)
-  const concern = concernOf(value.concern)
+  const concern = concernOf(value.concern, value.concern_action, value.concern_because)
   return {
     id: String(value.id),
     number: Number(value.number),

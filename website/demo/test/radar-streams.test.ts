@@ -81,6 +81,7 @@ test("the demo answers the worker pane's attempt and call streams with real fram
     tool_count: 7,
     reference: "LZ-204",
     concern: { line: "Repeated test failures" },
+    concern_action: "steer",
   })
   // Every call of the attempt: the four earlier ones and the three listed, newest first.
   const calls = decode(
