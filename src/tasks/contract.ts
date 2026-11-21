@@ -5,19 +5,30 @@ import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
 import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
-import { TaskStateFilter } from "./state-filter.ts"
+import { TaskStateFilter, TaskStateSelection } from "./state-filter.ts"
 
-export const QueryInput = z.strictObject({
-  sort: z.enum(["recent", "schedule"]).default("recent"),
-  search: z.string().max(200).default(""),
-  scopePath: z.string().min(1).max(1_024).optional(),
-  sessionID: z.string().min(1).max(200).optional(),
-  limit: z.int().min(1).max(100).default(30),
-  cursor: z.string().min(1).max(2_048).optional(),
-  state: TaskStateFilter.optional(),
-  includeCompleted: z.boolean().default(false),
-  includeRetired: z.boolean().default(false),
-})
+export const QueryInput = z
+  .strictObject({
+    sort: z.enum(["recent", "schedule"]).default("recent"),
+    search: z.string().max(200).default(""),
+    scopePath: z.string().min(1).max(1_024).optional(),
+    sessionID: z.string().min(1).max(200).optional(),
+    limit: z.int().min(1).max(100).default(30),
+    cursor: z.string().min(1).max(2_048).optional(),
+    state: TaskStateFilter.optional(),
+    /** Explicit multi-state set; [] is unrestricted, unlike an omitted legacy filter. */
+    states: z.array(TaskStateSelection).max(8).optional(),
+    includeCompleted: z.boolean().default(false),
+    includeRetired: z.boolean().default(false),
+  })
+  .superRefine((input, context) => {
+    if (input.states !== undefined && input.state !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["states"],
+        message: "Use either state or states, not both",
+      })
+  })
 export type TaskQuery = z.input<typeof QueryInput>
 export const GetInput = z.strictObject({
   taskID: z.union([z.uuid(), TaskReferenceSchema]),

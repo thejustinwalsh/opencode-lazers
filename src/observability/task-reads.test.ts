@@ -7,7 +7,7 @@ import { TaskRepository } from "../storage.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
 import { TaskReads } from "../tasks/read.ts"
 import type { TaskPage } from "../tasks/contract.ts"
-import type { TaskStateFilter } from "../tasks/state-filter.ts"
+import type { TaskStateFilter, TaskStateSelection } from "../tasks/state-filter.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -79,7 +79,11 @@ function addExecution(
   })
 }
 
-type PageFilter = { state?: TaskStateFilter; includeCompleted?: boolean }
+type PageFilter = {
+  state?: TaskStateFilter
+  states?: TaskStateSelection[]
+  includeCompleted?: boolean
+}
 function collectPages(
   read: (input: PageFilter & { limit: number; cursor?: string }) => TaskPage,
   filter: PageFilter,
@@ -87,16 +91,25 @@ function collectPages(
   const ids: string[] = []
   let cursor: string | undefined
   let count = -1
-  do {
+  const followed = new Set<string>()
+  for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+    if (cursor && followed.has(cursor)) throw new Error(`Task pagination repeated cursor ${cursor}`)
+    if (cursor) followed.add(cursor)
+    const requestedCursor = cursor
     const page = read({ ...filter, limit: 2, ...(cursor ? { cursor } : {}) })
     if (count === -1) count = page.count
     expect(page.count).toBe(count)
     ids.push(...page.tasks.map((task) => task.taskID))
     cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  expect(ids).toHaveLength(count)
-  expect(new Set(ids).size).toBe(count)
-  return new Set(ids)
+    if (cursor && cursor === requestedCursor)
+      throw new Error(`Task query repeated cursor without progress: ${JSON.stringify(page.tasks)}`)
+    if (!cursor) {
+      expect(ids).toHaveLength(count)
+      expect(new Set(ids).size).toBe(count)
+      return new Set(ids)
+    }
+  }
+  throw new Error(`Task pagination did not terminate after 100 pages for ${JSON.stringify(filter)}`)
 }
 
 test("state filters paginate exact effective task states in project and associated session reads", () => {
@@ -361,6 +374,51 @@ test("lifecycle filters retain raw states while held plans stay in the waiting f
   expect(blocked.tasks.some((task) => task.recordedState === "accepted")).toBe(false)
   expect(blocked.tasks.some((task) => task.recordedState === "incorporated")).toBe(false)
   expect(reads.query({ state: "completed", limit: 100 }).count).toBe(2)
+})
+
+test("state-set unions deduplicate before pagination in project and associated-session reads", () => {
+  const repository = fixture()
+  const reads = new TaskReads(repository)
+  const associated = new AssociationTaskReads(repository)
+  const sessionTask = addTask(repository, "Unplanned session task", "session-a")
+  const otherSessionTask = addTask(repository, "Unplanned other session task", "session-b")
+  const running = addTask(repository, "Running task", "session-b")
+  const blocked = addTask(repository, "Blocked task", "session-b")
+  const completed = addTask(repository, "Completed task", "session-b")
+  addExecution(reads, running.id, "running", "running", "session-a")
+  addExecution(reads, blocked.id, "blocked", "queued", "session-a")
+  addExecution(reads, completed.id, "accepted", "accepted", "session-a")
+
+  const projectFilter: PageFilter = { states: ["open", "running"] }
+  const sessionFilter = { ...projectFilter, sessionID: "session-a" }
+  const rawFirst = repository.readPage({ search: "", limit: 2, states: projectFilter.states })
+  const rawSecond = repository.readPage({
+    search: "",
+    limit: 2,
+    states: projectFilter.states,
+    snapshot: rawFirst.version,
+    before: rawFirst.rows[1]!.position,
+  })
+  expect(rawSecond.rows[0]?.position).toBeLessThan(rawFirst.rows[1]!.position)
+  expect(collectPages((input) => reads.query(input), projectFilter)).toEqual(
+    new Set([sessionTask.id, otherSessionTask.id, running.id, blocked.id]),
+  )
+  expect(collectPages((input) => associated.query(input), sessionFilter)).toEqual(
+    new Set([sessionTask.id, running.id, blocked.id]),
+  )
+
+  const first = reads.query({ ...projectFilter, limit: 2 })
+  expect(first.nextCursor).toBeTruthy()
+  const equivalent = reads.query({
+    states: ["running", "open"],
+    limit: 2,
+    cursor: first.nextCursor!,
+  })
+  expect(equivalent.count).toBe(first.count)
+  expect(() => reads.query({ states: ["open"], limit: 2, cursor: first.nextCursor! })).toThrow(
+    "does not match",
+  )
+  expect(() => reads.query({ state: "open", states: ["running"] })).toThrow()
 })
 
 test("scheduler ordering is global across pages and identical for project and associated-session reads", () => {

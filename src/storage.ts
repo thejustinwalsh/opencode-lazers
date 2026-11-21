@@ -32,8 +32,11 @@ import type {
   TaskCorrectionRecord as TaskCorrectionRecordType,
   TaskCorrectionReceipt as TaskCorrectionReceiptType,
 } from "./task-correction.ts"
-import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
-import type { TaskQueryState } from "./tasks/state-filter.ts"
+import type { TaskQueryState, TaskStateSelection } from "./tasks/state-filter.ts"
+import {
+  effectiveTaskStateSelection,
+  taskStateSelectionPredicateForQuery,
+} from "./tasks/state-selection.ts"
 import { canonical, fingerprint } from "./identity.ts"
 import { databaseChanges } from "./database-events.ts"
 import {
@@ -514,6 +517,7 @@ export class TaskRepository {
     snapshot?: number
     before?: number
     state?: TaskQueryState
+    states?: readonly TaskStateSelection[]
     includeCompleted?: boolean
     includeRetired?: boolean
   }) {
@@ -532,8 +536,8 @@ export class TaskRepository {
       }
       const clauses = ["tasks.project_directory = ?", "tasks.created_version <= ?"]
       const values: (string | number)[] = [this.projectDirectory, version]
-      const statePredicate = taskStatePredicate(
-        effectiveTaskStateFilter(input.state, input.includeCompleted),
+      const statePredicate = taskStateSelectionPredicateForQuery(
+        effectiveTaskStateSelection(input.states, input.state, input.includeCompleted),
         "tasks",
       )
       if (statePredicate) clauses.push(statePredicate)

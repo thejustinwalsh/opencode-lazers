@@ -9,7 +9,8 @@ import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskSummary } from "./contract.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
-import { effectiveTaskStateFilter } from "./state-filter.ts"
+import type { TaskQueryState, TaskStateSelection } from "./state-filter.ts"
+import { effectiveTaskStateSelection, taskStateSelectionIdentity } from "./state-selection.ts"
 import { taskAdviceSnapshot } from "./advice.ts"
 import type { TaskState } from "../runner/schema.ts"
 
@@ -105,6 +106,11 @@ export class TaskReads {
 
   query(input: unknown): TaskPage {
     const query = QueryInput.parse(input)
+    const stateSelection = effectiveTaskStateSelection(
+      query.states,
+      query.state,
+      query.includeCompleted,
+    )
     const filter = createHash("sha256")
       .update(
         JSON.stringify([
@@ -112,7 +118,7 @@ export class TaskReads {
           query.sessionID,
           query.search,
           query.scopePath,
-          effectiveTaskStateFilter(query.state, query.includeCompleted),
+          taskStateSelectionIdentity(stateSelection),
           query.includeRetired,
           query.sort,
         ]),
@@ -129,9 +135,13 @@ export class TaskReads {
         throw new Error("Task cursor does not match this project, session, or filter")
       }
     }
+    const explicitStates = Array.isArray(stateSelection)
+      ? (stateSelection as TaskStateSelection[])
+      : undefined
     const page = this.repository.readPage({
       ...query,
-      state: effectiveTaskStateFilter(query.state, query.includeCompleted),
+      state: explicitStates ? undefined : (stateSelection as TaskQueryState),
+      states: explicitStates,
       snapshot: cursor?.snapshot,
       before: cursor?.before,
     })

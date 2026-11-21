@@ -210,9 +210,11 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   const stateOf = (taskID: string) =>
     blocked.has(taskID)
       ? "blocked"
-      : fixture.readyConditionalPause && taskID === alpha[0]
-        ? "ready"
-        : "queued"
+      : active.has(taskID)
+        ? "running"
+        : fixture.readyConditionalPause && taskID === alpha[0]
+          ? "ready"
+          : "queued"
   const paused = (taskID: string) =>
     Boolean(
       ["queued", "ready"].includes(stateOf(taskID)) &&
@@ -253,7 +255,8 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   })
 
   let snapshot = 1
-  const queryCalls: Array<{ state?: string; cursor?: string }> = []
+  const queryCalls: Array<{ state?: string; states?: string[]; cursor?: string }> = []
+  const queryResults: Array<{ state: string; cursor?: string; ids: string[]; count: number }> = []
   const gates = new Map<string, Deferred>()
   /** `${state}:${cursor}` pages that fail while listed here. */
   const failures = new Set<string>()
@@ -268,14 +271,67 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     nextCursor,
     serverTime: "2026-11-05T00:00:00.000Z",
   })
-  const query = async (input: { state?: string; cursor?: string }) => {
-    queryCalls.push({ state: input.state, cursor: input.cursor })
-    const gate = input.cursor ? gates.get(`${input.state}:${input.cursor}`) : undefined
+  const allIDs = [...alpha, ...betaTasks, ...extraPlans.flatMap((plan) => plan.tasks), ...queue]
+  const query = async (input: { state?: string; states?: string[]; cursor?: string }) => {
+    const stateKey =
+      input.states === undefined
+        ? (input.state ?? "open")
+        : input.states.length
+          ? input.states.join("+")
+          : "all"
+    queryCalls.push({
+      state: stateKey,
+      ...(input.states ? { states: [...input.states] } : {}),
+      cursor: input.cursor,
+    })
+    const gate = gates.get(`${stateKey}:${input.cursor ?? "first"}`)
     if (gate) await gate.promise
-    if (input.cursor && failures.has(`${input.state}:${input.cursor}`))
+    if (input.cursor && failures.has(`${stateKey}:${input.cursor}`))
       throw new Error("next page unavailable")
-    const override = input.cursor ? pageOverrides.get(`${input.state}:${input.cursor}`) : undefined
+    const override = input.cursor ? pageOverrides.get(`${stateKey}:${input.cursor}`) : undefined
     if (override) return pageOf(override.ids, override.nextCursor, queue.length)
+    if (input.states !== undefined) {
+      const selected = new Set<string>()
+      const ids: string[] = []
+      for (const state of input.states) {
+        const matches =
+          state === "open"
+            ? [...alpha, ...betaTasks, ...extraPlans.flatMap((plan) => plan.tasks)]
+            : state === "queued"
+              ? queue
+              : state === "running"
+                ? [...active]
+                : state === "blocked"
+                  ? [...blocked]
+                  : state === "paused"
+                    ? allIDs.filter(paused)
+                    : []
+        for (const id of matches) {
+          if (selected.has(id)) continue
+          selected.add(id)
+          ids.push(id)
+        }
+      }
+      const results = input.states.length === 0 ? allIDs : ids
+      const pageIndex = input.cursor ? Number(input.cursor.split("-").at(-1)) : 0
+      const pageSize = stateKey === "open" ? results.length : 30
+      const pageStart = pageIndex * pageSize
+      const cursorKey = stateKey === "queued" ? "queue" : stateKey
+      const pageIDs = results.slice(pageStart, pageStart + pageSize)
+      queryResults.push({
+        state: stateKey,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ids: pageIDs,
+        count: results.length,
+      })
+      return pageOf(
+        pageIDs,
+        pageStart + pageSize < results.length && (stateKey !== "queued" || queuePagesOpen)
+          ? `${cursorKey}-${pageIndex + 1}`
+          : null,
+        results.length,
+      )
+    }
     if (input.state === "queued") {
       const pageIndex = input.cursor ? Number(input.cursor.split("-")[1]) : 0
       const ids = queue.slice(pageIndex * 30, pageIndex * 30 + 30)
@@ -539,13 +595,17 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     event,
   }
   const taskStore = host.createReactiveStore({ projects: {} })
+  const taskStateDefaults = host.createReactiveStore({ projects: {} })
   const registrations: Array<{ token: unknown; value: unknown }> = []
   // The host replaces a session's location object on session updates, fields unchanged.
   const [location, setLocation] = host.createSignal({ directory: projectDirectory })
+  const [sessionID, setSessionID] = host.createSignal(ownerSessionID)
   // A reconnect gives the same server a new client object.
   const [serverClient, setServerClient] = host.createSignal(client)
   const session = {
-    id: ownerSessionID,
+    get id() {
+      return sessionID()
+    },
     get location() {
       return location()
     },
@@ -589,6 +649,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     layout: { open: () => {} },
     stores: {
       taskView: () => taskStore,
+      taskStateDefaults,
       modelsView: () => host.createReactiveStore({ projects: {} }),
       trajectoryView: () => host.createReactiveStore({ projects: {} }),
     },
@@ -611,7 +672,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   browserDocument.body.append(container)
   const mounted = host.mountTaskPanel(panel, context, session, container, {
     file: { sync: async () => {}, get: () => undefined, selection: { set: () => {} } },
-  }) as { dispose(): void }
+  }) as { dispose(): void; setVisible(value: boolean): void }
 
   const list = () => container.querySelector<HTMLDivElement>(".lazers-tasks-list")!
   const rows = () => [...container.querySelectorAll<HTMLElement>("[role=treeitem]")]
@@ -629,14 +690,23 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     list().scrollTop = top
     list().dispatchEvent(new dom.window.Event("scroll") as unknown as Event)
   }
-  const chooseFilter = (label: string) => {
-    const trigger = [
-      ...container.querySelectorAll<HTMLButtonElement>("button[aria-haspopup=menu]"),
-    ].find((button) => button.getAttribute("aria-label")?.startsWith("State:"))!
-    trigger.click()
+  const stateFilterTrigger = () =>
+    [...container.querySelectorAll<HTMLButtonElement>("button[aria-haspopup=menu]")].find(
+      (button) => button.getAttribute("aria-label")?.startsWith("State:"),
+    )!
+  const toggleFilter = (label: string) => {
+    stateFilterTrigger().click()
     ;[...container.querySelectorAll<HTMLButtonElement>("[role=menuitem]")]
       .find((button) => button.textContent === label)!
       .click()
+  }
+  const chooseFilter = (label: string) => {
+    if (label === "All") {
+      toggleFilter(label)
+      return
+    }
+    toggleFilter("All")
+    toggleFilter(label)
   }
   const announceChange = () => {
     snapshot++
@@ -677,6 +747,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     beta,
     queue,
     queryCalls,
+    queryResults,
     gates,
     failures,
     pageOverrides,
@@ -686,6 +757,10 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     extraPlans,
     topologyCalls: () => topologyCalls,
     detailCalls,
+    taskStore,
+    taskStateDefaults,
+    setSessionID,
+    setPanelVisible: mounted.setVisible,
     /** A session update with the same fields: a new location object for the same directory. */
     touchSession: () => setLocation({ directory: projectDirectory }),
     reconnect: () => setServerClient({ ...client }),
@@ -704,10 +779,10 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     attention,
     key,
     scrollTo,
+    toggleFilter,
     chooseFilter,
     refreshWithNewRowAbove,
     rowTop,
-    taskStore,
     projectDirectory,
     pause,
   }
@@ -745,47 +820,216 @@ test("only a window of a long list is mounted, and the tree spans the whole list
 })
 
 test("the next page loads once as the end comes into range, for the current filter only", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      h.chooseFilter("Queued")
+      await until(() => h.queryCalls.at(-1)?.state === "queued" && h.rows().length > 0)
+      await settle()
+      // Thirty rows and a loader: the end is far from the top, so nothing is requested yet.
+      expect(h.queryCalls.filter((call) => call.state === "queued" && call.cursor)).toHaveLength(0)
+      const gate = deferred()
+      h.gates.set("queued:queue-1", gate)
+      // Near the end (30 rows + loader = 992px; viewport 320): scroll events repeat, the request does not.
+      for (const top of [400, 560, 640, 700, 700, 640]) h.scrollTo(top)
+      await until(() =>
+        h.queryCalls.some((call) => call.state === "queued" && call.cursor === "queue-1"),
+      )
+      h.scrollTo(720)
+      h.scrollTo(700)
+      await settle()
+      expect(
+        h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-1"),
+      ).toHaveLength(1)
+      // Switch filters before the page resolves: the stale page must never be appended.
+      h.chooseFilter("Running")
+      await until(() => h.queryCalls.at(-1)?.state === "running")
+      gate.resolve()
+      await settle()
+      await until(() => h.rows().length > 0)
+      expect(h.container.textContent).not.toContain("Queue 31")
+      expect(h.rows().some((row) => row.getAttribute("aria-label")?.includes("Queue"))).toBe(false)
+      expect(
+        h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-1"),
+      ).toHaveLength(1)
+      // Back on Queued, pages load on demand with their own cursors, each once.
+      h.chooseFilter("Queued")
+      await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+      await until(() => {
+        h.scrollTo(h.list().scrollHeight)
+        return h.queryCalls.some((call) => call.cursor === "queue-2")
+      })
+      expect(
+        h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-2"),
+      ).toHaveLength(1)
+    },
+    {},
+    { active: 1 },
+  )
+})
+
+test("state toggles immediately persist project-wide sets while legacy and virtualized view data stay intact", async () => {
   await withPanel(async (h) => {
-    await until(() => h.rows().length > 0)
-    h.chooseFilter("Queued")
-    await until(() => h.queryCalls.at(-1)?.state === "queued" && h.rows().length > 0)
-    await settle()
-    // Thirty rows and a loader: the end is far from the top, so nothing is requested yet.
-    expect(h.queryCalls.filter((call) => call.state === "queued" && call.cursor)).toHaveLength(0)
-    const gate = deferred()
-    h.gates.set("queued:queue-1", gate)
-    // Near the end (30 rows + loader = 992px; viewport 320): scroll events repeat, the request does not.
-    for (const top of [400, 560, 640, 700, 700, 640]) h.scrollTo(top)
-    await until(() =>
-      h.queryCalls.some((call) => call.state === "queued" && call.cursor === "queue-1"),
-    )
-    h.scrollTo(720)
-    h.scrollTo(700)
-    await settle()
+    await until(() => h.queryCalls.length > 0 && h.rows().length > 0)
+    expect(h.queryCalls[0]).toMatchObject({ state: "open" })
+    expect(h.queryCalls[0]?.states).toBeUndefined()
     expect(
-      h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-1"),
-    ).toHaveLength(1)
-    // Switch filters before the page resolves: the stale page must never be appended.
-    h.chooseFilter("Running")
-    await until(() => h.queryCalls.at(-1)?.state === "running")
-    gate.resolve()
-    await settle()
-    await until(() => h.rows().length > 0)
-    expect(h.container.textContent).not.toContain("Queue 31")
-    expect(h.rows().some((row) => row.getAttribute("aria-label")?.includes("Queue"))).toBe(false)
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toBeUndefined()
+
+    const taskViews = h.taskStore.value as {
+      projects: Record<string, Record<string, unknown>>
+    }
+    const taskViewStore = h.taskStore as {
+      update(change: (draft: { projects: Record<string, unknown> }) => void): void
+    }
+    taskViewStore.update((draft) => {
+      ;(draft.projects as Record<string, Record<string, unknown>>)[h.projectDirectory] = {
+        ...taskViews.projects[h.projectDirectory],
+        scope: "project",
+        selectedID: h.beta.a,
+        search: "preserved search",
+        history: true,
+        listScroll: 23,
+      }
+    })
+    await until(() => h.queryCalls.at(-1)?.state === "all")
     expect(
-      h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-1"),
-    ).toHaveLength(1)
-    // Back on Queued, pages load on demand with their own cursors, each once.
-    h.chooseFilter("Queued")
-    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
-    await until(() => {
-      h.scrollTo(h.list().scrollHeight)
-      return h.queryCalls.some((call) => call.cursor === "queue-2")
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toBeUndefined()
+
+    const trigger = () =>
+      [...h.container.querySelectorAll<HTMLButtonElement>("button[aria-haspopup=menu]")].find(
+        (button) => button.getAttribute("aria-label")?.startsWith("State:"),
+      )!
+    const menuItem = (label: string) =>
+      [...h.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+        (button) => button.textContent === label,
+      )!
+
+    expect(trigger().getAttribute("aria-label")).toBe("State: All")
+    trigger().click()
+    expect(menuItem("All").dataset.icon).toBe("check")
+    expect(menuItem("Open").dataset.icon).toBeUndefined()
+    trigger().click()
+
+    const queuedRead = deferred()
+    h.gates.set("queued:first", queuedRead)
+    h.toggleFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "queued")
+    expect(
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toEqual(["queued"])
+    expect(trigger().getAttribute("aria-label")).toBe("State: Queued")
+    expect(h.queryCalls.at(-1)?.states).toEqual(["queued"])
+
+    h.toggleFilter("Blocked / waiting")
+    await until(() => h.queryCalls.at(-1)?.state === "queued+blocked")
+    const filterPages = () => h.queryResults.filter((page) => page.state === "queued+blocked")
+    await until(() => filterPages().length >= 1)
+    queuedRead.resolve()
+    await settle()
+    expect(h.queryCalls.at(-1)?.state).toBe("queued+blocked")
+    expect(
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toEqual(["queued", "blocked"])
+    expect(trigger().getAttribute("aria-label")).toBe("State: Flow · Queued + Blocked / waiting")
+    trigger().click()
+    expect(menuItem("Queued").dataset.icon).toBe("check")
+    expect(menuItem("Blocked / waiting").dataset.icon).toBe("check")
+    expect(menuItem("All").dataset.icon).toBeUndefined()
+    trigger().click()
+
+    const savedView = (
+      h.taskStore.value as {
+        projects: Record<string, Record<string, unknown>>
+      }
+    ).projects[h.projectDirectory]!
+    expect(savedView).toMatchObject({
+      scope: "project",
+      selectedID: h.beta.a,
+      search: "preserved search",
+      history: true,
+      listScroll: 23,
     })
     expect(
-      h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-2"),
-    ).toHaveLength(1)
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        "/workspace/another-project"
+      ],
+    ).toBeUndefined()
+
+    await until(() => filterPages().length >= 1)
+    expect(filterPages()[0]?.count).toBe(92)
+    expect(filterPages()[0]?.ids).toHaveLength(30)
+    h.scrollTo(h.list().scrollHeight)
+    await settle()
+    for (let page = 1; page <= 3; page++) {
+      h.scrollTo(h.list().scrollHeight)
+      await until(() => filterPages().some((result) => result.cursor === `queued+blocked-${page}`))
+    }
+    expect(filterPages().flatMap((page) => page.ids)).toHaveLength(92)
+    expect(new Set(filterPages().flatMap((page) => page.ids)).size).toBe(92)
+    expect(filterPages().flatMap((page) => page.ids)).toContain(h.beta.a)
+
+    const callsBeforeMultiReopen = h.queryCalls.length
+    h.setPanelVisible(false)
+    await settle()
+    h.setSessionID("ses-tasks-virtual-multi-state")
+    h.setPanelVisible(true)
+    await until(
+      () =>
+        h.queryCalls.length > callsBeforeMultiReopen &&
+        h.queryCalls.at(-1)?.state === "queued+blocked",
+    )
+    expect(h.queryCalls.at(-1)?.states).toEqual(["queued", "blocked"])
+    expect(trigger().getAttribute("aria-label")).toBe("State: Flow · Queued + Blocked / waiting")
+
+    h.toggleFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "blocked")
+    expect(
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toEqual(["blocked"])
+    expect(trigger().getAttribute("aria-label")).toBe("State: Blocked / waiting")
+    h.toggleFilter("Blocked / waiting")
+    await until(
+      () => h.queryCalls.at(-1)?.state === "all" && h.queryCalls.at(-1)?.states !== undefined,
+    )
+    expect(
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toEqual([])
+
+    h.toggleFilter("All")
+    await until(
+      () => h.queryCalls.at(-1)?.state === "all" && h.queryCalls.at(-1)?.states !== undefined,
+    )
+    expect(
+      (h.taskStateDefaults.value as { projects: Record<string, string[]> }).projects[
+        h.projectDirectory
+      ],
+    ).toEqual([])
+    expect(h.queryCalls.at(-1)?.states).toEqual([])
+
+    const callsBeforeReopen = h.queryCalls.length
+    h.setPanelVisible(false)
+    await settle()
+    h.setSessionID("ses-tasks-virtual-second")
+    h.setPanelVisible(true)
+    await until(() => h.queryCalls.length > callsBeforeReopen)
+    await until(() => h.queryCalls.at(-1)?.states !== undefined)
+    expect(h.queryCalls.at(-1)?.states).toEqual([])
+    expect(trigger().getAttribute("aria-label")).toBe("State: All")
   })
 })
 

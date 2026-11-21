@@ -225,11 +225,19 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const queryCalls: Array<{ state?: string; cursor?: string }> = []
     let snapshot = 1
     let topologyFails = false
-    const query = async (input: { state?: string; cursor?: string }) => {
-      queryCalls.push({ state: input.state, cursor: input.cursor })
+    const query = async (input: { state?: string; states?: string[]; cursor?: string }) => {
+      const state =
+        input.states === undefined
+          ? input.state
+          : input.states.length === 1
+            ? input.states[0]
+            : input.states.length === 0
+              ? "all"
+              : input.states.join("+")
+      queryCalls.push({ state, cursor: input.cursor })
       let taskIDs: string[]
       let nextCursor: string | null = null
-      if (input.state === "queued") {
+      if (state === "queued") {
         taskIDs =
           input.cursor === "queued-page-two"
             ? [ids.queuedTwo, ids.queuedThree]
@@ -242,16 +250,18 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
             : input.cursor === "queued-page-three"
               ? null
               : "queued-page-two"
-      } else if (input.state === "running") {
+      } else if (state === "running") {
         taskIDs = allRunning
-      } else if (input.state === "blocked") {
+      } else if (state === "blocked") {
         taskIDs = input.cursor === "blocked-page-two" ? allQueued : allRunning
         nextCursor = input.cursor ? null : "blocked-page-two"
-      } else if (input.state === "completed") {
+      } else if (state === "completed") {
         taskIDs = [ids.completed]
-      } else if (input.state === "failed" || input.state === "cancelled") {
+      } else if (state === "failed" || state === "cancelled") {
         taskIDs = []
-      } else if (input.state === "open" && input.cursor === "open-page-two") {
+      } else if (state === "all") {
+        taskIDs = [...allRunning, ...forkTasks, ...allQueued, ids.completed]
+      } else if (state === "open" && input.cursor === "open-page-two") {
         taskIDs = allQueued
       } else {
         taskIDs = [...allRunning, ...forkTasks]
@@ -260,13 +270,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         projectDirectory,
         snapshot,
         count:
-          input.state === "queued"
-            ? 5
-            : input.state === "blocked" || input.state === "open"
-              ? 8
-              : taskIDs.length,
+          state === "queued" ? 5 : state === "blocked" || state === "open" ? 8 : taskIDs.length,
         tasks: taskIDs.map(summary),
-        nextCursor: input.state === "open" && !input.cursor ? "open-page-two" : nextCursor,
+        nextCursor: state === "open" && !input.cursor ? "open-page-two" : nextCursor,
         serverTime: "2026-11-05T00:00:00.000Z",
       }
     }
@@ -451,6 +457,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       event,
     }
     const taskStore = host.createReactiveStore({ projects: {} })
+    const taskStateDefaults = host.createReactiveStore({ projects: {} })
     const trajectoryStore = host.createReactiveStore({ projects: {} as Record<string, unknown> })
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const opened: unknown[][] = []
@@ -518,6 +525,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       layout: { open: (...args: unknown[]) => opened.push(args) },
       stores: {
         taskView: () => taskStore,
+        taskStateDefaults,
         modelsView: () => host.createReactiveStore({ projects: {} }),
         trajectoryView: () => trajectoryStore,
       },
@@ -986,7 +994,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     key(separator, "Home")
     await until(() => view()?.split === 20)
 
-    const chooseFilter = async (label: string) => {
+    const clickFilter = (label: string) => {
       const trigger = [
         ...container.querySelectorAll<HTMLButtonElement>("button[aria-haspopup=menu]"),
       ].find((button) => button.getAttribute("aria-label")?.startsWith("State:"))!
@@ -995,6 +1003,13 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         (button) => button.textContent === label,
       )!
       item.click()
+    }
+    const chooseFilter = async (label: string) => {
+      if (label !== "All") {
+        clickFilter("All")
+        await until(() => queryCalls.at(-1)?.state === "all" && Boolean(row(ids.held)))
+      }
+      clickFilter(label)
     }
     await chooseFilter("Queued")
     await until(() => queryCalls.at(-1)?.state === "queued" && Boolean(row(ids.queuedOne)))
@@ -1030,6 +1045,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => queryCalls.at(-1)?.state === "completed" && Boolean(row(ids.completed)))
     expect(row(ids.completed)?.getAttribute("aria-label")).toContain("recorded lifecycle accepted")
     expect(row(ids.completed)?.getAttribute("aria-label")).not.toContain("waiting")
+    row(ids.completed)!.click()
+    await until(() => row(ids.completed)?.getAttribute("aria-selected") === "true")
     await until(
       () => container.querySelector(".lazers-tasks-inspector-state")?.textContent === "accepted",
     )
@@ -1046,8 +1063,6 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       queryCalls.some((call) => call.state === "queued" && call.cursor === "queued-page-three"),
     ).toBe(true)
 
-    row(ids.completed)!.click()
-    await until(() => row(ids.completed)?.getAttribute("aria-selected") === "true")
     topologyFails = true
     snapshot++
     eventSubscriber?.({

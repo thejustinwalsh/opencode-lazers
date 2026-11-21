@@ -473,6 +473,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const opened: unknown[][] = []
     const taskStore = host.createReactiveStore({ projects: {} })
+    const taskStateDefaults = host.createReactiveStore({ projects: {} })
     const context = {
       id: "lazers",
       app: { platform: "web" },
@@ -505,6 +506,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       layout: { open: (...args: unknown[]) => opened.push(args) },
       stores: {
         taskView: () => taskStore,
+        taskStateDefaults,
         modelsView: () => host.createReactiveStore({ projects: {} }),
         trajectoryView: () => host.createReactiveStore({ projects: {} }),
       },
@@ -986,6 +988,7 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
     }
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const taskStore = host.createReactiveStore({ projects: {} })
+    const taskStateDefaults = host.createReactiveStore({ projects: {} })
     const context = {
       id: "lazers",
       app: { platform: "web" },
@@ -1018,6 +1021,7 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
       layout: { open: () => {} },
       stores: {
         taskView: () => taskStore,
+        taskStateDefaults,
         modelsView: () => host.createReactiveStore({ projects: {} }),
         trajectoryView: () => host.createReactiveStore({ projects: {} }),
       },

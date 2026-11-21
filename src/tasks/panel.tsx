@@ -92,7 +92,14 @@ import type {
   VirtualTaskItem,
 } from "./virtual-rows.ts"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
+import type { TaskStateSelection } from "./state-filter.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
+import {
+  TASK_STATE_SELECTIONS,
+  normalizeTaskStateSelection,
+  taskStateLabel,
+  taskStateSelectionLabel,
+} from "./state-selection.ts"
 import { Keyed } from "./keyed.ts"
 import css from "./panel.css?inline"
 
@@ -137,6 +144,26 @@ export const taskStores = {
   taskView: Store.session(Schema.Struct({ projects: Schema.Record(Schema.String, View) }), {
     projects: {},
   }),
+  taskStateDefaults: Store.global(
+    Schema.Struct({
+      projects: Schema.Record(
+        Schema.String,
+        Schema.Array(
+          Schema.Literals([
+            "open",
+            "queued",
+            "running",
+            "blocked",
+            "paused",
+            "completed",
+            "failed",
+            "cancelled",
+          ]),
+        ).check(Schema.isMaxLength(8)),
+      ),
+    }),
+    { projects: {} },
+  ),
 }
 type TaskContext = SetupContext<{ stores: typeof taskStores }>
 export type TaskTrajectoryRequest = Omit<TaskTrajectoryTarget, "requestID">
@@ -338,7 +365,62 @@ function TaskPanel(
       ? (ctx.stores.taskView(props.session).value?.projects[value.project] ?? initial)
       : initial
   }
-  const stateFilter = () => preferredTaskStateFilter(prefs().state, prefs().history)
+  const legacyStateFilter = () => preferredTaskStateFilter(prefs().state, prefs().history)
+  const taskStateDefaultsReady = () => ctx.stores.taskStateDefaults.ready()
+  const savedStateSelection = () => {
+    const project = current()?.project
+    if (!project || !taskStateDefaultsReady()) return undefined
+    const saved = ctx.stores.taskStateDefaults.value.projects[project]
+    return saved === undefined ? undefined : normalizeTaskStateSelection(saved)
+  }
+  const selectedStateSelection = (): TaskStateSelection[] => {
+    const saved = savedStateSelection()
+    if (saved !== undefined) return saved
+    const legacy = legacyStateFilter()
+    return legacy === "all" ? [] : [legacy]
+  }
+  const stateFilterIdentity = () => {
+    const saved = savedStateSelection()
+    return saved === undefined
+      ? ["legacy", legacyStateFilter()]
+      : ["states", normalizeTaskStateSelection(saved)]
+  }
+  const stateFilterQuery = () => {
+    const saved = savedStateSelection()
+    return saved === undefined
+      ? { state: legacyStateFilter() }
+      : { states: normalizeTaskStateSelection(saved) }
+  }
+  const stateFilterDescription = () => {
+    const states = selectedStateSelection()
+    return states.length ? states.map(taskStateLabel).join(" + ") : "All"
+  }
+  const showRemainingPlanCount = () => {
+    const saved = savedStateSelection()
+    return saved === undefined
+      ? ["open", "queued", "running", "blocked"].includes(legacyStateFilter())
+      : saved.some((state) => ["open", "queued", "running", "blocked"].includes(state))
+  }
+  const saveStateSelection = (states: readonly TaskStateSelection[]) => {
+    const value = current()
+    if (!value) return
+    const normalized = normalizeTaskStateSelection(states)
+    ctx.stores.taskStateDefaults.update((draft) => {
+      draft.projects[value.project] = normalized
+    })
+  }
+  const toggleStateSelection = (state: TaskStateSelection) => {
+    const selected = selectedStateSelection()
+    saveStateSelection(
+      selected.includes(state) ? selected.filter((item) => item !== state) : [...selected, state],
+    )
+  }
+  const stateTriggerLabel = () => {
+    const selected = selectedStateSelection()
+    const alias = taskStateSelectionLabel(selected)
+    const names = selected.map(taskStateLabel).join(" + ")
+    return `State: ${alias}${selected.length > 1 ? ` · ${names}` : ""}`
+  }
   const save = (change: Partial<typeof initial>) => {
     const value = current()
     if (!value) return
@@ -363,7 +445,12 @@ function TaskPanel(
   createKeyed(
     () => {
       const value = current()
-      if (!value || !frame.visible() || !ctx.stores.taskView(props.session).ready()) {
+      if (
+        !value ||
+        !frame.visible() ||
+        !ctx.stores.taskView(props.session).ready() ||
+        !taskStateDefaultsReady()
+      ) {
         return undefined
       }
       const key = JSON.stringify([
@@ -372,7 +459,7 @@ function TaskPanel(
         value.session,
         prefs().scope,
         prefs().search,
-        stateFilter(),
+        stateFilterIdentity(),
       ])
       return { value, key }
     },
@@ -418,7 +505,7 @@ function TaskPanel(
         {
           search: view.search,
           sort: "schedule",
-          state: stateFilter(),
+          ...stateFilterQuery(),
           sessionID,
           limit: 30,
         },
@@ -445,7 +532,7 @@ function TaskPanel(
           value.session,
           view.scope,
           view.search,
-          preferredTaskStateFilter(view.state, view.history),
+          stateFilterIdentity(),
         ])
       : ""
   }
@@ -1569,11 +1656,7 @@ function TaskPanel(
       </Show>
     )
   }
-  const stateLabel = (state: NonNullable<typeof initial.state>) => {
-    if (state === "failed") return "Failed / exhausted"
-    if (state === "blocked") return "Blocked / waiting"
-    return state[0]!.toUpperCase() + state.slice(1)
-  }
+  const stateLabel = taskStateLabel
   let focusedSelection = ""
   /**
    * A selection made by a Now/Attention/Next arrow key: focus stays on the entry while its details
@@ -1815,31 +1898,22 @@ function TaskPanel(
           </span>
           <span class="lazers-tasks-state-filter">
             <Ui.Menu
-              label={`State: ${stateLabel(stateFilter())}`}
+              label={stateTriggerLabel()}
               trigger="button"
               icon="chevron-down"
-              items={(
-                [
-                  "open",
-                  "queued",
-                  "running",
-                  "blocked",
-                  "paused",
-                  "completed",
-                  "failed",
-                  "cancelled",
-                  "all",
-                ] as const
-              ).map((state) => ({
-                label: stateLabel(state),
-                onSelect: () =>
-                  save({
-                    state,
-                    history: state !== "open",
-                    selectedID: null,
-                    listScroll: 0,
-                  }),
-              }))}
+              disabled={!taskStateDefaultsReady()}
+              items={[
+                ...TASK_STATE_SELECTIONS.map((state) => ({
+                  label: stateLabel(state),
+                  ...(selectedStateSelection().includes(state) ? { icon: "check" as const } : {}),
+                  onSelect: () => toggleStateSelection(state),
+                })),
+                {
+                  label: "All",
+                  ...(selectedStateSelection().length === 0 ? { icon: "check" as const } : {}),
+                  onSelect: () => saveStateSelection([]),
+                },
+              ]}
             />
           </span>
           <Ui.Tooltip value="Search tasks">
@@ -1967,9 +2041,9 @@ function TaskPanel(
                     <div class="lazers-tasks-note">
                       {prefs().search
                         ? "No matching tasks."
-                        : stateFilter() === "all"
+                        : selectedStateSelection().length === 0
                           ? "No tasks in this view."
-                          : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
+                          : `No ${stateFilterDescription().toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
                     </div>
                   }
                 >
@@ -2085,7 +2159,7 @@ function TaskPanel(
                   <div
                     class="lazers-tasks-tree"
                     role="tree"
-                    aria-label={`${stateLabel(stateFilter())} tasks`}
+                    aria-label={`${stateFilterDescription()} tasks`}
                     data-forks={rowValues().some((row) => Boolean(row.fork))}
                     style={{ height: `${virtualizer.getTotalSize()}px` }}
                     ref={(element) => {
@@ -2122,7 +2196,8 @@ function TaskPanel(
                                 return (
                                   <ExecutionPlanHeading
                                     group={plan().group}
-                                    stateFilter={stateFilter()}
+                                    stateFilter={legacyStateFilter()}
+                                    showRemaining={showRemainingPlanCount()}
                                     collapsed={plan().collapsed}
                                     setSize={plan().setSize}
                                     posInSet={plan().posInSet}

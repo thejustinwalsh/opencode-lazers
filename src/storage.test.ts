@@ -868,6 +868,18 @@ test("repository pages filter execution state before counting while legacy histo
   expect(openPage.count).toBe(1)
   expect(openPage.rows.map(({ task }) => task.id)).toEqual([running.taskID])
   expect(repository.readPage({ search: "", limit: 10, includeCompleted: true }).count).toBe(2)
+
+  const unionPage = repository.readPage({
+    search: "",
+    limit: 1,
+    states: ["open", "running", "completed"],
+  })
+  expect(unionPage.count).toBe(2)
+  expect(unionPage.rows).toHaveLength(2)
+  expect(new Set(unionPage.rows.map(({ task }) => task.id))).toEqual(
+    new Set([completed.taskID, running.taskID]),
+  )
+  expect(repository.readPage({ search: "", limit: 10, states: [] }).count).toBe(2)
 })
 
 test("a disposition cannot hide active execution or claim failed work was fulfilled", () => {

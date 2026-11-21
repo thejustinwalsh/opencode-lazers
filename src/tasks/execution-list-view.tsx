@@ -12,6 +12,7 @@ import { planStateLabel } from "./row-presentation.ts"
 export function ExecutionPlanHeading(props: {
   group: ExecutionPlanGroup
   stateFilter: TaskStateFilter
+  showRemaining?: boolean
   collapsed: boolean
   setSize: number
   posInSet: number
@@ -21,7 +22,8 @@ export function ExecutionPlanHeading(props: {
   onOpenPlan?: (planID: string) => void
   planTitle?: (planID: string) => string | undefined
 }) {
-  const remaining = () => ["open", "queued", "running", "blocked"].includes(props.stateFilter)
+  const remaining = () =>
+    props.showRemaining ?? ["open", "queued", "running", "blocked"].includes(props.stateFilter)
   const afterPlans = () => props.group.afterPlans ?? []
   const planState = () => planStateLabel(props.group.state)
   const planName = (planID: string) => props.planTitle?.(planID) ?? `Plan ${planID.slice(0, 8)}`

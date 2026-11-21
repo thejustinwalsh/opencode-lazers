@@ -9,7 +9,11 @@ import { GetInput, GetOutput, QueryInput, QueryOutput } from "../tasks/contract.
 import type { TaskPage, TaskSummary } from "../tasks/contract.ts"
 import { TaskReads } from "../tasks/read.ts"
 import { sessionAssociations } from "./associations.ts"
-import { effectiveTaskStateFilter, taskStatePredicate } from "../tasks/state-filter.ts"
+import {
+  effectiveTaskStateSelection,
+  taskStateSelectionIdentity,
+  taskStateSelectionPredicateForQuery,
+} from "../tasks/state-selection.ts"
 import { taskClassificationFor } from "../tasks/classification.ts"
 
 const Cursor = z.strictObject({
@@ -76,6 +80,11 @@ export class AssociationTaskReads extends TaskReads {
     const query = QueryInput.parse(input)
     if (!query.sessionID) return super.query(input)
     const sessionID = query.sessionID
+    const stateSelection = effectiveTaskStateSelection(
+      query.states,
+      query.state,
+      query.includeCompleted,
+    )
 
     const filter = createHash("sha256")
       .update(
@@ -84,7 +93,7 @@ export class AssociationTaskReads extends TaskReads {
           sessionID,
           query.search,
           query.scopePath,
-          effectiveTaskStateFilter(query.state, query.includeCompleted),
+          taskStateSelectionIdentity(stateSelection),
           query.includeRetired,
           query.sort,
         ]),
@@ -138,10 +147,7 @@ export class AssociationTaskReads extends TaskReads {
         this.repository.projectDirectory,
         sessionID,
       ]
-      const statePredicate = taskStatePredicate(
-        effectiveTaskStateFilter(query.state, query.includeCompleted),
-        "t",
-      )
+      const statePredicate = taskStateSelectionPredicateForQuery(stateSelection, "t")
       if (statePredicate) clauses.push(statePredicate)
       if (!query.includeRetired)
         clauses.push(
