@@ -3,6 +3,14 @@ import type { Bucket } from "../../tasks/schedule/schema.ts"
 import { defineSource, type StreamContext } from "../source.ts"
 import {
   TASK_SOURCES,
+  taskActivityColumns,
+  taskActivityPayloadColumns,
+  taskAttemptCallColumns,
+  taskAttemptColumns,
+  taskCurrentActivityColumns,
+  taskDetailColdColumns,
+  taskDetailColumns,
+  taskSearchFieldColumns,
   taskBlockerColumns,
   taskBucketCountColumns,
   taskDependencyRowColumns,
@@ -11,7 +19,13 @@ import {
   taskScheduleColumns,
   taskSessionBucketCountColumns,
   taskWaitColumns,
+  type TaskActivityFilter,
+  type TaskAttemptCallsFilter,
+  type TaskAttemptsFilter,
   type TaskChildFilter,
+  type TaskCurrentActivityFilter,
+  type TaskDetailFilter,
+  type TaskSearchFieldsFilter,
   type TaskCountsFilter,
   type TaskIndexFilter,
   type TaskPlansFilter,
@@ -357,4 +371,260 @@ defineSource({
     params: [input.project],
   }),
   columns: taskIndexColumns,
+})
+
+/** A session view forces the session link; the project is always the service's. */
+async function scopedTo<T extends { scope?: TaskScope; session?: string; project?: string }>(
+  input: T,
+  context: StreamContext,
+): Promise<T> {
+  const scope = await scopeOf(input, context)
+  const { session: _caller, ...rest } = input
+  return {
+    ...rest,
+    project: context.projectDirectory,
+    ...(scope.kind === "session" ? { session: scope.sessionID } : {}),
+  } as T
+}
+
+/**
+ * One task's detail at window 1: the stored row, the task body and the plan's owner. Replaces
+ * `Tasks.get` (`TaskReads.get`, `AssociationTaskReads`): a reference resolves in this project,
+ * `creator` is the old `sessionID` check of the agent tool, `session` the panel's link check.
+ */
+export const taskDetailSource = defineSource({
+  name: TASK_SOURCES.detail,
+  table: `(SELECT t.task_id AS task_id, t.project_directory AS project_directory,
+      t.reference AS reference, t.revision AS revision, t.status AS status,
+      t.node_state AS node_state, t.plan_id AS plan_id, t.session_id AS session_id,
+      t.retired AS retired, t.execution AS execution, t.classification AS classification,
+      t.classification_history AS classification_history, t.advice AS advice,
+      t.audit_history AS audit_history, t.disposition AS disposition,
+      p.owner_session_id AS architect_session_id, b.body AS body
+    FROM task_schedule t JOIN tasks b ON b.id=t.task_id
+      LEFT JOIN task_schedule_plans p ON p.plan_id=t.plan_id) AS task_detail`,
+  tables: ["task_schedule", "tasks", "task_schedule_plans", "task_schedule_sessions"],
+  key: ["task_id"],
+  orders: { task: [{ column: "task_id", direction: "asc" }] },
+  authorize: (input: TaskDetailFilter, context) => scopedTo(input, context),
+  filter(input: TaskDetailFilter) {
+    const clauses = ["task_detail.project_directory = ?"]
+    const params: (string | number | null)[] = [input.project ?? null]
+    if (input.task === undefined && input.reference === undefined)
+      throw new Error("A task detail read names its task")
+    if (input.task !== undefined) {
+      clauses.push("task_detail.task_id = ?")
+      params.push(input.task)
+    }
+    if (input.reference !== undefined) {
+      clauses.push("task_detail.reference = ?")
+      params.push(input.reference.trim().toUpperCase())
+    }
+    if (input.creator !== undefined) {
+      clauses.push("task_detail.session_id = ?")
+      params.push(input.creator)
+    }
+    if (input.session !== undefined) {
+      clauses.push(
+        "EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_detail.task_id AND s.session_id=?)",
+      )
+      params.push(input.session)
+    }
+    return { where: clauses.join(" AND "), params }
+  },
+  columns: taskDetailColumns,
+  detail: taskDetailColdColumns,
+})
+
+/** The attempts of a task in its plan, oldest first (`RunnerStore.attempts` order). */
+export const taskAttemptsSource = defineSource({
+  name: TASK_SOURCES.attempts,
+  table: `(SELECT a.id AS id, a.plan_id AS plan_id, a.task_id AS task_id, a.number AS number,
+      a.state AS state, a.started_at AS started_at, a.artifact AS artifact,
+      a.token_count AS token_count, a.tool_count AS tool_count, a.session_id AS session_id,
+      CASE WHEN json_valid(a.policy) THEN json_extract(a.policy,'$.takeover') IS NOT NULL ELSE 0 END AS takeover,
+      CASE WHEN json_valid(a.policy) AND json_type(a.policy,'$.model')='object'
+        THEN json_extract(a.policy,'$.model') END AS model
+    FROM runner_attempts a) AS task_attempts`,
+  tables: ["runner_attempts", "task_schedule", "task_schedule_sessions"],
+  key: ["id"],
+  orders: {
+    started: [
+      { column: "started_at", direction: "asc" },
+      { column: "number", direction: "asc" },
+      { column: "id", direction: "asc" },
+    ],
+  },
+  authorize: (input: TaskAttemptsFilter, context) => scopedChild(input, context, input.task),
+  filter(input: TaskAttemptsFilter) {
+    const scoped = taskInScope("task_attempts.task_id", input)
+    return {
+      where: `task_attempts.task_id = ? AND task_attempts.plan_id = ? AND ${scoped.clause}`,
+      params: [input.task!, input.plan ?? null, ...scoped.params],
+    }
+  },
+  columns: taskAttemptColumns,
+  count: { exact: "scan" },
+})
+
+const activityTable = `(SELECT e.id AS id, e.project_directory AS project_directory,
+    e.task_id AS task_id, e.plan_id AS plan_id, e.event AS event, e.at AS at,
+    CAST(substr(e.origin,4) AS INTEGER) AS transition_id, e.payload AS payload
+  FROM task_events e WHERE e.kind='transition') AS task_activity`
+
+function activityFilter(input: TaskActivityFilter) {
+  const scoped = taskInScope("task_activity.task_id", input)
+  const clauses = [
+    "task_activity.project_directory = ?",
+    "task_activity.task_id = ?",
+    "task_activity.plan_id = ?",
+    scoped.clause,
+  ]
+  const params: (string | number | null)[] = [
+    input.project ?? null,
+    input.task!,
+    input.plan ?? null,
+    ...scoped.params,
+  ]
+  if (input.events) {
+    clauses.push(`task_activity.event IN (${placeholders(input.events)})`)
+    params.push(...input.events)
+  }
+  return { where: clauses.join(" AND "), params }
+}
+const activityOrders = {
+  transition: [{ column: "transition_id", direction: "asc" }],
+} as const
+
+/**
+ * A task's transitions in its plan, by transition id (`RunnerStore.activity`), from `task_events`;
+ * the raw payload is cold: the History view reads it at window 1 when a row opens.
+ */
+export const taskActivitySource = defineSource({
+  name: TASK_SOURCES.activity,
+  table: activityTable,
+  tables: ["task_events", "task_schedule", "task_schedule_sessions"],
+  key: ["transition_id"],
+  orders: activityOrders,
+  authorize: (input: TaskActivityFilter, context) => scopedChild(input, context, input.task),
+  filter: activityFilter,
+  columns: taskActivityColumns,
+  detail: taskActivityPayloadColumns,
+  count: { exact: "scan" },
+})
+
+/** The same rows with the payload on every row: the agent tool's activity and the scope review. */
+export const taskActivityPayloadsSource = defineSource({
+  name: TASK_SOURCES.activityPayloads,
+  table: activityTable,
+  tables: ["task_events", "task_schedule", "task_schedule_sessions"],
+  key: ["transition_id"],
+  orders: activityOrders,
+  authorize: (input: TaskActivityFilter, context) => scopedChild(input, context, input.task),
+  filter: activityFilter,
+  columns: { ...taskActivityColumns, ...taskActivityPayloadColumns },
+})
+
+/**
+ * One attempt's progress display rows: the latest attempt's last activity and its tool calls
+ * (`readAttemptSummary`, which read `runner_progress`), through
+ * `runner_progress_display_attempt (project_directory, attempt_id, session_id, seq, ...)`.
+ */
+export const taskAttemptCallsSource = defineSource({
+  name: TASK_SOURCES.attemptCalls,
+  table: "runner_progress_display",
+  tables: ["runner_progress_display", "runner_attempts", "task_schedule", "task_schedule_sessions"],
+  key: ["seq"],
+  orders: {
+    calls: [{ column: "seq", direction: "asc" }],
+    recent: [{ column: "seq", direction: "desc" }],
+  },
+  authorize: (input: TaskAttemptCallsFilter, context) => scopedChild(input, context, input.task),
+  filter(input: TaskAttemptCallsFilter) {
+    const scoped = taskInScope("a.task_id", input)
+    const clauses = [
+      "runner_progress_display.project_directory = ?",
+      "runner_progress_display.attempt_id = ?",
+      "runner_progress_display.session_id = ?",
+      `EXISTS (SELECT 1 FROM runner_attempts a WHERE a.id=runner_progress_display.attempt_id AND a.task_id=? AND ${scoped.clause})`,
+    ]
+    if (input.toolsOnly)
+      // The raw `kind = 'tool'` rows with a call id; the display names them `tool` or `worker-tool`
+      // (29,791 of 29,791 live rows agree, 2026-11-21).
+      clauses.push(
+        "runner_progress_display.kind IN ('tool','worker-tool') AND runner_progress_display.call_id IS NOT NULL",
+      )
+    return {
+      where: clauses.join(" AND "),
+      params: [
+        input.project ?? null,
+        input.attempt ?? null,
+        input.sessionID ?? null,
+        input.task ?? null,
+        ...scoped.params,
+      ],
+    }
+  },
+  columns: taskAttemptCallColumns,
+})
+
+/**
+ * The current activity of the rows in view: the stored node and latest attempt, joined to the
+ * attempt session's host facts. Replaces the `currentActivity` RPC, which read the host twice per
+ * row on the main thread.
+ */
+export const taskCurrentActivitySource = defineSource({
+  name: TASK_SOURCES.currentActivity,
+  table: `(SELECT t.task_id AS task_id, t.project_directory AS project_directory,
+      t.node_state AS node_state, t.plan_state AS plan_state, t.node_reason AS node_reason,
+      t.plan_reason AS plan_reason, t.attempt_id AS attempt_id,
+      t.attempt_session_id AS attempt_session_id, t.attempt_workspace AS attempt_workspace,
+      h.agent AS host_agent, h.attempt_id AS host_attempt_id, h.directory AS host_directory,
+      h.busy AS busy, h.pending_input AS pending_input, h.pending_permissions AS pending_permissions,
+      h.pending_forms AS pending_forms, h.outcome AS outcome, h.archived AS archived,
+      h.updated_at AS observed_at
+    FROM task_schedule t LEFT JOIN host_session_state h
+      ON h.project_directory=t.project_directory AND h.session_id=t.attempt_session_id) AS task_current`,
+  tables: ["task_schedule", "host_session_state", "task_schedule_sessions"],
+  key: ["task_id"],
+  orders: { task: [{ column: "task_id", direction: "asc" }] },
+  authorize: (input: TaskCurrentActivityFilter, context) => scopedTo(input, context),
+  filter(input: TaskCurrentActivityFilter) {
+    const clauses = [
+      "task_current.project_directory = ?",
+      `task_current.task_id IN (${placeholders(input.tasks)})`,
+    ]
+    const params: (string | number | null)[] = [input.project ?? null, ...input.tasks]
+    if (input.session !== undefined) {
+      clauses.push(
+        "EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_current.task_id AND s.session_id=?)",
+      )
+      params.push(input.session)
+    }
+    return { where: clauses.join(" AND "), params }
+  },
+  columns: taskCurrentActivityColumns,
+})
+
+/** The search fields of a page's tasks, so a search hit shows where it matched. Server-side only. */
+export const taskSearchFieldsSource = defineSource({
+  name: TASK_SOURCES.searchFields,
+  table: "task_schedule_search",
+  tables: ["task_schedule_search", "task_schedule"],
+  key: ["task_id", "ord"],
+  orders: {
+    field: [
+      { column: "task_id", direction: "asc" },
+      { column: "ord", direction: "asc" },
+    ],
+  },
+  authorize() {
+    throw new Error("Search fields are read by the agent tool, not over RPC")
+  },
+  filter: (input: TaskSearchFieldsFilter) => ({
+    where: `task_schedule_search.task_id IN (${placeholders(input.tasks)}) AND EXISTS (
+      SELECT 1 FROM task_schedule t WHERE t.task_id=task_schedule_search.task_id AND t.project_directory=?)`,
+    params: [...input.tasks, input.project ?? null],
+  }),
+  columns: taskSearchFieldColumns,
 })
