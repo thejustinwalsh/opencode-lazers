@@ -1,4 +1,4 @@
-import type { ModelComparisonPanelData } from "./comparison-state.ts"
+import type { ModelDecisionInspect } from "./decision-contract.ts"
 import type { ModelDecisionContributor } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import type { BenchmarkPrice, BenchmarkScores, BenchmarkRoute } from "./benchmark-baseline.ts"
@@ -12,10 +12,7 @@ import { formatNumber } from "./panel-shared.ts"
  * translated enum values, omitted empties. Pure; the components in `model-pane.tsx` only draw it.
  */
 
-type Inspection = Extract<
-  NonNullable<ModelComparisonPanelData["decisionInspection"]>,
-  { status: "found" }
->
+type Inspection = Extract<ModelDecisionInspect, { status: "found" }>
 
 // --- money -------------------------------------------------------------------------------
 

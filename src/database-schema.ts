@@ -198,6 +198,22 @@ export const schemaModules = {
       "model_endpoint_pricing_refreshes",
     ],
   },
+  "model-candidates": {
+    generation: 1,
+    source: "src/models/candidate-store.ts",
+    tables: ["model_candidates", "model_candidate_sets", "model_candidates_dirty"],
+  },
+  "model-decision-views": {
+    generation: 1,
+    source: "src/models/decision-store.ts",
+    tables: [
+      "model_decision_views",
+      "model_catalog_entries",
+      "model_decision_points",
+      "model_decision_contributors",
+      "model_benchmark_points",
+    ],
+  },
   "model-decision-projection": {
     generation: 3,
     source: "src/models/decision-projection.ts",
@@ -211,9 +227,9 @@ export const schemaModules = {
     ],
   },
   "model-mappings": {
-    generation: 1,
-    source: "src/models/mapping-store.ts",
-    tables: ["model_mappings"],
+    generation: 2,
+    source: "src/models/assignment-view.ts",
+    tables: ["model_mappings", "model_assignment_view"],
   },
   audit: {
     generation: 2,

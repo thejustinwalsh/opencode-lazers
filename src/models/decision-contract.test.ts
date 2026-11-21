@@ -5,7 +5,6 @@ import {
   CONFIG_ZERO,
   DECISION_ATTEMPT_ID,
   DECISION_TASK_ID,
-  decisionConfigurations,
   decisionContext,
   decisionInspect,
   decisionOverview,
@@ -17,18 +16,13 @@ import {
 } from "../../test/models-decision/fixtures/decision.ts"
 import {
   MODELS_DECISION_RPC_ID,
-  ModelDecisionConfigurationsOutputSchema,
   ModelDecisionContextSchema,
   ModelDecisionConfigurationSchema,
   ModelDecisionEstimateSchema,
-  ModelDecisionInspectInputSchema,
   ModelDecisionInspectOutputSchema,
   ModelDecisionOverviewOutputSchema,
   ModelDecisionGraphPointSchema,
   ModelDecisionRowsInputSchema,
-  ModelDecisionConfigurationsInputSchema,
-  ModelDecisionRowsRPCInputSchema,
-  ModelDecisionConfigurationsRPCInputSchema,
   ModelDecisionRowSchema,
   ModelDecisionRowsOutputSchema,
   ModelsDecision,
@@ -107,12 +101,11 @@ function unavailableReferenceEstimate() {
 test("versioned reads share producer context while the global graph stays independent of row pages", () => {
   const overview = ModelDecisionOverviewOutputSchema.parse(decisionOverview())
   const rows = ModelDecisionRowsOutputSchema.parse(decisionRows())
-  const configurations = ModelDecisionConfigurationsOutputSchema.parse(decisionConfigurations())
   const inspect = ModelDecisionInspectOutputSchema.parse(decisionInspect())
 
   expect(ModelsDecision.id).toBe(MODELS_DECISION_RPC_ID)
   expect(ModelsDecision.id).toBe("lazers.models.decision.v2")
-  for (const output of [overview, rows, configurations]) {
+  for (const output of [overview, rows]) {
     expect(output.context.snapshotID).toBe("snapshot:producer-owned/42")
     expect(output.context.filters).toEqual(decisionRead.filters)
     expect(output.context.accounting.acceptanceThreshold).toBeNull()
@@ -137,7 +130,6 @@ test("versioned reads share producer context while the global graph stays indepe
   expect(rows.rows[0]?.referenceEstimate).toBeUndefined()
   expect(rows.rows[0]?.configuration.referenceEstimate).toBeUndefined()
   expect(overview.graph.referenceEstimates).toBeUndefined()
-  expect(configurations.configurations[0]?.configurationID).toBe(CONFIG_ONE)
 
   if (inspect.status !== "found") throw new Error("Expected a found inspection fixture")
   expect(inspect.configuration.configurationID).toBe(CONFIG_ONE)
@@ -206,32 +198,13 @@ test("global reference chart labels and actual effort coordinates are backward-c
   ])
 })
 
-test("first-page snapshot pins are additive to legacy v2 inputs and registered RPC schemas", () => {
+test("first-page snapshot pins are additive to legacy v2 inputs", () => {
   const legacyRows = ModelDecisionRowsInputSchema.parse(decisionRead)
-  const legacyConfigurations = ModelDecisionConfigurationsInputSchema.parse(decisionRead)
   const snapshotID = "models-decision-v2:retained-snapshot"
   const pinnedRows = ModelDecisionRowsInputSchema.parse({ ...decisionRead, snapshotID })
-  const pinnedConfigurations = ModelDecisionConfigurationsInputSchema.parse({
-    ...decisionRead,
-    snapshotID,
-  })
-  const rpcRows = ModelDecisionRowsRPCInputSchema.parse({
-    ...decisionRead,
-    sessionID: "ses-native",
-    snapshotID,
-  })
-  const rpcConfigurations = ModelDecisionConfigurationsRPCInputSchema.parse({
-    ...decisionRead,
-    sessionID: "ses-native",
-    snapshotID,
-  })
 
   expect(legacyRows.snapshotID).toBeUndefined()
-  expect(legacyConfigurations.snapshotID).toBeUndefined()
   expect(pinnedRows.snapshotID).toBe(snapshotID)
-  expect(pinnedConfigurations.snapshotID).toBe(snapshotID)
-  expect(rpcRows.snapshotID).toBe(snapshotID)
-  expect(rpcConfigurations.snapshotID).toBe(snapshotID)
 })
 
 test("inspection distinguishes complete accepted-task retry history and contributor membership", () => {
@@ -511,11 +484,11 @@ test("source-aware decision context preserves whole-model policy, mixed source p
   })
   expect(noQuote.currentPrice).toMatchObject({ source: null, freshness: "unavailable" })
   expect(
-    ModelDecisionConfigurationsOutputSchema.parse({
-      ...decisionConfigurations(),
+    ModelDecisionRowsOutputSchema.parse({
+      ...decisionRows(),
       context: unavailable,
-      configurations: [noQuote],
-    }).configurations[0]?.currentPrice,
+      rows: [{ ...decisionRows().rows[0], configuration: noQuote }],
+    }).rows[0]?.configuration.currentPrice,
   ).toMatchObject({ source: null, sourcePolicyRevision: 8, freshness: "unavailable" })
 
   expect(
@@ -803,7 +776,7 @@ test("zero accepted tasks have no numeric graph coordinates or row efficiencies"
   }
 })
 
-test("the reader is injectable and inspection binds snapshot, exact configuration and contributor paging", async () => {
+test("the reader is injectable: an overview and its row pages", async () => {
   const calls: string[] = []
   const controller = new AbortController()
   const reader: ModelDecisionReader = {
@@ -817,30 +790,10 @@ test("the reader is injectable and inspection binds snapshot, exact configuratio
       calls.push("rows")
       return decisionRows()
     },
-    configurations: async () => {
-      calls.push("configurations")
-      return decisionConfigurations()
-    },
-    inspect: async () => {
-      calls.push("inspect")
-      return decisionInspect()
-    },
   }
   await reader.overview(decisionRead, { signal: controller.signal })
   await reader.rows({ ...decisionRead, limit: 1, cursor: "rows:opaque-next" })
-  await reader.configurations({ ...decisionRead, limit: 100 })
-  const inspection = ModelDecisionInspectInputSchema.parse({
-    ...decisionRead,
-    snapshotID: "snapshot:producer-owned/42",
-    configurationID: CONFIG_ONE,
-    selectedTaskID: DECISION_TASK_ID,
-    contributorCursor: "contributors:opaque-next",
-  })
-  await reader.inspect(inspection)
-  expect(calls).toEqual(["overview", "rows", "configurations", "inspect"])
-  expect(inspection.configurationID).toBe(CONFIG_ONE)
-  expect(inspection.selectedTaskID).toBe(DECISION_TASK_ID)
-  expect(inspection.contributorLimit).toBe(50)
+  expect(calls).toEqual(["overview", "rows"])
 })
 
 test("contract import is schema/RPC-only and has no DOM, database, chart or scoring dependency", async () => {

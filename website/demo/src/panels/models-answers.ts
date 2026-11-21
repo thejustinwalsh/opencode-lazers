@@ -1,6 +1,5 @@
 import { Models } from "../../../../src/models/contract.ts"
 import type { ModelSettingsOutput } from "../../../../src/models/contract.ts"
-import { ModelsDecision } from "../../../../src/models/decision-contract.ts"
 import type {
   ModelDecisionConfiguration,
   ModelDecisionContext,
@@ -19,6 +18,8 @@ import {
 import type { ModelMappingRecord } from "../../../../src/models/mapping-schema.ts"
 import type { ModelMappingSubject } from "../../../../src/models/agent-ids.ts"
 import { Observability } from "../../../../src/observability/contract.ts"
+import { Streams } from "../../../../src/streams/contract.ts"
+import { combinedStreams, modelStreams } from "./models-streams.ts"
 import { TaskEffortBasisSchema } from "../../../../src/models/comparison-presentation.ts"
 import { TrajectoryOutput } from "../../../../src/observability/contract.ts"
 import type { Read } from "../adapter.ts"
@@ -490,35 +491,6 @@ function sourceStatus(data: ModelsData): ModelEvidenceOutput {
   }
 }
 
-function catalog(data: ModelsData) {
-  return {
-    source: "Live native OpenCode model catalog" as const,
-    observedAt: iso(Date.now()),
-    advisoryOnly: true as const,
-    note: "Models the connected providers list. Prices are USD per million tokens.",
-    configuredImplementor: null,
-    options: data.models.map((model) => ({
-      providerID: model.providerID,
-      id: model.id,
-      name: model.name,
-      enabled: true,
-      type: "chat",
-      capabilities: { tools: true, input: ["text"], output: ["text"] },
-      contextTokens: model.context,
-      pricesUSDPerMillionTokens: [
-        {
-          contextTierTokens: null,
-          input: model.priceIn,
-          output: model.priceOut,
-          cacheRead: model.priceCache,
-          cacheWrite: 0,
-        },
-      ],
-      variants: model.variants,
-    })),
-  }
-}
-
 /* ------------------------------------------------------------------- settings */
 
 const SUBJECTS: { subject: ModelMappingSubject; label: string }[] = [
@@ -748,51 +720,48 @@ const tasksOf = (data: ModelsData) => ({
 
 type Handlers = Record<string, Record<string, (input: never) => unknown>>
 
-export function rpc(data: () => ModelsData): Handlers {
+export function rpc(
+  data: () => ModelsData,
+  /** A test's changes to the candidates the comparison answers (benchmarks, missing prices). */
+  options: {
+    comparison?: (output: ModelComparisonOutput) => ModelComparisonOutput
+    /** What the host says about each agent (native or plugin-default models). */
+    settings?: (output: ModelSettingsOutput) => ModelSettingsOutput
+    /** The overview the views are built from (reference estimates the demo does not carry). */
+    overview?: (output: ModelDecisionOverview) => ModelDecisionOverview
+  } = {},
+): Handlers {
   const mappings = new Mappings(data)
   const tasks = tasksRpc(() => tasksOf(data()))
   return {
+    ...tasks,
+    // One streams answer: the Models sources here, the Tasks sources (the task picker) there.
+    [Streams.id]: combinedStreams(
+      modelStreams(
+        () => ({
+          overview: (filters) =>
+            (options.overview ?? ((output) => output))(overview(data(), filters)),
+          inspect: (filters, id) =>
+            inspect(data(), { filters, configurationID: id, selectedTaskID: null } as never),
+          comparison: () => (options.comparison ?? ((output) => output))(comparison(data())),
+          settings: (taskID) =>
+            (options.settings ?? ((output) => output))(settings(mappings, data(), taskID)),
+          priceSources: POLICY.sources,
+          pricesRetrievedAt: data().pricesRetrievedAt,
+        }),
+        data,
+      ),
+      tasks[Streams.id] as never,
+    ),
     [Models.id]: {
-      comparison: () => comparison(data()),
       refreshSources: () => sourceStatus(data()),
       sourceEvidence: () => sourceStatus(data()),
-      settings: (input: { taskID?: string }) => settings(mappings, data(), input.taskID),
       configure: (input: never) => mappings.write(input),
-      catalog: () => catalog(data()),
       priceSources: () => ({
         policy: { ...POLICY, sources: [...POLICY.sources] },
         access: { openrouter: "configured", opencode: "configured" },
       }),
     },
-    [ModelsDecision.id]: {
-      overview: (input: { filters: ModelDecisionFilters }) => overview(data(), input.filters),
-      rows: (input: DecisionInput) => {
-        const found = page(
-          observedModels(data()).map((model) => row(data(), model)),
-          input,
-        )
-        return {
-          context: context(data(), input.filters),
-          rows: found.items,
-          totalCount: found.totalCount,
-          nextCursor: found.nextCursor,
-        }
-      },
-      configurations: (input: DecisionInput) => {
-        const found = page(
-          observedModels(data()).map((model) => configuration(data(), model)),
-          input,
-        )
-        return {
-          context: context(data(), input.filters),
-          configurations: found.items,
-          totalCount: found.totalCount,
-          nextCursor: found.nextCursor,
-        }
-      },
-      inspect: (input: never) => inspect(data(), input),
-    },
-    ...tasks,
     [Observability.id]: {
       ...tasks[Observability.id],
       trajectoryStatus: (input: { taskID: string }) => trajectory(input.taskID),
@@ -802,71 +771,18 @@ export function rpc(data: () => ModelsData): Handlers {
 
 /** Every distinct read this data answers, with the contract schema that must accept it. */
 export function reads(data: ModelsData): Read[] {
-  const filters: ModelDecisionFilters = {
-    persona: null,
-    taskKind: null,
-    period: { from: null, to: null },
-  }
-  const mappings = new Mappings(() => data)
   const out: Read[] = [
-    {
-      label: "lazers.models.comparison",
-      schema: Models.methods.comparison.output,
-      value: comparison(data),
-    },
     {
       label: "lazers.models.refreshSources",
       schema: Models.methods.refreshSources.output,
       value: sourceStatus(data),
-    },
-    { label: "lazers.models.catalog", schema: Models.methods.catalog.output, value: catalog(data) },
-    {
-      label: "lazers.models.settings",
-      schema: Models.methods.settings.output,
-      value: settings(mappings, data, undefined),
-    },
-    {
-      label: "lazers.models.settings task",
-      schema: Models.methods.settings.output,
-      value: settings(mappings, data, uid(1, data.tasks[0]?.n ?? 1)),
     },
     {
       label: "lazers.models.priceSources",
       schema: Models.methods.priceSources.output,
       value: { policy: POLICY, access: { openrouter: "configured", opencode: "configured" } },
     },
-    {
-      label: "lazers.models.decision overview",
-      schema: ModelsDecision.methods.overview.output,
-      value: overview(data, filters),
-    },
-    {
-      label: "lazers.models.decision rows",
-      schema: ModelsDecision.methods.rows.output,
-      value: {
-        context: context(data, filters),
-        rows: observedModels(data).map((model) => row(data, model)),
-        totalCount: observedModels(data).length,
-        nextCursor: null,
-      },
-    },
-    {
-      label: "lazers.models.decision configurations",
-      schema: ModelsDecision.methods.configurations.output,
-      value: {
-        context: context(data, filters),
-        configurations: observedModels(data).map((model) => configuration(data, model)),
-        totalCount: observedModels(data).length,
-        nextCursor: null,
-      },
-    },
   ]
-  for (const model of observedModels(data))
-    out.push({
-      label: `lazers.models.decision inspect ${routeKey(model)}`,
-      schema: ModelsDecision.methods.inspect.output,
-      value: inspect(data, { filters, configurationID: configurationID(model) }),
-    })
   const taskOut = tasksReads(tasksOf(data)).filter(
     (read) =>
       read.label.startsWith("lazers.tasks.query") || read.label.startsWith("lazers.tasks.get"),
