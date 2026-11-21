@@ -406,7 +406,7 @@ export const HandoffReviewReservationInput = z.strictObject({
 })
 export type HandoffReviewReservationInput = z.infer<typeof HandoffReviewReservationInput>
 
-const HandoffUsage = z.strictObject({
+export const HandoffUsage = z.strictObject({
   inputTokens: z.number().int().nonnegative().nullable(),
   outputTokens: z.number().int().nonnegative().nullable(),
   reasoningTokens: z.number().int().nonnegative().nullable(),
