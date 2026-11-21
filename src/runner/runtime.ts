@@ -673,8 +673,6 @@ export class TaskRuntime {
         this.checkActivities.reconcileCancelledCheckActivities(...args),
       recoverCancelledRetainedChecks: (...args) =>
         this.checkActivities.recoverCancelledRetainedChecks(...args),
-      retainedCheckSettlementProblem: (...args) =>
-        this.checkActivities.retainedCheckSettlementProblem(...args),
       cancelReservedAttempt: (...args) => this.cancellation.cancelReservedAttempt(...args),
       cancelWorkers: (...args) => this.cancellation.cancelWorkers(...args),
       command: (...args) => this.command(...args),

@@ -2209,10 +2209,13 @@ test.each(["cancel"] as const)(
       }
       await control.execute(command)
       await f.runtime.tick()
-      expect(f.store.plan(f.planID)?.state).toBe("cancelling")
       await f.runtime.tick()
-      expect(f.store.plan(f.planID)?.state).toBe("cancelling")
-      expect(f.store.plan(f.planID)?.reason).toContain("settlement is uncertain")
+      // The finished check's uncertain subprocess cleanup stays a durable cleanup-pending
+      // record; it does not hold the cancellation open.
+      expect(f.store.plan(f.planID)?.state).toBe("cancelled")
+      expect(
+        f.store.latestTransition(f.planID, null, "VERIFICATION_CANCELLATION_UNCERTAIN"),
+      ).toBeUndefined()
       const check = f.store.atomic((db) =>
         db
           .query<{ state: string; receipt: string; cleanup_state: string }, [string]>(
@@ -2353,9 +2356,22 @@ for (const action of ["cancel"] as const)
         }
         await runtime.tick()
         expect(events()).toHaveLength(kind === "valid" ? 1 : 0)
-        expect(store.plan(f.planID)?.state).toBe(
-          action === "cancel" ? (kind === "valid" ? "cancelled" : "cancelling") : "blocked",
-        )
+        // LZ-222: a check with no conclusive receipt keeps its resources uncertain and
+        // cleanup-pending, and the cancellation still reaches its terminal state.
+        expect(store.plan(f.planID)?.state).toBe(action === "cancel" ? "cancelled" : "blocked")
+        if (kind !== "valid")
+          expect(
+            store.atomic((db) =>
+              db
+                .query<{ payload: string; cleanup_pending: number }, [string]>(
+                  "SELECT payload,cleanup_pending FROM runner_retained_verifications WHERE id=?",
+                )
+                .get(requested.operationID),
+            ),
+          ).toMatchObject({
+            cleanup_pending: 1,
+            payload: expect.stringContaining('"state":"cancelled"'),
+          })
         expect(store.nodes(f.planID)[0]?.state).not.toBe("accepted")
         expect(f.prompts).toHaveLength(1)
         expect(f.worktreeCreations).toEqual(worktreesBefore)
@@ -2391,7 +2407,8 @@ for (const action of ["cancel"] as const)
             }),
           )
         } else {
-          // Read-only Git observations are not a check replay.
+          // Read-only Git observations and the cancelled plan's change-identity probes
+          // (notes, patch-id, log, merge-tree) are not a check replay.
           const readOnly = new Set([
             "worktree",
             "status",
@@ -2399,13 +2416,17 @@ for (const action of ["cancel"] as const)
             "merge-base",
             "diff",
             "ls-files",
+            "config",
+            "log",
+            "merge-tree",
+            "notes",
+            "patch-id",
+            "remote",
           ])
-          expect(
-            spawn.mock.calls.filter(([argument]) => {
-              const cmd = (argument as { cmd?: string[] }).cmd
-              return !(cmd?.[0] === "git" && readOnly.has(cmd[1] ?? ""))
-            }),
-          ).toHaveLength(0)
+          const unexpected = spawn.mock.calls
+            .map(([argument]) => (argument as { cmd?: string[] }).cmd ?? [])
+            .filter((cmd) => !(cmd[0] === "git" && readOnly.has(cmd[1] ?? "")))
+          expect(unexpected).toHaveLength(0)
         }
         expect(verificationActivitiesForDatabase(repository.path)).toHaveLength(0)
       } finally {
