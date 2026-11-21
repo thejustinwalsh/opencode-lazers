@@ -30,7 +30,8 @@ import {
   registerRetainedVerificationResources,
   retainedVerification,
   retainedVerificationChecks,
-  retainedVerificationsForProject,
+  retainedCleanupPending,
+  terminalPendingRetainedVerifications,
   saveRetainedVerification,
   setRetainedVerificationCheckCleanup,
   setRetainedVerificationWorkspace,
@@ -1858,9 +1859,9 @@ export class RetainedVerificationExecution {
   }
 
   async reconcileTerminalRetainedVerifications(fence: number): Promise<void> {
-    const terminalOperations = this.runtime.store
-      .read((db) => retainedVerificationsForProject(db, this.runtime.directory))
-      .filter((operation) => isTerminalRetainedState(operation.state))
+    const terminalOperations = this.runtime.store.read((db) =>
+      terminalPendingRetainedVerifications(db, this.runtime.directory),
+    )
     const terminalIDs = new Set(terminalOperations.map((operation) => operation.id))
     for (const operationID of this.runtime.terminalRetainedVerificationCleanupChecks.keys())
       if (!terminalIDs.has(operationID))
@@ -2108,16 +2109,7 @@ export class RetainedVerificationExecution {
   }
 
   private terminalRetainedVerificationCleanupRecordedComplete(operation: RetainedVerification) {
-    const workspaceSettled = (workspace: string | null, state: string | null) =>
-      workspace === null ? state === null : state === "removed"
-    return (
-      operation.cleanupState === "complete" &&
-      workspaceSettled(operation.taskWorkspace, operation.taskWorkspaceState) &&
-      workspaceSettled(
-        operation.combinedWorkspace ?? null,
-        operation.combinedWorkspaceState ?? null,
-      )
-    )
+    return !retainedCleanupPending(operation)
   }
 
   private async reconcileInterruptedRetainedCheckSetup(

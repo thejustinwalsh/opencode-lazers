@@ -116,6 +116,28 @@ function observedSessions() {
   return sessions
 }
 
+/**
+ * Observed sessions are proxies, which `structuredClone` refuses. Tests clone fixture sessions to
+ * build variants, so a clone that fails on a proxy is retried on a plain copy of it.
+ */
+const nativeStructuredClone = globalThis.structuredClone
+globalThis.structuredClone = ((value: unknown, options?: StructuredSerializeOptions) => {
+  try {
+    return nativeStructuredClone(value, options)
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "DataCloneError") throw error
+    return nativeStructuredClone(unproxied(value), options)
+  }
+}) as typeof structuredClone
+
+function unproxied(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(unproxied)
+  if (typeof value !== "object" || value === null) return value
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) return value
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, unproxied(entry)]))
+}
+
 function plainClone<T>(value: T): T {
   if (typeof value !== "object" || value === null) return value
   if (Array.isArray(value)) return value.map(plainClone) as T
