@@ -1,5 +1,9 @@
 import { parentPort, workerData } from "node:worker_threads"
-import { computeTaskEffort, storedPriceProvider } from "./effort-compute.ts"
+import {
+  computeTaskEffort,
+  computeTaskEffortDetail,
+  storedPriceProvider,
+} from "./effort-compute.ts"
 import type { EffortWorkerRequest, EffortWorkerResponse } from "./effort-worker-client.ts"
 
 /**
@@ -21,22 +25,33 @@ port.on("message", (message: EffortWorkerRequest) => {
   }
   const controller = new AbortController()
   controllers.set(message.id, controller)
-  computeTaskEffort(
+  const args = [
     path,
     message.projectDirectory,
     message.projectID,
     message.taskID,
     storedPriceProvider(path, message.projectDirectory, message.inputs),
     controller.signal,
-  )
-    .then(
-      (row) => send({ type: "result", id: message.id, row: row ?? null }),
-      (error: unknown) =>
-        send({
-          type: "error",
+  ] as const
+  const work: Promise<EffortWorkerResponse> =
+    message.type === "detail"
+      ? computeTaskEffortDetail(...args).then((effort) => ({
+          type: "detail",
           id: message.id,
-          message: error instanceof Error ? error.message : String(error),
-        }),
+          effort: effort ?? null,
+        }))
+      : computeTaskEffort(...args).then((row) => ({
+          type: "result",
+          id: message.id,
+          row: row ?? null,
+        }))
+  work
+    .then(send, (error: unknown) =>
+      send({
+        type: "error",
+        id: message.id,
+        message: error instanceof Error ? error.message : String(error),
+      }),
     )
     .finally(() => controllers.delete(message.id))
 })

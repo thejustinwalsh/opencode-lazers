@@ -13,7 +13,7 @@ import { defaultModelPriceSourcePolicy } from "../models/price-source-settings.t
 import { ModelEvidenceSnapshotSchema } from "../models/source-schema.ts"
 import { ModelEvidenceStore } from "../models/source-store.ts"
 import { createModelsTaskValuationProvider } from "../models/server.ts"
-import { computeTaskEffort, storedPriceProvider } from "./effort-compute.ts"
+import { computeTaskEffort, effortSummary, storedPriceProvider } from "./effort-compute.ts"
 import { ensureTaskEffortSchema, readTaskEffort, TaskEffortFold } from "./effort-store.ts"
 import { workerTaskEffort } from "./effort-worker-client.ts"
 import { inspectTrajectory } from "./read.ts"
@@ -110,7 +110,10 @@ test("the effort worker computes the report's effort with the Models provider, f
     // The index read time is per read on both paths; every other byte is the same.
     const readTime = (text: string) =>
       text.replace(/("indexID":"[^"]*","retrievedAt":)"[^"]*"/, '$1"<read time>"')
-    expect(readTime(row!.effort)).toBe(readTime(JSON.stringify(report.effort)))
+    // The row stores the summary; the worker's detail is the whole effort.
+    expect(readTime(row!.effort)).toBe(readTime(JSON.stringify(effortSummary(report.effort))))
+    const whole = await worker.detail(taskID, new AbortController().signal)
+    expect(readTime(JSON.stringify(whole))).toBe(readTime(JSON.stringify(report.effort)))
     // The split provider equals the Models provider on this thread too.
     const inThread = await computeTaskEffort(
       fixture.repository.path,

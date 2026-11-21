@@ -7,6 +7,11 @@ import {
   currentPriceIndexFreshness,
   type TaskValuationProvider,
 } from "../models/task-valuation.ts"
+import {
+  storedTranscriptSession,
+  transcriptRoutes,
+  type TranscriptReadState,
+} from "../transcript-meta/schema.ts"
 import type { TrajectorySession } from "./native.ts"
 import { inspectTaskEffort, type TaskEffort } from "./read.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
@@ -37,12 +42,24 @@ type EffortSessionRow = {
 
 const OUTCOMES = new Set(["succeeded", "failed", "interrupted"])
 
+/** A transcript's read state as the host session's context status. */
+const CONTEXT: Record<TranscriptReadState, TrajectorySession["messageStatus"]> = {
+  available: "available",
+  unavailable: "unavailable",
+  "not-read": "not-read",
+}
+
 /**
- * A stored session as the trajectory host's status read returns it: model, outcome, busy, stamp
- * and the cumulative token snapshot, with no transcript (`not-read`). The host keeps no busy or
- * idle endpoint here; the effort reads neither.
+ * A stored session as the trajectory host's read returns it: model, outcome, busy, stamp and the
+ * cumulative token snapshot; its context status is the stored transcript's read state (`not-read`
+ * before the transcript fold has read it in full). The messages themselves are never here. The
+ * host keeps no busy or idle endpoint here; the effort reads neither.
  */
-function trajectorySessionOf(row: EffortSessionRow, projectID: string): TrajectorySession {
+function trajectorySessionOf(
+  row: EffortSessionRow,
+  projectID: string,
+  context: TranscriptReadState,
+): TrajectorySession {
   const tokens = [
     row.tokens_in,
     row.tokens_out,
@@ -77,7 +94,7 @@ function trajectorySessionOf(row: EffortSessionRow, projectID: string): Trajecto
           cache: { read: row.tokens_cache_read!, write: row.tokens_cache_write! },
         },
     messages: null,
-    messageStatus: "not-read",
+    messageStatus: CONTEXT[context],
     messageError: null,
   }
 }
@@ -92,7 +109,7 @@ const SESSION_COLUMNS =
  * trajectory read drops it from its cursor identity for the same reason). A refresh whose effort
  * differs only there changes nothing, so it writes nothing.
  */
-function effortKey(effort: TaskEffort) {
+function effortKey(effort: TaskEffortSummary) {
   const index = effort.marketEquivalentCost?.currentIndex
   const stable = index
     ? {
@@ -106,7 +123,39 @@ function effortKey(effort: TaskEffort) {
   return createHash("sha256").update(JSON.stringify(stable)).digest("hex")
 }
 
-/** The stored row of one task: its effort as JSON and the columns a list reads. */
+/**
+ * The stored summary of an effort: everything but the per-call route lists
+ * (`taskEffortBasis.routes.observedStepRoutes`, `.assessments` and `.mismatches`, a filter of the
+ * assessments), which grow with every model step (3,619 calls: about 2 MB of the row). Their
+ * lengths stay; the lists are composed from the stored transcript and progress rows on read
+ * (`computeTaskEffortDetail`).
+ */
+export type TaskEffortSummary = Omit<TaskEffort, "taskEffortBasis"> & {
+  taskEffortBasis: Omit<TaskEffort["taskEffortBasis"], "routes"> & {
+    routes: Omit<
+      TaskEffort["taskEffortBasis"]["routes"],
+      "observedStepRoutes" | "assessments" | "mismatches"
+    > & { observedStepRouteCount: number; assessmentCount: number; mismatchCount: number }
+  }
+}
+
+export function effortSummary(effort: TaskEffort): TaskEffortSummary {
+  const { observedStepRoutes, assessments, mismatches, ...routes } = effort.taskEffortBasis.routes
+  return {
+    ...effort,
+    taskEffortBasis: {
+      ...effort.taskEffortBasis,
+      routes: {
+        ...routes,
+        observedStepRouteCount: observedStepRoutes.length,
+        assessmentCount: assessments.length,
+        mismatchCount: mismatches.length,
+      },
+    },
+  }
+}
+
+/** The stored row of one task: its effort summary as JSON and the columns a list reads. */
 export type EffortRow = {
   busy: number
   uncached_input: number | null
@@ -125,6 +174,7 @@ export type EffortRow = {
 }
 
 function effortRow(busy: boolean, effort: TaskEffort): EffortRow {
+  const summary = effortSummary(effort)
   const measured = effort.tokenUsage.measuredSubtotal
   const market = effort.marketEquivalentCost
   return {
@@ -141,8 +191,8 @@ function effortRow(busy: boolean, effort: TaskEffort): EffortRow {
       market?.valueUSD === null || market?.valueUSD === undefined ? null : String(market.valueUSD),
     market_status: market?.status ?? null,
     price_index: market?.currentIndex?.indexID ?? null,
-    effort: JSON.stringify(effort),
-    effort_key: effortKey(effort),
+    effort: JSON.stringify(summary),
+    effort_key: effortKey(summary),
   }
 }
 
@@ -151,6 +201,53 @@ export type TaskEffortCompute = (
   taskID: string,
   signal: AbortSignal,
 ) => Promise<EffortRow | undefined>
+
+/** The task's whole effort from stored facts on a read-only connection, valued by `provider`. */
+async function storedTaskEffort(
+  path: string,
+  project: string,
+  projectID: string,
+  taskID: string,
+  provider: TaskValuationProvider,
+  signal: AbortSignal,
+) {
+  const connection = openReadOnlyTrajectoryStore(path, project)
+  try {
+    const { repository } = connection.store
+    const session = repository.read((db) =>
+      db.query<EffortSessionRow, [string, string]>(
+        `SELECT ${SESSION_COLUMNS} FROM host_session_state
+         WHERE project_directory=? AND session_id=?`,
+      ),
+    )
+    return await inspectTaskEffort(
+      connection.store,
+      projectID,
+      taskID,
+      (sessionID) => {
+        const row = repository.read(() => session.get(project, sessionID))
+        if (!row) return null
+        const transcript = repository.read((db) => storedTranscriptSession(db, project, sessionID))
+        return trajectorySessionOf(row, projectID, transcript?.state ?? "not-read")
+      },
+      {
+        taskValuationProvider: provider,
+        signal,
+        transcriptOf: (sessionID, below) => {
+          const stored = repository.read((db) => storedTranscriptSession(db, project, sessionID))
+          return stored
+            ? {
+                messageCount: stored.messageCount,
+                routes: transcriptRoutes((run) => repository.read(run), project, sessionID, below),
+              }
+            : undefined
+        },
+      },
+    )
+  } finally {
+    connection.close()
+  }
+}
 
 /** Compute one task's row on the calling thread, valued by `provider`. */
 export async function computeTaskEffort(
@@ -161,28 +258,23 @@ export async function computeTaskEffort(
   provider: TaskValuationProvider,
   signal: AbortSignal,
 ): Promise<EffortRow | undefined> {
-  const connection = openReadOnlyTrajectoryStore(path, project)
-  try {
-    const session = connection.store.repository.read((db) =>
-      db.query<EffortSessionRow, [string, string]>(
-        `SELECT ${SESSION_COLUMNS} FROM host_session_state
-         WHERE project_directory=? AND session_id=?`,
-      ),
-    )
-    const result = await inspectTaskEffort(
-      connection.store,
-      projectID,
-      taskID,
-      (sessionID) => {
-        const row = connection.store.repository.read(() => session.get(project, sessionID))
-        return row ? trajectorySessionOf(row, projectID) : null
-      },
-      { taskValuationProvider: provider, signal },
-    )
-    return result ? effortRow(result.busy, result.effort) : undefined
-  } finally {
-    connection.close()
-  }
+  const result = await storedTaskEffort(path, project, projectID, taskID, provider, signal)
+  return result ? effortRow(result.busy, result.effort) : undefined
+}
+
+/**
+ * The task's whole effort, per-call route lists included, composed from the stored rows on the
+ * calling thread (the effort worker's detail read): what the stored summary leaves out.
+ */
+export async function computeTaskEffortDetail(
+  path: string,
+  project: string,
+  projectID: string,
+  taskID: string,
+  provider: TaskValuationProvider,
+  signal: AbortSignal,
+): Promise<TaskEffort | undefined> {
+  return (await storedTaskEffort(path, project, projectID, taskID, provider, signal))?.effort
 }
 
 /**

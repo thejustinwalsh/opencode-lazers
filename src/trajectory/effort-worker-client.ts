@@ -2,10 +2,12 @@ import { Worker } from "node:worker_threads"
 import type { PriceInputs } from "../models/price-state.ts"
 import { workerURL } from "../worker-url.ts"
 import type { EffortRow, TaskEffortCompute } from "./effort-compute.ts"
+import type { TaskEffort } from "./read.ts"
 
+/** `compute` returns the stored row; `detail` the whole effort, per-call route lists included. */
 export type EffortWorkerRequest =
   | {
-      type: "compute"
+      type: "compute" | "detail"
       id: number
       projectDirectory: string
       projectID: string
@@ -16,9 +18,10 @@ export type EffortWorkerRequest =
 
 export type EffortWorkerResponse =
   | { type: "result"; id: number; row: EffortRow | null }
+  | { type: "detail"; id: number; effort: TaskEffort | null }
   | { type: "error"; id: number; message: string }
 
-type Pending = { resolve(row: EffortRow | undefined): void; reject(error: Error): void }
+type Pending = { resolve(value: unknown): void; reject(error: Error): void }
 
 /**
  * The effort worker of one database in this process, shared by every project's fold and spawned
@@ -46,6 +49,7 @@ class EffortWorker {
       if (!entry) return
       this.pending.delete(message.id)
       if (message.type === "result") entry.resolve(message.row ?? undefined)
+      else if (message.type === "detail") entry.resolve(message.effort ?? undefined)
       else entry.reject(new Error(message.message))
     })
     const dead = (error: Error) => {
@@ -59,9 +63,10 @@ class EffortWorker {
   }
 
   compute(
-    request: Omit<Extract<EffortWorkerRequest, { type: "compute" }>, "type" | "id">,
+    type: "compute" | "detail",
+    request: Omit<Exclude<EffortWorkerRequest, { type: "cancel" }>, "type" | "id">,
     signal: AbortSignal,
-  ): Promise<EffortRow | undefined> {
+  ): Promise<unknown> {
     signal.throwIfAborted()
     const worker = this.acquire()
     const id = ++this.sequence
@@ -73,16 +78,16 @@ class EffortWorker {
       }
       signal.addEventListener("abort", onAbort, { once: true })
       this.pending.set(id, {
-        resolve: (row) => {
+        resolve: (value) => {
           signal.removeEventListener("abort", onAbort)
-          resolve(row)
+          resolve(value)
         },
         reject: (error) => {
           signal.removeEventListener("abort", onAbort)
           reject(error)
         },
       })
-      worker.postMessage({ type: "compute", id, ...request } satisfies EffortWorkerRequest)
+      worker.postMessage({ type, id, ...request } satisfies EffortWorkerRequest)
     })
   }
 
@@ -99,7 +104,12 @@ const registryKey = Symbol.for("lazers.effort-worker.v1")
 const host = globalThis as typeof globalThis & { [registryKey]?: Map<string, EffortWorker> }
 const held = () => (host[registryKey] ??= new Map())
 
-export type EffortWorkerCompute = { compute: TaskEffortCompute; release(): void }
+export type EffortWorkerCompute = {
+  compute: TaskEffortCompute
+  /** The task's whole effort, composed in the worker from the stored rows (the cold detail). */
+  detail(taskID: string, signal: AbortSignal): Promise<TaskEffort | undefined>
+  release(): void
+}
 
 /**
  * A task effort computation that runs in the database's effort worker. Only the price inputs
@@ -123,18 +133,20 @@ export function workerTaskEffort(options: {
   worker.refs++
   const taken = worker
   let released = false
+  const fields = async (taskID: string, signal: AbortSignal) => ({
+    projectDirectory: options.projectDirectory,
+    projectID: options.projectID,
+    taskID,
+    inputs: await options.readPriceInputs(signal),
+  })
   return {
     async compute(taskID, signal) {
-      const inputs = await options.readPriceInputs(signal)
-      return taken.compute(
-        {
-          projectDirectory: options.projectDirectory,
-          projectID: options.projectID,
-          taskID,
-          inputs,
-        },
-        signal,
-      )
+      const row = await taken.compute("compute", await fields(taskID, signal), signal)
+      return row as EffortRow | undefined
+    },
+    async detail(taskID, signal) {
+      const effort = await taken.compute("detail", await fields(taskID, signal), signal)
+      return effort as TaskEffort | undefined
     },
     release() {
       if (released) return

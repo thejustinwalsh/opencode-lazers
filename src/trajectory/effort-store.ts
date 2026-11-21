@@ -9,8 +9,8 @@ import { startProjection, type ProjectionLease, type ProjectionSpec } from "../p
 import { queueRef, queueRefs, queueTableSQL } from "../projections/queue.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
-import type { EffortRow, TaskEffortCompute } from "./effort-compute.ts"
-import type { TaskEffort } from "./read.ts"
+import { ensureTranscriptMetaSchema } from "../transcript-meta/schema.ts"
+import type { EffortRow, TaskEffortCompute, TaskEffortSummary } from "./effort-compute.ts"
 
 /**
  * `trajectory_task_effort`: each task's effort, stored so a panel or tool reads one row instead of
@@ -20,11 +20,12 @@ import type { TaskEffort } from "./read.ts"
  * ```
  * runner_attempts, runner_progress, runner_nodes,  ─┐
  * runner_plans (body, model), ACCEPT transitions,   ├ triggers ─► trajectory_effort_dirty(ref)
- * host_session_state (the attempts' sessions), tasks ┘                   │
+ * host_session_state (the attempts' sessions), tasks │                   │
+ * transcript_steps routes, transcript_sessions ─────┘                   │
  * price evidence written (snapshots, refreshes) ─► every row of the project re-queued (reprice)
  *                                                                        ▼ async fold, per task
- *   inspectTaskEffort: plans, attempts, every progress row of the task, stored session facts
- *        ─► projectTaskEffortBasis + taskValuationProvider (await) ─► compare, then write the row
+ *   inspectTaskEffort: plans, attempts, every progress row of the task, stored session facts,
+ *   stored transcript metadata ─► projectTaskEffortBasis + taskValuationProvider (await) ─► compare, then write the row
  * ```
  *
  * The read and the composition run off the main thread (`effort-compute.ts`, in the effort
@@ -32,9 +33,11 @@ import type { TaskEffort } from "./read.ts"
  * the trajectory report makes (`composeTaskEffort` in `read.ts`), over
  * stored facts only: usage per unique worker session (the host session fold's five-category
  * snapshot first, else the retained cumulative snapshot, else the additive steps), routes, and the
- * market valuation of the same request by the configured ordered price sources. No message text
- * and no transcript (owner decision, 2026-11-21: OpenCode holds transcripts), so a session's
- * context reads `not-read`, as in the status report.
+ * market valuation of the same request by the configured ordered price sources. The transcript's
+ * step routes and message count come from the stored transcript metadata (`src/transcript-meta/`,
+ * owner decision 2026-11-21: store the metadata, skip the text), so the effort equals the history
+ * capture's. The row stores the summary (`effortSummary`): the per-call route lists are composed
+ * on read (`computeTaskEffortDetail`), so a running task's refresh rewrites a small row.
  *
  * Repricing: the valuation is not a function of stored numbers alone (the provider reads the
  * configured sources), so a price change re-runs the provider over the same inputs. Usage is
@@ -50,8 +53,11 @@ const MODULE = schemaModules["trajectory-effort"]
 const TASK_EFFORT = "trajectory-effort"
 export const TASK_EFFORT_QUEUE = "trajectory_effort_dirty"
 
-/** Raise when the stored derivation changes: the seed queues every task again. */
-const TASK_EFFORT_GENERATION = 1
+/**
+ * Raise when the stored derivation changes: the seed queues every task again. 2: routes from the
+ * stored transcript metadata; the row stores the summary.
+ */
+const TASK_EFFORT_GENERATION = 2
 
 const TABLES_SQL = `
   CREATE TABLE trajectory_task_effort (
@@ -76,6 +82,14 @@ const planProject = (plan: string) =>
   `(SELECT project_directory FROM runner_plans WHERE id=${plan})`
 const attemptProject = (row: "NEW" | "OLD") =>
   `COALESCE(${row}.project_directory, ${planProject(`${row}.plan_id`)})`
+
+/** The task of the attempt whose session a transcript row names (`session_id` is unique). */
+const sessionTasks = (row: "NEW" | "OLD") =>
+  queueRefs(
+    TASK_EFFORT_QUEUE,
+    `SELECT ${refSQL(`${row}.project_directory`, "a.task_id")} AS ref FROM runner_attempts a
+     WHERE a.session_id=${row}.session_id`,
+  )
 
 type TriggerSpec = { name: string; on: string; event: string; when?: string; body: string }
 
@@ -171,6 +185,38 @@ const TASK_EFFORT_TRIGGERS: readonly TriggerSpec[] = [
       `SELECT ${refSQL("NEW.project_directory", "task_id")} AS ref FROM runner_nodes WHERE plan_id=NEW.id`,
     ),
   },
+  // A transcript's routes and count are inputs: a step's route columns, the session's count and
+  // read state. Times, tokens and errors of a step are not read by the effort and queue nothing.
+  ...(["INSERT", "DELETE"] as const).map((event) => {
+    const row = event === "INSERT" ? "NEW" : "OLD"
+    return {
+      name: `trajectory_effort_q_step_${event.toLowerCase()}`,
+      on: "transcript_steps",
+      event,
+      body: sessionTasks(row),
+    }
+  }),
+  {
+    name: "trajectory_effort_q_step_update",
+    on: "transcript_steps",
+    event: "UPDATE OF ordinal,provider_id,model_id,variant,created_at,message_id",
+    body: sessionTasks("NEW"),
+  },
+  ...(["INSERT", "DELETE"] as const).map((event) => {
+    const row = event === "INSERT" ? "NEW" : "OLD"
+    return {
+      name: `trajectory_effort_q_transcript_${event.toLowerCase()}`,
+      on: "transcript_sessions",
+      event,
+      body: sessionTasks(row),
+    }
+  }),
+  {
+    name: "trajectory_effort_q_transcript_update",
+    on: "transcript_sessions",
+    event: "UPDATE OF message_count,read_state",
+    body: sessionTasks("NEW"),
+  },
   {
     name: "trajectory_effort_q_task_delete",
     on: "tasks",
@@ -188,10 +234,19 @@ function installTaskEffortSchema(db: Database) {
   db.exec(`DROP TABLE IF EXISTS trajectory_task_effort; DROP TABLE IF EXISTS ${TASK_EFFORT_QUEUE};`)
   db.exec(TABLES_SQL)
   resetProjectionState(db, TASK_EFFORT)
+  createTriggers(db)
+}
+
+/**
+ * Create every trigger whose source table exists and that is missing. A source module that
+ * rebuilds its table (a generation bump of `host-sessions` or `transcript-meta`) drops the
+ * table's triggers with it; each start puts them back.
+ */
+function createTriggers(db: Database) {
   for (const spec of TASK_EFFORT_TRIGGERS) {
     if (!hasTable(db, spec.on)) continue
     db.exec(
-      `CREATE TRIGGER ${spec.name} AFTER ${spec.event} ON ${spec.on}
+      `CREATE TRIGGER IF NOT EXISTS ${spec.name} AFTER ${spec.event} ON ${spec.on}
        ${spec.when ? `WHEN ${spec.when}` : ""} BEGIN
          ${spec.body}
        END;`,
@@ -201,15 +256,25 @@ function installTaskEffortSchema(db: Database) {
 
 /**
  * Install through the module registry. The triggers need their source tables, so the runner's
- * tables and `host_session_state` are installed first.
+ * tables, `host_session_state` and the transcript metadata are installed first.
  */
 export function ensureTaskEffortSchema(repository: TaskRepository) {
   void new RunnerStore(repository)
   ensureHostSessionStateSchema(repository)
+  ensureTranscriptMetaSchema(repository)
   ensureProjectionStateSchema(repository)
   repository.installSchema("trajectory-effort", MODULE.generation, MODULE.tables, (db) =>
     installTaskEffortSchema(db),
   )
+  const present = repository.read(
+    (db) =>
+      db
+        .query<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'trajectory_effort_q_%'`,
+        )
+        .get()!.n,
+  )
+  if (present < TASK_EFFORT_TRIGGERS.length) repository.atomic((db) => createTriggers(db))
 }
 
 /** Tasks per seed page: queue inserts only. Measured with the fold tests: 260 tasks, 2 pages. */
@@ -245,7 +310,8 @@ export const taskEffortSeedProjection: ProjectionSpec = {
 
 export type StoredTaskEffort = {
   busy: boolean
-  effort: TaskEffort
+  /** The summary: the per-call route lists are composed on read (`computeTaskEffortDetail`). */
+  effort: TaskEffortSummary
   refreshedAt: number
 }
 
@@ -264,7 +330,7 @@ export function readTaskEffort(
   return row
     ? {
         busy: row.busy === 1,
-        effort: JSON.parse(row.effort) as TaskEffort,
+        effort: JSON.parse(row.effort) as TaskEffortSummary,
         refreshedAt: row.refreshed_at,
       }
     : undefined

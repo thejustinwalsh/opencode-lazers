@@ -273,7 +273,7 @@ export const schemaModules = {
     tables: ["transcript_steps", "transcript_sessions", "transcript_meta_dirty"],
   },
   "trajectory-effort": {
-    generation: 1,
+    generation: 2,
     source: "src/trajectory/effort-store.ts",
     tables: ["trajectory_task_effort", "trajectory_effort_dirty"],
   },

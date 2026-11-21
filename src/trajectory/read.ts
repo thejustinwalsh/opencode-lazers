@@ -1,16 +1,8 @@
 import { sameProject } from "../project-key.ts"
 import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
-import { DateTime } from "effect"
 import type { TaskSpec } from "../task.ts"
-import type {
-  AttemptRow,
-  EffectRow,
-  NodeRow,
-  PlanRow,
-  ProgressRow,
-  RunnerStore,
-} from "../runner/store.ts"
+import type { AttemptRow, EffectRow, NodeRow, PlanRow, RunnerStore } from "../runner/store.ts"
 import { PlanInput } from "../runner/schema.ts"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { InspectTrajectoryInput } from "./schema.ts"
@@ -27,6 +19,8 @@ import type { TrajectoryMarketEquivalentCost } from "../models/task-valuation-sc
 import type { ProjectTaskValuationRequest } from "../models/valuation.ts"
 import { planIs } from "../runner/identity-read.ts"
 import { effectEvents, transitionEvent, type CheckView, type TransitionRow } from "./events.ts"
+import { dateMillis } from "../transcript-meta/step.ts"
+import type { TranscriptRouteRow } from "../transcript-meta/schema.ts"
 
 type PlanSnapshot = {
   row: PlanRow
@@ -55,21 +49,6 @@ function object(value: unknown): Record<string, unknown> | null {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function dateMillis(value: unknown): number | null {
-  let millis: number
-  if (typeof value === "number" && Number.isFinite(value)) millis = value
-  else {
-    if (value === null || value === undefined) return null
-    try {
-      millis = DateTime.toEpochMillis(value as DateTime.DateTime)
-    } catch {
-      return null
-    }
-  }
-  const integer = Math.trunc(millis)
-  return Number.isSafeInteger(integer) ? integer : null
 }
 
 const EPOCH_MILLIS = "unix-epoch-ms" as const
@@ -611,6 +590,33 @@ function messageFold(attempt: AttemptRow, stats: PrivacyStats) {
       }
     },
   }
+}
+
+/**
+ * What a transcript contributes to the effort, from the stored step rows (`transcript_steps`,
+ * below the transcript bound, in transcript order) and the stored message count: the same routes
+ * and count `messageFold` folds from the host's pages. Events, models and the digest are the
+ * report's alone; the effort reads none of them.
+ */
+function storedMessageFold(transcript: StoredTranscript, stats: PrivacyStats): MessageFold {
+  const routes: MessageFold["routes"] = []
+  for (const row of transcript.routes) {
+    const model =
+      row.provider_id !== null && row.model_id !== null
+        ? modelView(
+            {
+              providerID: row.provider_id,
+              id: row.model_id,
+              ...(row.variant !== null ? { variant: row.variant } : {}),
+            },
+            stats,
+          )
+        : null
+    const route = accountingRoute(model)
+    const id = safeText(row.message_id, stats, 200)
+    if (route && id) routes.push({ messageID: id, route, observedAt: row.created_at })
+  }
+  return { events: [], models: [], routes, count: transcript.messageCount, digest: "" }
 }
 
 function rawPlanInput(row: PlanRow) {
@@ -1515,19 +1521,28 @@ async function composeTaskEffort(input: {
 
 export type TaskEffort = Awaited<ReturnType<typeof composeTaskEffort>>["effort"]
 
+/** A session's stored transcript metadata: its message count and its step routes below the bound. */
+export type StoredTranscript = { messageCount: number; routes: Iterable<TranscriptRouteRow> }
+
 /**
  * The effort of one project-owned task from stored facts only: the attempts and plans, every
- * retained progress row of its attempts (no window: nothing is truncated) and the live session
+ * retained progress row of its attempts (no window: nothing is truncated), the live session
  * facts the host session fold stored (`sessionOf`, one row per session; absent reads as a
- * missing session). No host read and no transcript: a session's context is `not-read`, as in the
- * status report. Undefined when the task is gone or not this project's.
+ * missing session) and the transcript metadata the transcript fold stored (`transcriptOf`, read
+ * only for a session whose context is `available`). No host read and no message text: the
+ * composition equals the history capture's. Undefined when the task is gone or not this
+ * project's.
  */
 export async function inspectTaskEffort(
   store: RunnerStore,
   projectID: string,
   taskID: string,
   sessionOf: (sessionID: string) => TrajectorySession | null,
-  options: { taskValuationProvider: TaskValuationProvider; signal?: AbortSignal },
+  options: {
+    taskValuationProvider: TaskValuationProvider
+    signal?: AbortSignal
+    transcriptOf?: (sessionID: string, below: number) => StoredTranscript | undefined
+  },
 ): Promise<{ effort: TaskEffort; busy: boolean } | undefined> {
   const stats = privacyStats()
   const task = store.repository.get(taskID)
@@ -1553,6 +1568,9 @@ export async function inspectTaskEffort(
     const session = sessionOf(attempt.session_id)
     reads.sessions.set(attempt.id, session)
     reads.statuses.set(attempt.id, session ? "available" : "missing")
+    if (session?.messageStatus !== "available") continue
+    const transcript = options.transcriptOf?.(attempt.session_id, MAX_CONTEXT_MESSAGES)
+    if (transcript) reads.folds.set(attempt.id, storedMessageFold(transcript, stats))
   }
   return composeTaskEffort({
     rawPlans,
@@ -1565,7 +1583,7 @@ export async function inspectTaskEffort(
     })),
     progressFacts: folded.facts,
     progressTruncated: folded.truncated,
-    truncatedContextSessionIDs: [],
+    truncatedContextSessionIDs: truncatedContextSessions(allAttempts, reads, stats),
     options,
     stats,
   })

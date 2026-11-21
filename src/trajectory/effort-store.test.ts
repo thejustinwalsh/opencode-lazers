@@ -11,20 +11,19 @@ import {
   prepareLz137RetainedData,
 } from "../../test/trajectory-panel/lz137-market-fixture.ts"
 import { nativeMillionTokenIndex } from "../../test/models-valuation/fixtures/current-indexes.ts"
-import { writeHostSession, type HostSessionRecord } from "../host-sessions/state.ts"
+import { storeSessions } from "../../test/trajectory/stored-sessions.ts"
 import { createTaskValuationReader, type TaskValuationProvider } from "../models/task-valuation.ts"
 import type { CurrentPriceIndex } from "../models/valuation-schema.ts"
 import { startProjection } from "../projections/owner.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import {
-  ensureTaskEffortSchema,
   readTaskEffort,
   TASK_EFFORT_QUEUE,
   TaskEffortFold,
   taskEffortSeedProjection,
 } from "./effort-store.ts"
-import { computeTaskEffort } from "./effort-compute.ts"
-import type { TrajectoryHost, TrajectorySession } from "./native.ts"
+import { computeTaskEffort, effortSummary } from "./effort-compute.ts"
+import type { TrajectoryHost } from "./native.ts"
 import { inspectTrajectory } from "./read.ts"
 
 type Fixture = ReturnType<typeof makeFixture>
@@ -54,44 +53,6 @@ function pricedProvider(generation: () => number): TaskValuationProvider {
   return createTaskValuationReader(async (_routes, signal) => {
     signal.throwIfAborted()
     return { index: pricedIndex(generation()), freshness: "current" }
-  })
-}
-
-/** The fixture's sessions as the host session fold stores them. */
-function hostRecord(session: TrajectorySession): HostSessionRecord {
-  return {
-    id: session.id,
-    projectID: session.projectID,
-    parentID: session.parentID,
-    agent: "lazers-implementor",
-    title: null,
-    directory: null,
-    archived: false,
-    busy: session.busy,
-    outcome: session.outcome,
-    model: session.model
-      ? {
-          providerID: session.model.providerID,
-          id: session.model.id,
-          variant: session.model.variant ?? null,
-        }
-      : null,
-    tokensIn: session.tokens?.input ?? null,
-    tokensOut: session.tokens?.output ?? null,
-    tokensReasoning: session.tokens?.reasoning ?? null,
-    tokensCacheRead: session.tokens?.cache.read ?? null,
-    tokensCacheWrite: session.tokens?.cache.write ?? null,
-    createdAt: session.time.created,
-    updatedAt: session.time.updated,
-  }
-}
-
-function storeSessions(fixture: Fixture, only?: readonly string[]) {
-  ensureTaskEffortSchema(fixture.repository)
-  fixture.repository.atomic((db) => {
-    for (const session of fixture.sessions.values())
-      if (!only || only.includes(session.id))
-        writeHostSession(db, fixture.directory, "project", session.id, hostRecord(session))
   })
 }
 
@@ -143,9 +104,12 @@ async function storedEffort(fixture: Fixture, provider: TaskValuationProvider) {
   }
 }
 
-/** Every field, exactly: the stored JSON is the report's effort serialized. */
+/**
+ * Every field, exactly: the stored JSON is the summary of the report's effort serialized. With no
+ * transcript folded, a session's context is `not-read`, as in the status report.
+ */
 function expectSameEffort(stored: unknown, report: Awaited<ReturnType<typeof oracle>>) {
-  expect(JSON.stringify(stored)).toBe(JSON.stringify(report.effort))
+  expect(JSON.stringify(stored)).toBe(JSON.stringify(effortSummary(report.effort)))
 }
 
 test("stored effort equals the report's effort basis and market valuation on every field", async () => {
