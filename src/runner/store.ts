@@ -8,7 +8,8 @@ import {
   planKey,
 } from "./identity-keys.ts"
 import { planIs } from "./identity-read.ts"
-import { ensureTransitionIndexes } from "./transition-indexes.ts"
+import { installIdentityState } from "./identity-migration.ts"
+import { ensureTransitionIndexes, installTextKeyIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
   type AttemptLifecycleState,
@@ -1101,8 +1102,6 @@ export class RunnerStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT,
         version INTEGER NOT NULL, event TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS runner_transitions_lookup
-        ON runner_transitions(plan_id,task_id,event,id);
       CREATE TABLE IF NOT EXISTS runner_leases (
         project_directory TEXT PRIMARY KEY, owner TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
@@ -1251,8 +1250,6 @@ export class RunnerStore {
         call_id TEXT, message_id TEXT, dedupe_key TEXT NOT NULL, payload TEXT NOT NULL,
         UNIQUE(project_directory,dedupe_key)
       );
-      CREATE INDEX IF NOT EXISTS runner_progress_attempt_seq
-        ON runner_progress(project_directory,attempt_id,seq);
       CREATE TABLE IF NOT EXISTS native_tool_calls (
         project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
         session_id TEXT NOT NULL, identity_kind TEXT NOT NULL
@@ -1310,8 +1307,6 @@ export class RunnerStore {
           )
         }
         db.exec(`
-          CREATE INDEX IF NOT EXISTS runner_progress_plan_recency
-            ON runner_progress(plan_id,latest_observed_at DESC,seq DESC);
           CREATE TRIGGER IF NOT EXISTS runner_progress_recency_inserted
           AFTER INSERT ON runner_progress BEGIN
             UPDATE runner_progress SET latest_observed_at=${progressRecencySQL("NEW")} WHERE seq=NEW.seq;
@@ -1371,6 +1366,10 @@ export class RunnerStore {
       `)
         installOwnerKeys(db)
         installKeyColumns(db)
+        // A new database keys its empty history tables at once; an existing one keeps its text
+        // indexes until the retention idle step has keyed and indexed every row.
+        installIdentityState(db)
+        installTextKeyIndexes(db)
         const reminderColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")

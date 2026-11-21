@@ -7,6 +7,7 @@ import { RetentionService } from "../retention/service.ts"
 import { TaskRepository } from "../storage.ts"
 import { backfillPage } from "./identity-backfill.ts"
 import { forgetKeysReady } from "./identity-read.ts"
+import { asLegacyHistory } from "./identity.fixture.ts"
 import { RunnerStore } from "./store.ts"
 
 /**
@@ -51,9 +52,9 @@ function seeded() {
           row,
         )
     }
-    // Rows from before the key columns existed.
-    db.exec("UPDATE runner_transitions SET plan_n=NULL; DELETE FROM lazers_plan_keys")
   })
+  // Rows from before the key columns existed.
+  asLegacyHistory(repository)
   return { repository, store }
 }
 

@@ -7,7 +7,8 @@ import { RetentionService } from "../retention/service.ts"
 import { BACKFILL_TABLES, backfillPage, backfillState } from "./identity-backfill.ts"
 import { planKey } from "./identity-keys.ts"
 import { planIs } from "./identity-read.ts"
-import { missingKeyIndexes } from "./transition-indexes.ts"
+import { asLegacyHistory } from "./identity.fixture.ts"
+import { missingKeyIndexes, remainingTextKeyIndexes } from "./transition-indexes.ts"
 import { RunnerStore } from "./store.ts"
 
 const directories: string[] = []
@@ -51,11 +52,9 @@ function seedLegacy(repository: TaskRepository, plans: number, perPlan: number) 
         )
       }
     }
-    // The insert trigger keyed them; make them look like rows from before the columns existed.
-    db.exec("UPDATE runner_transitions SET plan_n=NULL")
-    db.exec("UPDATE runner_progress SET plan_n=NULL,attempt_n=NULL")
-    db.exec("DELETE FROM lazers_plan_keys; DELETE FROM lazers_attempt_keys")
   })
+  // The insert trigger keyed them; make them look like rows from before the columns existed.
+  asLegacyHistory(repository)
 }
 
 const nulls = (repository: TaskRepository, table: string, column: string) =>
@@ -105,7 +104,7 @@ test("backfill keys old rows page by page, then reports complete, without moving
   expect(nulls(repository, "runner_progress", "attempt_n")).toBe(0)
   expect(nulls(repository, "runner_transitions", "plan_n")).toBe(100)
   const state = repository.read((db) => backfillState(db, "runner_progress"))
-  expect(state).toMatchObject({ rowsDone: 100, backfilled: true, complete: false })
+  expect(state).toMatchObject({ rowsDone: 100, state: "indexing" })
   // Keys agree with the text ids they replace.
   const mismatched = repository.read(
     (db) =>
@@ -135,23 +134,55 @@ test("rows keyed by a writer while the backfill runs are skipped, not rewritten"
   expect(nulls(repository, "runner_transitions", "plan_n")).toBe(0)
 })
 
-test("the retention idle step backfills within its budget and resumes", async () => {
+test("the retention idle step backfills, indexes, retires the text indexes, and resumes", async () => {
   const { repository } = open()
   seedLegacy(repository, 3, 20)
   const service = new RetentionService({
     repository,
     host: {} as never,
   })
-  const keyed = await service.backfillKeys(10_000)
-  expect(keyed).toBe(60 + 60)
-  for (const table of BACKFILL_TABLES)
-    expect(repository.read((db) => backfillState(db, table).backfilled)).toBe(true)
-  expect(await service.backfillKeys(10_000)).toBe(0)
-  // Complete means keyed and indexed: readers may now take the integer predicate.
+  // While attempts run: pages only, no index build or drop.
+  const busy = await service.backfillKeys(10_000, false)
+  expect(busy.rows).toBe(60 + 60)
   repository.read((db) => {
-    for (const table of BACKFILL_TABLES) expect(backfillState(db, table).complete).toBe(true)
+    for (const table of BACKFILL_TABLES) {
+      expect(backfillState(db, table).state).toBe("indexing")
+      expect(remainingTextKeyIndexes(db, table).length).toBeGreaterThan(0)
+    }
+  })
+  const quiet = await service.backfillKeys(10_000)
+  expect(quiet.rows).toBe(0)
+  expect(quiet.finished).toBe(true)
+  expect(quiet.retired.sort()).toEqual([
+    "runner_progress_attempt_seq",
+    "runner_progress_plan_recency",
+    "runner_transitions_lookup",
+    "runner_transitions_plan_event",
+    "runner_transitions_plan_id",
+    "runner_transitions_task_latest",
+  ])
+  repository.read((db) => {
+    for (const table of BACKFILL_TABLES) {
+      expect(backfillState(db, table).state).toBe("text-retired")
+      expect(remainingTextKeyIndexes(db, table)).toEqual([])
+    }
     expect(missingKeyIndexes(db)).toEqual([])
   })
+  expect(await service.backfillKeys(10_000)).toEqual({ rows: 0, retired: [], finished: true })
+})
+
+test("a budget used up mid-way resumes from the stored state on a new service", async () => {
+  const { repository } = open()
+  seedLegacy(repository, 5, 40)
+  const first = new RetentionService({ repository, host: {} as never })
+  // A zero budget keys nothing; the stored state is the only resume point.
+  expect((await first.backfillKeys(0, false)).rows).toBe(0)
+  repository.atomic((db) => backfillPage(db, "runner_transitions", 50))
+  const second = new RetentionService({ repository, host: {} as never })
+  const rest = await second.backfillKeys(10_000)
+  expect(rest.rows).toBe(150 + 200)
+  expect(rest.finished).toBe(true)
+  expect(nulls(repository, "runner_transitions", "plan_n")).toBe(0)
 })
 
 test("a reader takes the text predicate until a table is complete, then the integer one, same rows", async () => {
@@ -195,4 +226,37 @@ test("an upgrade from a database without the columns adds them and leaves rows r
       (db) => db.query<{ n: number }, []>("SELECT count(*) AS n FROM runner_transitions").get()!.n,
     ),
   ).toBe(5)
+})
+
+test("a new database keys its empty history tables at install: no text index is ever built", async () => {
+  const { repository, store } = open()
+  await store.transitionIndexes
+  repository.read((db) => {
+    for (const table of BACKFILL_TABLES) {
+      expect(backfillState(db, table).state).toBe("text-retired")
+      expect(remainingTextKeyIndexes(db, table)).toEqual([])
+    }
+    expect(missingKeyIndexes(db)).toEqual([])
+    expect(planIs(db, "runner_transitions")).toContain("plan_n=")
+  })
+  // A reinstall of the runner schema does not bring a text index back.
+  repository.atomic((db) => db.exec("DELETE FROM schema_modules WHERE module='runner'"))
+  await new RunnerStore(repository).transitionIndexes
+  repository.read((db) => {
+    for (const table of BACKFILL_TABLES) expect(remainingTextKeyIndexes(db, table)).toEqual([])
+  })
+})
+
+test("an upgraded database keeps its text indexes until its table is keyed", async () => {
+  const { repository } = open()
+  seedLegacy(repository, 2, 5)
+  repository.atomic((db) => db.exec("DELETE FROM schema_modules WHERE module='runner'"))
+  await new RunnerStore(repository).transitionIndexes
+  repository.read((db) => {
+    for (const table of BACKFILL_TABLES) {
+      expect(backfillState(db, table).state).toBe("backfilling")
+      expect(remainingTextKeyIndexes(db, table).length).toBeGreaterThan(0)
+    }
+    expect(planIs(db, "runner_transitions")).toBe("plan_id=?")
+  })
 })

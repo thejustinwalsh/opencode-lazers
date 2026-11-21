@@ -9,6 +9,7 @@ import { meterReads } from "./read-meter.fixture.ts"
 import { RETAINED_REPAIR_EVENTS, RetainedRepairRecords } from "./retained-repair-records.ts"
 import { RetentionService } from "../retention/service.ts"
 import { forgetKeysReady, planIs } from "./identity-read.ts"
+import { asLegacyHistory } from "./identity.fixture.ts"
 import { RunnerStore } from "./store.ts"
 
 /**
@@ -236,6 +237,9 @@ test("retained repair reads the same history on text keys and on integer keys, p
       },
     )
   f.record("plan-b", "task-1", "ATTEMPT_RESUMED", { other: true })
+  // Rows written before the integer keys existed: readers start on the text predicate.
+  asLegacyHistory(f.repository)
+  f.repository.read((db) => expect(planIs(db, "runner_transitions")).toBe("plan_id=?"))
   const history = (planID: string) =>
     RetainedRepairRecords.prototype.transitionHistory.call({ store: f.store }, planID, "task-1")
   const before = [history("plan-a"), history("plan-b")]

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
+import { backfillState, type BackfillTable } from "./identity-backfill.ts"
 
 /**
  * Plan-scoped history indexes on `runner_transitions`. They are not part of a schema
@@ -27,6 +28,25 @@ export const KEY_INDEXES = [
   ["runner_progress_attempt_seq_n", "runner_progress(project_directory,attempt_n,seq)"],
   ["runner_progress_plan_recency_n", "runner_progress(plan_n,latest_observed_at DESC,seq DESC)"],
 ] as const
+
+/**
+ * The text-id indexes the integer ones replace. They serve readers until a table is `keyed`;
+ * from then on no reader names them, and the retention idle step drops them one per transaction
+ * (`retireTextKeyIndex`). They are created only while a table is still `backfilling` or
+ * `indexing`, so a schema reinstall never builds one again on a keyed table.
+ */
+export const TEXT_KEY_INDEXES = [
+  ["runner_transitions_lookup", "runner_transitions(plan_id,task_id,event,id)"],
+  ...TRANSITION_INDEXES,
+  ["runner_progress_attempt_seq", "runner_progress(project_directory,attempt_id,seq)"],
+  ["runner_progress_plan_recency", "runner_progress(plan_id,latest_observed_at DESC,seq DESC)"],
+] as const
+
+/** Readers of this table take the integer predicate; its text indexes are no longer needed. */
+export const keysTaken = (db: Database, table: BackfillTable) => {
+  const { state } = backfillState(db, table)
+  return state === "keyed" || state === "text-retired"
+}
 
 type IndexList = ReadonlyArray<readonly [name: string, target: string]>
 
@@ -61,6 +81,46 @@ export function createKeyIndexes(db: Database, table?: string) {
     db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${target}`)
 }
 
+/**
+ * The cheap text index of a table not yet keyed, at schema install: `runner_transitions_lookup`
+ * and the two progress indexes, as the schema always created them. The three plan-history indexes
+ * in `TRANSITION_INDEXES` stay with `ensureTransitionIndexes`, which builds them off the main
+ * thread on a large table.
+ */
+export function installTextKeyIndexes(db: Database) {
+  for (const [name, target] of TEXT_KEY_INDEXES) {
+    if (TRANSITION_INDEXES.some(([other]) => other === name)) continue
+    if (keysTaken(db, tableOf(target) as BackfillTable)) continue
+    db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${target}`)
+  }
+}
+
+/** The text indexes of a table that still exist. */
+export function remainingTextKeyIndexes(db: Database, table: BackfillTable) {
+  const present = new Set(
+    db
+      .query<{ name: string }, [string]>(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
+      )
+      .all(table)
+      .map((row) => row.name),
+  )
+  return TEXT_KEY_INDEXES.filter(([name, target]) => tableOf(target) === table && present.has(name))
+}
+
+/**
+ * Drop one remaining text index of a keyed table. The caller holds the transaction; one index per
+ * transaction keeps each write short (the pages go to the free list, and the retention pass hands
+ * them back to the filesystem in steps). Returns the dropped index, or undefined when none is left.
+ */
+export function retireTextKeyIndex(db: Database, table: BackfillTable): string | undefined {
+  if (backfillState(db, table).state !== "keyed") return undefined
+  const [next] = remainingTextKeyIndexes(db, table)
+  if (!next) return undefined
+  db.exec(`DROP INDEX IF EXISTS ${next[0]}`)
+  return next[0]
+}
+
 // OpenCode loads this module once per location with a cleared require cache, so a
 // module-level map would be per copy. Share the guard process-wide instead.
 const inFlightKey = Symbol.for("lazers.transition-indexes.v1")
@@ -75,7 +135,7 @@ type Options = { inlineRowLimit?: number; workerURL?: URL; onSpawn?: () => void 
  * this transaction holds.
  */
 function planTransitionIndexes(db: Database, path: string, options: Options): boolean {
-  if (!missingTransitionIndexes(db).length) return false
+  if (keysTaken(db, "runner_transitions") || !missingTransitionIndexes(db).length) return false
   // AUTOINCREMENT ids make MAX(id) an O(1) upper bound on the row count.
   const rows =
     db.query<{ n: number | null }, []>("SELECT MAX(id) AS n FROM runner_transitions").get()?.n ?? 0

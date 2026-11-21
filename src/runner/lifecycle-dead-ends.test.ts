@@ -143,6 +143,12 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     architect: ["cancelled"],
     terminal: ["reviewed", "failed", "stuck", "cancelled"],
   },
+  // The backfill reaches the last row, the integer indexes are built, the text indexes are dropped.
+  identityKeys: {
+    observable: ["backfilling", "indexing", "keyed", "text-retired"],
+    architect: [],
+    terminal: ["text-retired"],
+  },
 }
 
 type StateConfig = { on?: Record<string, unknown>; type?: string }

@@ -231,6 +231,18 @@ const capacityMachine = defineLifecycle("runner-agent-admission", "queued", {
   released: ["queued", "admitted"],
   cancelled: ["queued", "admitted"],
 })
+/**
+ * The integer-key migration of one history table (`runner_transitions`, `runner_progress`; see
+ * `src/runner/identity-backfill.ts`). Every state exits on an observable fact: the paged backfill
+ * passed the last row, the integer indexes exist, the text-id indexes are gone. The text columns
+ * stay: they are what the triggers key new rows from and what the result columns show.
+ */
+const identityKeysMachine = defineLifecycle("lazers-identity-keys", "backfilling", {
+  backfilling: ["indexing"],
+  indexing: ["keyed"],
+  keyed: ["text-retired"],
+  "text-retired": [],
+})
 export const lifecycleMachines = {
   task: taskMachine,
   dispatch: dispatchControlMachine,
@@ -253,6 +265,7 @@ export const lifecycleMachines = {
   planning: planningMachine,
   planningRun: planningRunMachine,
   capacity: capacityMachine,
+  identityKeys: identityKeysMachine,
 } as const
 
 /** SQL invokes the same XState transition against the row's current persisted value. */
