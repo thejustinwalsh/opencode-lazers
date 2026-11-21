@@ -332,3 +332,48 @@ test("an upsert on a watched table still queues: the trigger body never conflict
     state: "completed",
   })
 })
+
+test("order: sort_at, sort_key, id is the trajectory read's order, ties and untimed events included", async () => {
+  const made = fixture()
+  // More ties: two transitions and a check at one millisecond.
+  made.store.atomic((db) => {
+    const transition = db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,6,?,'{}',3500)",
+    )
+    transition.run(made.receipt.planID, taskID, "TIE_B")
+    transition.run(made.receipt.planID, taskID, "TIE_A")
+  })
+  const lease = startProjection(made.repository.path, made.directory, taskEventsProjection, {
+    pacing: slow,
+  })
+  cleanups.push(() => lease.release())
+  await lease.owner.settle()
+  const ordered = made.repository.read((db) =>
+    db
+      .query<{ detail: string; at: number | null }, [string]>(
+        `SELECT detail,at FROM task_events WHERE task_id=? AND kind<>'progress'
+         ORDER BY sort_at,sort_key,id LIMIT 1000`,
+      )
+      .all(taskID),
+  )
+  const expected = await oldEvents(made)
+  // The fixture has what the order must get right: equal times, and an event with no time.
+  const times = expected.map((event) => event.at)
+  expect(new Set(times).size).toBeLessThan(times.length)
+  expect(times.at(-1)).toBeNull()
+  expect(ordered.map((row) => JSON.parse(row.detail).event.id)).toEqual(
+    expected.map((event) => event.id),
+  )
+  // The index serves the order: no sort step.
+  const plan = made.repository.read((db) =>
+    db
+      .query<{ detail: string }, [string, string]>(
+        `EXPLAIN QUERY PLAN SELECT id FROM task_events WHERE project_directory=? AND task_id=?
+         ORDER BY sort_at,sort_key,id LIMIT 50`,
+      )
+      .all(made.directory, taskID)
+      .map((row) => row.detail),
+  )
+  expect(plan.join(" ")).toContain("task_events_task")
+  expect(plan.join(" ")).not.toContain("TEMP B-TREE")
+})
