@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
-import { readdirSync } from "node:fs"
+import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { fallowPlanReview } from "./review-plan.ts"
 import { attributeFindingsToTasks } from "./task-attribution.ts"
 import { fixture, git, write, type Fixture } from "./review-fixtures.ts"
@@ -40,7 +41,20 @@ test("a helper added by two tasks is one duplication finding over the combined p
   const first = await commitAll(f.dir, "task one adds the helper")
   write(f.dir, { "src/task-two.ts": helper("shared") })
   const second = await commitAll(f.dir, "task two adds the same helper")
+  // The review's temporary trees go to a directory only this test uses: the shared one also holds
+  // those of the running product and of other test runs, which come and go meanwhile.
+  const shared = process.env.TMPDIR
+  const own = mkdtempSync(join(tmpdir(), "lz-review-plan-test-"))
+  process.env.TMPDIR = own
+  open.push({
+    cleanup: () => {
+      if (shared === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = shared
+      rmSync(own, { recursive: true, force: true })
+    },
+  } as Fixture)
   const before = leftoverTemps()
+  expect(before).toEqual([])
   const result = await fallowPlanReview({
     workspace: f.dir,
     baseCommit: f.base,
