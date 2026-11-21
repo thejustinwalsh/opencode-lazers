@@ -2,6 +2,7 @@ import { lstatSync, realpathSync } from "node:fs"
 import { join, normalize, sep } from "node:path"
 import { WASI } from "node:wasi"
 import { MAX_FALLOW_THREADS, ThreadPool } from "./fallow-thread-pool.ts"
+import { settleFallowRun } from "./fallow-wasi-lifecycle.ts"
 
 export { MAX_FALLOW_THREADS, ThreadPool } from "./fallow-thread-pool.ts"
 
@@ -503,36 +504,45 @@ export function runFallowModule(
     err: [],
   }
   const threaded = isThreadedModule(module)
-  let memory: WebAssembly.Memory | undefined = threaded
-    ? new WebAssembly.Memory({ ...SHARED_MEMORY, shared: true })
-    : undefined
-  const { wasi, imports } = hostImports(
+  const resources: {
+    memory: WebAssembly.Memory | undefined
+    host: ReturnType<typeof hostImports> | undefined
+    instance: WebAssembly.Instance | undefined
+    imports: Record<string, Record<string, unknown>>
+    helpers: ReturnType<ThreadPool["take"]>[]
+  } = {
+    memory: threaded ? new WebAssembly.Memory({ ...SHARED_MEMORY, shared: true }) : undefined,
+    host: undefined,
+    instance: undefined,
+    imports: {},
+    helpers: [],
+  }
+  resources.host = hostImports(
     roots,
-    () => memory!,
+    () => resources.memory!,
     sinks,
     options.onGit,
     options.trace,
     options.cache ? join(roots[0]!, ".fallow") : undefined,
   )
-  const helpers: ReturnType<ThreadPool["take"]>[] = []
   const pool = options.threadPool ?? new ThreadPool(options.threadScript)
   const allowed = Math.min(options.maxThreads ?? 1, MAX_FALLOW_THREADS)
   let nextTid = 1
-  const instanceImports: Record<string, Record<string, unknown>> = { ...imports }
+  resources.imports = { ...resources.host.imports }
   if (threaded) {
-    instanceImports.env = { memory }
-    instanceImports.wasi = {
+    resources.imports.env = { memory: resources.memory }
+    resources.imports.wasi = {
       "thread-spawn": (arg: number) => {
         if (nextTid > allowed) return (options.onSpawn?.(false), -1)
         const tid = nextTid++
         try {
           const flag = new Int32Array(new SharedArrayBuffer(4))
           const helper = pool.take(options.threadScript)
-          helpers.push(helper)
+          resources.helpers.push(helper)
           helper.flag = flag
           const start: ThreadStart = {
             module,
-            memory: memory!,
+            memory: resources.memory!,
             roots,
             tid,
             arg,
@@ -548,27 +558,35 @@ export function runFallowModule(
       },
     }
   }
-  const instance = new WebAssembly.Instance(module, instanceImports as WebAssembly.Imports)
-  memory = (instance.exports.memory as WebAssembly.Memory | undefined) ?? memory
-  options.onInstance?.(instance)
   let exitCode: number | undefined
   try {
-    // A threaded module imports its memory; `start` wants it as an export, so hand it an
-    // instance-shaped object.
-    exitCode = wasi.start(
-      (threaded
-        ? { exports: { memory, _start: () => (instance.exports._start as () => void)() } }
-        : instance) as never,
-    ) as number | undefined
-  } catch (error) {
-    if (error instanceof WasiExit) exitCode = error.code
-    else
-      throw new WasiTrap(
-        error instanceof Error ? error.message : String(error),
-        decoder.decode(Buffer.concat(sinks.err)),
-      )
+    resources.instance = new WebAssembly.Instance(module, resources.imports as WebAssembly.Imports)
+    resources.memory =
+      (resources.instance.exports.memory as WebAssembly.Memory | undefined) ?? resources.memory
+    options.onInstance?.(resources.instance)
+    try {
+      // A threaded module imports its memory; `start` wants it as an export, so hand it an
+      // instance-shaped object.
+      exitCode = resources.host!.wasi.start(
+        (threaded
+          ? {
+              exports: {
+                memory: resources.memory,
+                _start: () => (resources.instance!.exports._start as () => void)(),
+              },
+            }
+          : resources.instance) as never,
+      ) as number | undefined
+    } catch (error) {
+      if (error instanceof WasiExit) exitCode = error.code
+      else
+        throw new WasiTrap(
+          error instanceof Error ? error.message : String(error),
+          decoder.decode(Buffer.concat(sinks.err)),
+        )
+    }
   } finally {
-    pool.settle(helpers, options.threadPool !== undefined)
+    settleFallowRun(pool, resources, options.threadPool !== undefined)
   }
   return {
     stdout: decoder.decode(Buffer.concat(sinks.out)),
