@@ -28,6 +28,7 @@ import {
 import { hostPage } from "../core/host-page.ts"
 import { ensureArchitectMap } from "../context/architect-map.ts"
 import { ensureArchitectProfileGuidance } from "../projects/profile-guidance.ts"
+import { stat } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
@@ -102,6 +103,18 @@ type NativeWorkerObservation = {
   forms: string
   shells: string
   runningShells: number
+  /** Newest output-file modification of the running shells; their start when unreadable. */
+  shellOutputAt: number | undefined
+}
+
+/** When a running shell last wrote output: its output file's mtime, else its start. */
+async function shellOutputAt(entry: { file?: unknown; time: { started: number } }) {
+  if (typeof entry.file !== "string" || !entry.file) return entry.time.started
+  try {
+    return Math.max(entry.time.started, (await stat(entry.file)).mtimeMs)
+  } catch {
+    return entry.time.started
+  }
 }
 
 function isMissingNativeSession(
@@ -239,9 +252,11 @@ async function workerObservation(
       throw new Error("Native worker shell inventory is unavailable")
     return `${entry.id}:${entry.status}:${entry.cwd}:${entry.time.started}:${entry.time.completed ?? ""}`
   })
-  const runningShells = (shells?.data ?? []).filter(
+  const running = (shells?.data ?? []).filter(
     (entry) => entry.status === "running" && (!directory || pathInside(entry.cwd, directory)),
-  ).length
+  )
+  const runningShells = running.length
+  const outputTimes = await Promise.all(running.map(shellOutputAt))
   return {
     active: Object.prototype.hasOwnProperty.call(active, sessionID),
     pendingInput: inbox.length > 0,
@@ -257,6 +272,7 @@ async function workerObservation(
     forms: formIDs.join("\n"),
     shells: shellEntries.sort().join("\n"),
     runningShells,
+    shellOutputAt: outputTimes.length ? Math.max(...outputTimes) : undefined,
   }
 }
 
@@ -571,6 +587,7 @@ function hostSessionView(input: {
     | undefined
   runningShells: number
   activeChildren: number
+  shellOutputAt: number | undefined
   idleAt: number
   busyAt: number
   outcome: NativeSessionInfo["outcome"] | "interrupted"
@@ -599,6 +616,7 @@ function hostSessionView(input: {
     ...(turn ? { turn } : {}),
     runningShells: input.runningShells,
     activeChildren: input.activeChildren,
+    ...(input.shellOutputAt === undefined ? {} : { shellOutputAt: input.shellOutputAt }),
     ...(idleAt ? { idleAt } : {}),
     // Last model activity: request start or completion, whichever is later.
     ...(Math.max(busyAt, idleAt) > 0 ? { activityAt: Math.max(busyAt, idleAt) } : {}),
@@ -854,6 +872,9 @@ export function nativeHost(
       const pendingInteraction = pendingPermissions > 0 || pendingForms > 0
       // Live background activity: read from the host now, never from a hook report.
       const runningShells = Math.max(before.runningShells, after.runningShells)
+      const outputTimes = [before.shellOutputAt, after.shellOutputAt].filter(
+        (value): value is number => value !== undefined,
+      )
       const lineage = await runNative(client, () =>
         activeSessionLineage(client, id, latest.location.directory),
       )
@@ -922,6 +943,7 @@ export function nativeHost(
         turn,
         runningShells,
         activeChildren,
+        shellOutputAt: outputTimes.length ? Math.max(...outputTimes) : undefined,
         idleAt,
         busyAt,
         outcome,

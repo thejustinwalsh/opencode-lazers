@@ -234,22 +234,6 @@ export class CheckActivities {
         activity.metadata.planID === planID,
     )
   }
-  retainedCheckSettlementProblem(operationID: string): string | undefined {
-    return this.store.atomic((db) => {
-      for (const check of retainedVerificationChecks(db, operationID)) {
-        if (check.state !== "completed" || !check.receipt)
-          return "Retained check has no conclusive final receipt"
-        try {
-          const receipt = JSON.parse(check.receipt) as RunnerCheckReceipt
-          if (!checkResourcesSettled(receipt))
-            return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain`
-        } catch {
-          return "Retained check settlement receipt is unreadable"
-        }
-      }
-      return undefined
-    })
-  }
   async reconcileCancelledCheckActivities(
     plan: PlanRow,
     activities: VerificationActivity[],

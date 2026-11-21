@@ -1,4 +1,5 @@
 import type { ArchitectOwnership } from "./architect-ownership.ts"
+import type { ArchitectRenewal } from "./architect-renewal.ts"
 import type { HostSession } from "./host.ts"
 import { hostMessageByID } from "./host-reads.ts"
 import type { PlanRow, OutboxRow } from "./store.ts"
@@ -44,6 +45,9 @@ export class OutcomeDelivery {
     private readonly runtime: {
       directory: TaskRuntime["directory"]
       ensureArchitectOwner: ArchitectOwnership["ensureArchitectOwner"]
+      architectRoute: ArchitectOwnership["architectRoute"]
+      recordArchitectRoute: ArchitectOwnership["recordArchitectRoute"]
+      considerArchitectRenewal: ArchitectRenewal["considerArchitectRenewal"]
       host: TaskRuntime["host"]
       owner: TaskRuntime["owner"]
       projectID: TaskRuntime["projectID"]
@@ -482,6 +486,7 @@ export class OutcomeDelivery {
     // A user-set pause keeps every notice queued; nothing prompts an Architect.
     if (this.runtime.store.architectContactPaused()) return false
     let retry = false
+    let renewed = false
     const groups = new Map<string, OutboxRow[]>()
     for (const message of this.runtime.store.pendingOutbox(this.runtime.directory)) {
       const group = groups.get(message.plan_id) ?? []
@@ -537,12 +542,30 @@ export class OutcomeDelivery {
           )
           return
         }
+        // Fresh-versus-reuse is decided here, when there is news to deliver: a cold, large
+        // Architect is replaced and the notices follow the plan to its successor. An idle
+        // Architect that already has the news is left alone.
+        const route = this.runtime.architectRoute(target)
+        this.runtime.recordArchitectRoute(plan, route, target)
+        if (
+          route.action === "fresh" &&
+          (await this.runtime.considerArchitectRenewal(plan, target, fence))
+        ) {
+          // Committed: the notices now belong to the successor. Otherwise they wait for the
+          // renewal to settle; a deferred renewal does not retry for the same idle turn.
+          if (this.runtime.store.plan(plan.id)?.owner !== target.id) renewed = true
+          else retry = true
+          return
+        }
         const rows = this.retarget(current, target.id)
         if (rows.length) sessions.set(target.id, [...(sessions.get(target.id) ?? []), ...rows])
       })
     }
     for (const [sessionID, rows] of sessions)
       if (await this.deliverSession(sessionID, rows, fence)) retry = true
+    // A renewal queued its handoff and moved the plan's notices: deliver them to the successor
+    // now. A successor has no idle history, so this pass cannot renew it again.
+    if (renewed) return (await this.deliver(fence, closeoutOnly)) || retry
     return retry
   }
 }

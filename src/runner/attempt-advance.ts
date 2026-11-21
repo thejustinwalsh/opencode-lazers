@@ -1,6 +1,7 @@
 import type { WorkerObservationFence } from "./runtime-helpers.ts"
 import { isTakeoverAttempt } from "../recovery/detector.ts"
 import type { HostSession } from "./host.ts"
+import { attemptIs } from "./identity-read.ts"
 import type { PlanRow, AttemptRow } from "./store.ts"
 import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
 
@@ -76,7 +77,6 @@ export class AttemptAdvance {
   private readonly approvalWaitReason: WorkerObservation["approvalWaitReason"]
   private readonly resumeTransientObservationWait: WorkerObservation["resumeTransientObservationWait"]
   private readonly backgroundWait: WorkerObservation["backgroundWait"]
-  private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
 
   constructor(
     private readonly core: RuntimeCore,
@@ -241,9 +241,33 @@ export class AttemptAdvance {
   }
 
   /**
-   * A turn that streams nothing for the whole window is stuck: interrupt it once
-   * so the ordinary interrupted-worker path (auto-resume, hold) takes over.
-   * Background shells and child sessions count as progress.
+   * When the worker last showed progress, from durable facts only: the attempt start, the
+   * session's last request start or completion, and the attempt's newest progress row (step,
+   * tool and message events, including in-place updates) and the last growth of a running
+   * shell's output file. A running shell or child session is not progress by itself: a hung
+   * command keeps a shell running forever, silent.
+   */
+  private lastWorkerProgressAt(attempt: AttemptRow, session: HostSession) {
+    const row = this.store.read((db) =>
+      db
+        .query<{ at: number | null }, [string, string]>(
+          `SELECT max(at,coalesce(latest_observed_at,at)) AS at FROM runner_progress
+            WHERE project_directory=? AND ${attemptIs(db)} ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(this.core.directory, attempt.id),
+    )
+    return Math.max(
+      attempt.started_at,
+      session.activityAt ?? 0,
+      session.shellOutputAt ?? 0,
+      row?.at ?? 0,
+    )
+  }
+
+  /**
+   * A busy turn with no progress for the whole window is stuck: interrupt it once so the
+   * ordinary interrupted-worker path (auto-resume, hold) takes over. A turn still busy and
+   * still without progress one window after that interrupt did not stop: hold the plan.
    */
   private async interruptStalledWorker(
     plan: PlanRow,
@@ -252,37 +276,35 @@ export class AttemptAdvance {
     fence: number,
   ) {
     if (this.workerNoProgressWindowMs <= 0) return
-    const fingerprint = JSON.stringify([
-      session.tokens,
-      session.activityAt,
-      session.idleAt,
-      session.runningShells ?? 0,
-      session.activeChildren ?? 0,
-    ])
     const now = this.now()
-    const seen = this.workerProgress.get(session.id)
-    if (
-      !seen ||
-      seen.fingerprint !== fingerprint ||
-      (session.runningShells ?? 0) > 0 ||
-      (session.activeChildren ?? 0) > 0
-    ) {
-      this.workerProgress.set(session.id, { fingerprint, since: now })
+    const progressAt = this.lastWorkerProgressAt(attempt, session)
+    if (now - progressAt < this.workerNoProgressWindowMs) return
+    const prior = this.store.latestTransition<{
+      attemptID?: string
+      progressAt?: number
+      interruptedAt?: number
+    }>(plan.id, attempt.task_id, "WORKER_NO_PROGRESS_INTERRUPT")
+    if (prior?.attemptID === attempt.id && prior.progressAt === progressAt) {
+      if (
+        plan.state === "running" &&
+        typeof prior.interruptedAt === "number" &&
+        now - prior.interruptedAt >= this.workerNoProgressWindowMs
+      )
+        this.hold(
+          plan,
+          `Worker made no progress for ${Math.round((now - progressAt) / 60_000)} minute(s) and did not stop when interrupted`,
+        )
       return
     }
-    if (now - seen.since < this.workerNoProgressWindowMs) return
     const payload = {
       attemptID: attempt.id,
       sessionID: session.id,
-      activityAt: session.activityAt ?? null,
+      progressAt,
+      interruptedAt: now,
+      runningShells: session.runningShells ?? 0,
+      activeChildren: session.activeChildren ?? 0,
       windowMs: this.workerNoProgressWindowMs,
     }
-    const prior = this.store.latestTransition<typeof payload>(
-      plan.id,
-      attempt.task_id,
-      "WORKER_NO_PROGRESS_INTERRUPT",
-    )
-    if (prior && JSON.stringify(prior) === JSON.stringify(payload)) return
     await this.host.interrupt(session.id)
     this.store.fenced(this.owner, fence, () =>
       this.store.record(plan.id, attempt.task_id, "WORKER_NO_PROGRESS_INTERRUPT", payload),
@@ -386,7 +408,6 @@ export class AttemptAdvance {
     }
     if (this.staleContinuationTurn(attempt, session)) return true
     if (session.busy) await this.interruptStalledWorker(plan, attempt, session, fence)
-    else this.workerProgress.delete(session.id)
     const backgroundReason = this.backgroundBlockReason(session)
     const { previousHold, unchanged } = this.terminalHoldUnchanged(plan, attempt, session)
     if (
