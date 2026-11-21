@@ -51,36 +51,8 @@ type NodeRecord = {
   snapshot: string
   machine_version: string
 }
-type TransitionRecord = {
-  id: number
-  plan_id: string
-  task_id: string | null
-  version: number
-  event: string
-  payload: string
-  created_at: number
-}
 type TaskRecord = { id: string; body: string; reference?: string }
 type DependencyRecord = { plan_id: string; prerequisite: string; successor: string }
-type AttemptIdentity = {
-  id: string
-  task_id: string
-  plan_id: string
-  number: number
-  state: string
-  started_at: number
-}
-type CheckRecord = {
-  id: string
-  plan_id: string
-  task_id: string | null
-  attempt_id: string | null
-  kind: string
-  state: string
-  started_at: unknown
-  ended_at: unknown
-  exit_code: unknown
-}
 type JsonObject = Record<string, unknown>
 
 function object(value: unknown): JsonObject | null {
@@ -327,53 +299,16 @@ function loadProjectionSource(
   signal?.throwIfAborted()
   const topology = loadTopologySource(db, projectDirectory, scope, secret, extraSessionIDs)
   const planIDs = [...topology.associations.planIDs]
-  const placeholders = planIDs.map(() => "?").join(",")
-  const transitions = planIDs.length
-    ? db
-        .query<TransitionRecord, string[]>(
-          // Only what the attempts' recorded executions read (Trajectory's timeline until its
-          // streams land): a task's worker start and stop. No plan-level transition is read.
-          `SELECT id,plan_id,task_id,version,event,payload,created_at FROM runner_transitions
-           WHERE ${planIn(db, "runner_transitions", placeholders)} AND task_id IS NOT NULL
-             AND event IN ('WORKER_STARTED','WORKER_STOPPED') ORDER BY id DESC LIMIT 10001`,
+  // The newest transition of these plans: the boundary's transition sequence.
+  const transitionSequence = planIDs.length
+    ? (db
+        .query<{ sequence: number | null }, string[]>(
+          `SELECT MAX(id) AS sequence FROM runner_transitions
+           WHERE ${planIn(db, "runner_transitions", planIDs.map(() => "?").join(","))}`,
         )
-        .all(...planIDs)
-    : []
-  signal?.throwIfAborted()
-  const attempts = planIDs.length
-    ? db
-        .query<AttemptIdentity, string[]>(
-          `SELECT id,task_id,plan_id,number,state,started_at FROM runner_attempts WHERE plan_id IN (${placeholders}) ORDER BY started_at DESC,number DESC,id DESC LIMIT 10001`,
-        )
-        .all(...planIDs)
-    : []
-  signal?.throwIfAborted()
-  const checks = planIDs.length
-    ? db
-        .query<CheckRecord, string[]>(
-          `SELECT id,plan_id,task_id,attempt_id,kind,state,
-          json_extract(receipt,'$.check.startedAt') AS started_at,
-          json_extract(receipt,'$.check.endedAt') AS ended_at,
-          json_extract(receipt,'$.check.exitCode') AS exit_code
-         FROM runner_effects WHERE plan_id IN (${placeholders})
-          AND (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%') ORDER BY rowid DESC LIMIT 10001`,
-        )
-        .all(...planIDs)
-    : []
-  signal?.throwIfAborted()
-  const historyCoverage = {
-    transitionsTruncated: transitions.length > 10_000,
-    attemptsTruncated: attempts.length > 10_000,
-    checksTruncated: checks.length > 10_000,
-  }
-  return {
-    ...topology,
-    transitions: transitions.slice(0, 10_000).reverse(),
-    attempts: attempts.slice(0, 10_000).reverse(),
-    checks: checks.slice(0, 10_000).reverse(),
-    historyCoverage,
-    historyTruncated: Object.values(historyCoverage).some(Boolean),
-  }
+        .get(...planIDs)?.sequence ?? 0)
+    : 0
+  return { ...topology, transitionSequence }
 }
 
 function loadTaskObservationSource(
@@ -481,53 +416,6 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
   if (unplannedTasks.length > 1000) throw new Error("Observation scope is too large; narrow it")
 
   return { plans, unplannedTasks }
-}
-
-const finiteTime = (value: unknown) =>
-  typeof value === "number" && Number.isFinite(value) ? value : null
-
-function recordedExecutions(attempt: AttemptIdentity, transitions: TransitionRecord[]) {
-  const intervals: Array<{
-    startedAt: number | null
-    endedAt: number | null
-    startSequence: number | null
-    endSequence: number | null
-    timingBasis: string
-  }> = []
-  let open: (typeof intervals)[number] | undefined
-  for (const row of transitions) {
-    if (row.plan_id !== attempt.plan_id || row.task_id !== attempt.task_id) continue
-    if (row.event !== "WORKER_STARTED" && row.event !== "WORKER_STOPPED") continue
-    const payload = jsonObject(row.payload)
-    if (payload?.attemptID !== attempt.id) continue
-    const time = finiteTime(payload.observedAt)
-    if (row.event === "WORKER_STARTED") {
-      open = {
-        startedAt: time,
-        endedAt: null,
-        startSequence: row.id,
-        endSequence: null,
-        timingBasis:
-          "Recorded WORKER_STARTED/WORKER_STOPPED observedAt; worker activity, not task acceptance",
-      }
-      intervals.push(open)
-    } else {
-      if (!open) {
-        open = {
-          startedAt: null,
-          endedAt: null,
-          startSequence: null,
-          endSequence: null,
-          timingBasis: "Recorded WORKER_STOPPED observedAt; worker start is unavailable",
-        }
-        intervals.push(open)
-      }
-      open.endedAt = time
-      open.endSequence = row.id
-      open = undefined
-    }
-  }
-  return intervals
 }
 
 function safeSnapshot(node: NodeRecord) {
@@ -743,41 +631,6 @@ export class ObservationReads {
       const stats = privacyStats()
       const { plans, unplannedTasks } = projectTopology(projection)
 
-      const attemptIDs = new Set(projection.attempts.map((attempt) => attempt.id))
-      const attempts = projection.attempts
-        .filter((attempt) => visibleTaskIDs.has(attempt.task_id))
-        .map((attempt) => ({
-          id: attempt.id,
-          planID: attempt.plan_id,
-          taskID: attempt.task_id,
-          number: attempt.number,
-          state: safeText(attempt.state, stats, 80),
-          startedAt: attempt.started_at,
-          endedAt: null,
-          timingBasis:
-            "runner_attempt.started_at is dispatch reservation; attempt end is unavailable",
-          executions: recordedExecutions(attempt, projection.transitions),
-        }))
-      const checks = projection.checks
-        .filter(
-          (check) =>
-            (check.task_id === null || visibleTaskIDs.has(check.task_id)) &&
-            (check.attempt_id === null || attemptIDs.has(check.attempt_id)),
-        )
-        .map((check) => ({
-          id: check.id,
-          planID: check.plan_id,
-          taskID: check.task_id,
-          attemptID: check.attempt_id,
-          checkID: safeText(check.kind.slice(check.kind.indexOf(":") + 1), stats, 120),
-          scope: check.attempt_id === null ? ("plan" as const) : ("attempt" as const),
-          state: safeText(check.state, stats, 80),
-          startedAt: finiteTime(check.started_at),
-          endedAt: finiteTime(check.ended_at),
-          exitCode: finiteTime(check.exit_code),
-          timingBasis:
-            "Verification receipt check.startedAt/check.endedAt; absent endpoints remain unknown",
-        }))
       signal?.throwIfAborted()
       const latest = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
@@ -788,8 +641,7 @@ export class ObservationReads {
       )
         throw new Error("Observation changed while reading; restart from a fresh snapshot")
       tracker.observeStamp(latest)
-      const lastTransition = projection.transitions.at(-1)?.id ?? 0
-      const boundary = tracker.boundary(latest, lastTransition)
+      const boundary = tracker.boundary(latest, projection.transitionSequence)
       return {
         schemaVersion: 1,
         projectID: this.projectID,
@@ -799,9 +651,6 @@ export class ObservationReads {
         machine: this.machine,
         plans,
         unplannedTasks,
-        attempts,
-        checks,
-        coverage: { ...projection.historyCoverage, workTruncated: projection.historyTruncated },
       }
     } finally {
       connection.close()
