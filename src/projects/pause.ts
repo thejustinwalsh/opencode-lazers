@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { dispatchPauseTransition } from "./pause-machine.ts"
-import { GLOBAL_SCOPE } from "./settings.ts"
+import { GLOBAL_SCOPE } from "./setting-schemas.ts"
 
 /**
  * Project and global dispatch pause. Pause means: no new dispatch; running work finishes and is
