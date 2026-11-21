@@ -31,6 +31,7 @@ import type {
 } from "./projection.ts"
 import {
   attemptFromRow,
+  concernFromSchedule,
   checkFromDetail,
   checkFromRow,
   choiceFromRow,
@@ -351,13 +352,10 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
   ) {
     const row = schedule.items()[0] ? rowOf(schedule.items()[0]) : undefined
     if (!row) return {}
-    const concern = row.concern as { line?: string } | null
+    const concern = concernFromSchedule(row)
     const attemptRows = attempts.items().map(rowOf)
     const attemptList: TrajectoryAttempt[] = attemptRows.map((item, index) =>
-      attemptFromRow(
-        item,
-        concern?.line && index === attemptRows.length - 1 ? { line: concern.line } : undefined,
-      ),
+      attemptFromRow(item, index === attemptRows.length - 1 ? concern : undefined),
     )
     const detailed = detail?.items()[0] ? rowOf(detail.items()[0]) : undefined
     const checkList = checks.items().map((item) => {

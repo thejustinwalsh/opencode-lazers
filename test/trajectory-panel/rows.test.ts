@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
+import { attemptSignals } from "../../src/trajectory-panel/attempt-state.ts"
 import {
   attemptFromRow,
   checkFromDetail,
+  concernFromSchedule,
   checkFromRow,
   eventFromDetail,
   eventFromRow,
@@ -106,6 +108,27 @@ test("an attempt row ends at its last event once it is no longer active", () => 
   expect(
     attemptFromRow({ ...row, state: "running" }, undefined).intervals.attempt.endedAt,
   ).toBeNull()
+})
+
+test("the schedule row's concern carries the stored recommendation onto the attempt", () => {
+  const schedule = {
+    concern: { line: "No tool call in 12 minutes" },
+    concern_action: "steer",
+    concern_because: "The worker is idle with an open shell",
+  }
+  const attempt = attemptFromRow(
+    { id: "a", plan_id: "p", number: 1, state: "running", session_id: "ses", started_at: 10 },
+    concernFromSchedule(schedule),
+  )
+  expect(attemptSignals(attempt).concern).toEqual({
+    line: "No tool call in 12 minutes",
+    recommendation: "Recommended: steer. The worker is idle with an open shell",
+  })
+  // A concern the rule recorded no advice for shows its line alone; no open concern is none.
+  expect(concernFromSchedule({ ...schedule, concern_action: null, concern_because: null })).toEqual(
+    { line: "No tool call in 12 minutes" },
+  )
+  expect(concernFromSchedule({ concern: null })).toBeUndefined()
 })
 
 test("a check row is a point; its detail adds the stored interval", () => {

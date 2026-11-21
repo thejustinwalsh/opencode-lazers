@@ -146,7 +146,19 @@ export function checkFromRow(row: Raw): TrajectoryCheck & { planID: string; ref:
   }
 }
 
-export type ConcernSignal = { line: string } | undefined
+export type ConcernSignal = { line: string; action?: string; because?: string } | undefined
+
+/**
+ * The open concern of a `tasks.schedule` row (`concern`): its line, with the rule's recommended
+ * action and reason (`concern_action`, `concern_because`) when the projection recorded them.
+ */
+export function concernFromSchedule(row: Raw): ConcernSignal {
+  const concern = row.concern as { line?: unknown } | null
+  if (typeof concern?.line !== "string" || !concern.line) return undefined
+  const action = text(row.concern_action)
+  const because = text(row.concern_because)
+  return { line: concern.line, ...(action ? { action } : {}), ...(because ? { because } : {}) }
+}
 
 export function attemptFromRow(row: Raw, concern: ConcernSignal): TrajectoryAttempt {
   const startedAt = num(row.started_at) ?? 0
