@@ -25,7 +25,7 @@ function until(predicate: () => boolean) {
 }
 
 /** One task: a failed first attempt with a failed check, then a running second attempt. */
-function data(version: number): TrajectoryData {
+function data(version: number, many = false): TrajectoryData {
   return {
     version,
     task: {
@@ -40,24 +40,62 @@ function data(version: number): TrajectoryData {
         number: 1,
         state: "failed",
         start: 3,
-        end: 60,
-        workEnd: 50,
+        end: many ? 310 : 60,
+        workEnd: many ? 300 : 50,
         model: { providerID: "p", id: "m" },
       },
-      {
-        number: 2,
-        state: "running",
-        start: 70,
-        end: null,
-        workEnd: null,
-        model: { providerID: "p", id: "m" },
-      },
+      ...(many
+        ? []
+        : [
+            {
+              number: 2 as const,
+              state: "running" as const,
+              start: 70,
+              end: null,
+              workEnd: null,
+              model: { providerID: "p", id: "m" },
+            },
+          ]),
     ],
-    calls: [
-      { key: "a", attempt: 1, tool: "Read", at: 10, s: 2, status: "completed", path: "src/a.ts" },
-      { key: "b", attempt: 1, tool: "Bash", at: 30, s: 5, status: "error", command: "bun test" },
-      { key: "c", attempt: 2, tool: "Edit", at: 80, s: 3, status: "completed", path: "src/a.ts" },
-    ],
+    calls: many
+      ? Array.from({ length: 300 }, (_, index) => ({
+          key: `c${index}`,
+          attempt: 1 as const,
+          tool: "Read" as const,
+          at: 5 + index,
+          s: 0.05,
+          status: "completed" as const,
+          path: `src/f${index}.ts`,
+        }))
+      : [
+          {
+            key: "a",
+            attempt: 1,
+            tool: "Read",
+            at: 10,
+            s: 2,
+            status: "completed",
+            path: "src/a.ts",
+          },
+          {
+            key: "b",
+            attempt: 1,
+            tool: "Bash",
+            at: 30,
+            s: 5,
+            status: "error",
+            command: "bun test",
+          },
+          {
+            key: "c",
+            attempt: 2,
+            tool: "Edit",
+            at: 80,
+            s: 3,
+            status: "completed",
+            path: "src/a.ts",
+          },
+        ],
     checks: [
       {
         id: "tests",
@@ -74,7 +112,7 @@ function data(version: number): TrajectoryData {
 }
 
 /** `pinned`: the task is chosen in the view; `target`: another panel asked to open it. */
-export async function run(mode: "pinned" | "target") {
+export async function run(mode: "pinned" | "target" | "windowed") {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
   const browserDocument = dom.document as unknown as Document
@@ -186,7 +224,7 @@ export async function run(mode: "pinned" | "target") {
     )
     expect(replacedInferenceRuntime).toBe(true)
     // The service answers `lazers.streams`; a change notifies every open stream, as the server does.
-    let current = data(1)
+    let current = data(1, mode === "windowed")
     const calls: Array<{ source: string; window: number; filter: Record<string, unknown> }> = []
     const handlers = demoRpc(() => current)[Streams.id] as unknown as Record<
       string,
@@ -327,6 +365,26 @@ export async function run(mode: "pinned" | "target") {
           "Show recorded verification timing precisely" &&
         container.querySelectorAll(".lazers-trajectory-check-marker").length > 0,
     )
+    if (mode === "windowed") {
+      // 300 calls: the timeline window holds the latest rows, not all of them.
+      const marks = () =>
+        new Set(
+          [...container.querySelectorAll('[data-mark-id*=":tool:"]')].map((mark) =>
+            mark.getAttribute("data-mark-id"),
+          ),
+        )
+      const earliest = "ses-worker-1:tool:call-c0"
+      await until(() => marks().size > 0)
+      expect(marks().size).toBeLessThanOrEqual(120)
+      expect(marks().has(earliest)).toBe(false)
+      // Zooming into the start of the task moves the window there.
+      for (let step = 0; step < 4; step++)
+        container
+          .querySelector<HTMLButtonElement>('.lazers-trajectory-zoom [aria-label="Zoom in"]')!
+          .click()
+      await until(() => marks().has(earliest))
+      return
+    }
     // Only the Trajectory and Tasks sources are read: no snapshot, no captured history.
     const sources = new Set(calls.map((call) => call.source))
     expect([...sources].sort()).toEqual(
