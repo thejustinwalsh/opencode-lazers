@@ -17,7 +17,7 @@ import {
   gitAsync,
   registeredWorktreePaths,
 } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { checkSucceeded, checkFailureReason } from "./checks.ts"
 import { samePhysicalWorkspace } from "./workspace-location.ts"
 import { startupWorktreeCandidates } from "./startup-recovery.ts"
@@ -610,9 +610,9 @@ export class RetainedVerificationExecution {
     workspace: string,
     artifact: string,
     _environmentIdentity: string,
-  ): CheckReceipt | undefined {
+  ): RunnerCheckReceipt | undefined {
     if (!isRecord(raw) || !isRecord(raw.isolation)) return undefined
-    const receipt = raw as unknown as CheckReceipt
+    const receipt = raw as unknown as RunnerCheckReceipt
     const witness = raw.isolation
     if (
       receipt.id !== check.id ||
@@ -636,7 +636,7 @@ export class RetainedVerificationExecution {
     operation: RetainedVerification,
     phase: "task" | "combined",
     checkID: string,
-    receipt: CheckReceipt,
+    receipt: RunnerCheckReceipt,
   ): boolean {
     return this.runtime.store.atomic((db) => {
       if (!completeRetainedVerificationCheck(db, operation.id, phase, checkID, receipt))
@@ -673,8 +673,8 @@ export class RetainedVerificationExecution {
     artifact: string,
     fence: number,
     parentSignal?: AbortSignal,
-  ): Promise<CheckReceipt[] | undefined> {
-    const results: CheckReceipt[] = []
+  ): Promise<RunnerCheckReceipt[] | undefined> {
+    const results: RunnerCheckReceipt[] = []
     for (const check of checks) {
       const receipt = await this.runRetainedVerificationCheck(
         initial,
@@ -703,7 +703,7 @@ export class RetainedVerificationExecution {
     artifact: string,
     fence: number,
     parentSignal: AbortSignal | undefined,
-  ): Promise<CheckReceipt | undefined> {
+  ): Promise<RunnerCheckReceipt | undefined> {
     if (parentSignal?.aborted || !this.retainedVerificationLive(initial.id)) return undefined
     const plan = this.runtime.store.plan(initial.planID)
     if (!plan || plan.revision !== initial.planRevision)
@@ -760,7 +760,7 @@ export class RetainedVerificationExecution {
   }
 
   /** A check that finished with live subprocess resources cannot be trusted: stop the operation. */
-  private async failUnsettledRetainedCheck(run: RetainedCheckRun, receipt: CheckReceipt) {
+  private async failUnsettledRetainedCheck(run: RetainedCheckRun, receipt: RunnerCheckReceipt) {
     const { initial, phase, check } = run
     this.runtime.store.atomic((db) =>
       settleRetainedVerificationResources(
@@ -783,7 +783,7 @@ export class RetainedVerificationExecution {
   private async settleExistingRetainedCheck(
     run: RetainedCheckRun,
     existing: RetainedCheckRow,
-  ): Promise<CheckReceipt | undefined> {
+  ): Promise<RunnerCheckReceipt | undefined> {
     const { initial, phase, check, workspace, artifact, effectiveCheck } = run
     const activityIdentity = {
       operationID: initial.id,
@@ -821,7 +821,7 @@ export class RetainedVerificationExecution {
     run: RetainedCheckRun,
     existing: RetainedCheckRow,
     activityIdentity: unknown,
-  ): Promise<CheckReceipt | undefined> {
+  ): Promise<RunnerCheckReceipt | undefined> {
     const { initial, phase, check, workspace, artifact, effectiveCheck } = run
     const receipt = this.retainedVerificationCheckReceipt(
       JSON.parse(existing.receipt!),
@@ -863,7 +863,7 @@ export class RetainedVerificationExecution {
     run: RetainedCheckRun,
     existing: RetainedCheckRow,
     onDisk: unknown,
-  ): Promise<CheckReceipt | undefined> {
+  ): Promise<RunnerCheckReceipt | undefined> {
     const { initial, phase, check, workspace, artifact, effectiveCheck } = run
     try {
       if (
@@ -902,9 +902,9 @@ export class RetainedVerificationExecution {
   private async adoptRecoveredRetainedCheck(
     run: RetainedCheckRun,
     existing: RetainedCheckRow,
-    recovered: CheckReceipt,
+    recovered: RunnerCheckReceipt,
     activityIdentity: unknown,
-  ): Promise<CheckReceipt | undefined> {
+  ): Promise<RunnerCheckReceipt | undefined> {
     const { initial, phase, check } = run
     const saved = this.runtime.store.atomic((db) => {
       const current = retainedVerification(db, initial.id)
@@ -1570,7 +1570,7 @@ export class RetainedVerificationExecution {
     assertions: TaskProposal["acceptance"],
     workspace: string,
     artifact: string,
-    receipts: CheckReceipt[],
+    receipts: RunnerCheckReceipt[],
   ): Promise<string[]> {
     const missing: string[] = []
     const probes = new ProbeRepository(this.runtime.store.repository)
@@ -1678,7 +1678,7 @@ export class RetainedVerificationExecution {
       for (const check of checks) {
         if (check.state !== "completed" || !check.receipt)
           throw new Error("Retained check activity is not conclusively complete")
-        const receipt = JSON.parse(check.receipt) as CheckReceipt
+        const receipt = JSON.parse(check.receipt) as RunnerCheckReceipt
         if (!checkResourcesSettled(receipt))
           throw new Error("Retained check process cleanup remains uncertain")
         if (check.cleanupState !== "complete") {
@@ -2059,9 +2059,9 @@ export class RetainedVerificationExecution {
         checksSettled = false
         break
       }
-      let receipt: CheckReceipt
+      let receipt: RunnerCheckReceipt
       try {
-        receipt = JSON.parse(check.receipt) as CheckReceipt
+        receipt = JSON.parse(check.receipt) as RunnerCheckReceipt
       } catch {
         checksSettled = false
         break
@@ -2158,7 +2158,7 @@ export class RetainedVerificationExecution {
   private async acceptRetainedCandidate(
     initial: RetainedVerification,
     workspace: string,
-    receipts: CheckReceipt[],
+    receipts: RunnerCheckReceipt[],
     fence: number,
   ): Promise<void> {
     if (initial.repair) {

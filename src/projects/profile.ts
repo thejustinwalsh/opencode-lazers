@@ -35,7 +35,7 @@ export type ProfileIssue = {
 }
 
 /** The names the isolated recheck owns; a profile `env` cannot keep them from the service. */
-export const RESERVED_ENV: ReadonlySet<string> = new Set([
+const RESERVED_ENV: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",
   "TMPDIR",

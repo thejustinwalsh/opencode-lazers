@@ -95,7 +95,7 @@ export function forgetHostMessages(repository: TaskRepository, sessionID: string
 }
 
 /** Tool parts of the assistant messages in a page. */
-export function toolsIn(messages: readonly HostMessage[]): number {
+function toolsIn(messages: readonly HostMessage[]): number {
   let tools = 0
   for (const message of messages) {
     if (message.type !== "assistant") continue
@@ -280,19 +280,4 @@ export async function eachMessagePage(
     cursor = next
   }
   return visited
-}
-
-/**
- * The first `limit` messages of a session, oldest first, read a page at a time. For a caller that
- * needs the whole list; one that can fold page by page should use `eachMessagePage`.
- */
-export async function pagedMessages(
-  client: HostMessageClient,
-  sessionID: string,
-  limit: number,
-  pageSize = HOST_MESSAGE_PAGE_SIZE,
-): Promise<HostMessage[]> {
-  const messages: HostMessage[] = []
-  await eachMessagePage(client, sessionID, limit, (page) => messages.push(...page), pageSize)
-  return messages
 }

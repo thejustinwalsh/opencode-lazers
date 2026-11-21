@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { EffectRow } from "./store.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 
 type Settle = (
   this: unknown,
   effect: EffectRow,
-  check: CheckReceipt,
+  check: RunnerCheckReceipt,
   fence: number,
   activityIdentity: unknown,
 ) => boolean
@@ -30,7 +30,7 @@ function harness() {
   }
   return {
     calls,
-    settle: (effect: EffectRow, check: CheckReceipt) =>
+    settle: (effect: EffectRow, check: RunnerCheckReceipt) =>
       settleMatchedCheck.call(runtime, effect, check, 1, {}),
   }
 }
@@ -43,9 +43,9 @@ const effect = (kind: string, owned = true) =>
     task_id: owned ? "task-1" : null,
   }) as EffectRow
 
-const settled = {} as CheckReceipt
-const unsettled = { processCleanup: { state: "uncertain" } } as unknown as CheckReceipt
-const aborted = { aborted: true } as CheckReceipt
+const settled = {} as RunnerCheckReceipt
+const unsettled = { processCleanup: { state: "uncertain" } } as unknown as RunnerCheckReceipt
+const aborted = { aborted: true } as RunnerCheckReceipt
 
 test("a settled check records its receipt, requests a tick, then forgets the activity", () => {
   for (const kind of ["mechanical-fix", "graph-verify:lint"]) {

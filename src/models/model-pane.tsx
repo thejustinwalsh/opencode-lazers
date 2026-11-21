@@ -28,7 +28,7 @@ import type {
  */
 
 /** The one figure the pane leads with, its unit, and a `small sample` label when it applies. */
-export function HeadlineFigure(props: { headline: Headline }): JSX.Element {
+function HeadlineFigure(props: { headline: Headline }): JSX.Element {
   return (
     <div class="lazers-models-headline">
       <span class="lazers-models-headline-value">{props.headline.value}</span>

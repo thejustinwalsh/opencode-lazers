@@ -152,7 +152,7 @@ export function setAutoDays(db: Database, days: number | null, now: number) {
 }
 
 /** Automatic runs start at most this often; an unfinished one continues on the next tick. */
-export const AUTO_INTERVAL_MS = 6 * 3_600_000
+const AUTO_INTERVAL_MS = 6 * 3_600_000
 
 /**
  * Whether the scheduler should purge now, and what. Superseded rows (kinds that age does not

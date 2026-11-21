@@ -9,6 +9,7 @@ import {
   HandoffEvidence as HandoffEvidenceSchema,
   HandoffReviewOutcome,
   HandoffReviewReservationInput,
+  HandoffUsage as HandoffUsageSchema,
   JsonObjectSchema,
 } from "./schema.ts"
 import { HANDOFF_REVIEW_VERSION, handoffReviewChecks, handoffReviewDefinitions } from "./checks.ts"
@@ -47,14 +48,6 @@ interface HandoffReviewFinding extends HandoffReviewDefinition {
   disposition: ReviewDisposition
 }
 
-const UsageSchema = z.strictObject({
-  inputTokens: z.number().int().nonnegative().nullable(),
-  outputTokens: z.number().int().nonnegative().nullable(),
-  reasoningTokens: z.number().int().nonnegative().nullable(),
-  cacheReadTokens: z.number().int().nonnegative().nullable(),
-  cacheWriteTokens: z.number().int().nonnegative().nullable(),
-  costUSD: z.number().finite().nonnegative().nullable(),
-})
 const SystemOneUsage = z.strictObject({
   input_tokens: z.number().int().nonnegative(),
   output_tokens: z.literal(0),
@@ -74,7 +67,7 @@ const HandoffReviewResultSchema = z.strictObject({
   errors: z.array(z.string()),
   limitation: z.string().nullable(),
   elapsedMs: z.number().int().nonnegative().nullable(),
-  usage: UsageSchema,
+  usage: HandoffUsageSchema,
   next: z.strictObject({
     action: z.enum(["revise_or_clarify", "retry", "continue"]),
     instruction: z.string(),

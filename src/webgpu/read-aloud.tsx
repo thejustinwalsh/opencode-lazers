@@ -8,6 +8,7 @@ import { playSpeech } from "./speech-playback.ts"
 import { modifierTracker } from "./modifier-keys.ts"
 import { pillSelector, pillTooltipCss, SPEAKER_PREFIX } from "./pill-tooltip.ts"
 import { sha256Text } from "../verification/opencode/audio-fixture-contract.ts"
+import { monitorAudioOwnership } from "./audio-ownership.ts"
 import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 import type {
   AudioObservationEvent,
@@ -69,26 +70,8 @@ export function validateSpeechBuffer(buffer: AudioBuffer): void {
 
 export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: InferenceRuntime) {
   const audioFixture = ctx.main(NativeAudioFixture)
-  const monitorOwnership = (controller: AbortController, plan: PlaybackPlan): (() => void) => {
-    let checking = false
-    const timer = setInterval(() => {
-      if (checking || controller.signal.aborted) return
-      checking = true
-      void audioFixture
-        .enabled(
-          { requestID: plan.requestID, sessionID: plan.sessionID },
-          { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3_000)]) },
-        )
-        .then((enabled) => {
-          if (!enabled) controller.abort(new Error("Owned audio verification was lost"))
-        })
-        .catch((error: unknown) => controller.abort(error))
-        .finally(() => {
-          checking = false
-        })
-    }, 1_000)
-    return () => clearInterval(timer)
-  }
+  const monitorOwnership = (controller: AbortController, plan: PlaybackPlan): (() => void) =>
+    monitorAudioOwnership(audioFixture, controller, plan.requestID, plan.sessionID)
   const [state, setState] = createSignal<"idle" | "loading" | "playing">("idle")
   const [automatic, setAutomatic] = createSignal(false)
   let operation: Playback | undefined

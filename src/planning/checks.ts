@@ -61,7 +61,7 @@ export function pathCheck(
 }
 
 /** One deterministic rule that adds an agent to the review. Data, so a rule is a line to add. */
-export const AGENT_RULES = [
+const AGENT_RULES = [
   {
     id: "stored-data",
     agent: "critic" as PlanningAgentId,

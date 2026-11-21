@@ -96,7 +96,7 @@ type Seen = { locations: Set<string>; bytes: number }
  * 4 MiB holds about 10,000 ids, 100 s at 100 events per second. Oldest ids are evicted; an insert
  * is never refused. An evicted id that arrives late is processed again, never lost.
  */
-export const EVENT_ID_BUDGET_BYTES = 4 * 1024 * 1024
+const EVENT_ID_BUDGET_BYTES = 4 * 1024 * 1024
 const ENTRY_BASE_BYTES = 418
 const ENTRY_LOCATION_BYTES = 64
 
@@ -108,7 +108,7 @@ const ENTRY_LOCATION_BYTES = 64
  * a false alarm costs only a return to one subscription per copy (today's behavior), while a long
  * period lengthens the span in which a scoped world would go unnoticed, so it is not longer.
  */
-export const SINGLE_SOURCE_GRACE_MS = 10_000
+const SINGLE_SOURCE_GRACE_MS = 10_000
 
 /** Hub options applied to hubs created after this call; tests shorten the grace period. */
 let defaults: { maxBytes?: number; graceMs?: number; pair?: boolean } = {}
@@ -137,9 +137,9 @@ const SUBSCRIPTIONS = 2
  * of a type plus two location lists of ten copies. An estimate, not measured on live data; oldest
  * samples are evicted, the counter keeps the total.
  */
-export const PARTIAL_SAMPLE_BUDGET_BYTES = 64 * 1024
+const PARTIAL_SAMPLE_BUDGET_BYTES = 64 * 1024
 
-export type PartialSample = {
+type PartialSample = {
   id: string
   type: string | undefined
   delivered: string[]

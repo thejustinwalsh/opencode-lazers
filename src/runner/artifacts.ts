@@ -569,7 +569,7 @@ async function hasReadableRegularFile(directory: string): Promise<boolean> {
   return false
 }
 
-export type CheckReceipt = {
+export type RunnerCheckReceipt = {
   id: string
   /** The author's command, as declared. */
   command: string
@@ -623,7 +623,7 @@ export type CheckPhaseReceipt = {
   stdout: string
   stderr: string
   environmentIdentity: string
-  processCleanup?: CheckReceipt["processCleanup"]
+  processCleanup?: RunnerCheckReceipt["processCleanup"]
 }
 
 export type CheckRunOptions = {
@@ -849,7 +849,7 @@ export async function runCheck(
   check: ExecutableVerificationCheck,
   receiptPath: string,
   options: CheckRunOptions = {},
-): Promise<CheckReceipt> {
+): Promise<RunnerCheckReceipt> {
   if (options.signal?.aborted) throw new Error("Verification was cancelled before check launch")
   const inputIdentity = options.inputIdentity ?? artifact
   // Record runtime metadata without persisting environment credentials.
@@ -861,7 +861,7 @@ export async function runCheck(
   const hardTimeoutMs = check.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS
   if (inactivityTimeoutMs > hardTimeoutMs)
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
-  let stopCause: CheckReceipt["stopCause"] = null
+  let stopCause: RunnerCheckReceipt["stopCause"] = null
   const effectiveCommand = withTestHangGuard(check.command)
   const child = Bun.spawn(["/bin/sh", "-c", effectiveCommand], {
     cwd: directory,
@@ -899,7 +899,7 @@ export async function runCheck(
         child.kill("SIGKILL")
     }
   }
-  const terminateFor = (cause: NonNullable<CheckReceipt["stopCause"]>) => {
+  const terminateFor = (cause: NonNullable<RunnerCheckReceipt["stopCause"]>) => {
     if (stopCause !== null || terminationRequested) return
     stopCause = cause
     terminate()
@@ -953,7 +953,7 @@ export async function runCheck(
     if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
     const stderr = initialStderr
     const exitCode = initialExitCode
-    let processCleanup: CheckReceipt["processCleanup"]
+    let processCleanup: RunnerCheckReceipt["processCleanup"]
     if (windowsTreeAdapter) {
       try {
         if (termination) await termination.catch(() => undefined)
@@ -1050,8 +1050,8 @@ export async function runCheck(
   }
 }
 
-export function checkResourcesSettled(receipt: CheckReceipt): boolean {
-  const settled = (cleanup: CheckReceipt["processCleanup"]) =>
+export function checkResourcesSettled(receipt: RunnerCheckReceipt): boolean {
+  const settled = (cleanup: RunnerCheckReceipt["processCleanup"]) =>
     cleanup?.state !== "uncertain" &&
     cleanup?.capability !== "direct-child" &&
     !(cleanup?.capability === "windows-process-tree" && !Number.isSafeInteger(cleanup.rootPID))
@@ -1061,7 +1061,10 @@ export function checkResourcesSettled(receipt: CheckReceipt): boolean {
   )
 }
 
-export async function writeCheckReceipt(receiptPath: string, receipt: CheckReceipt): Promise<void> {
+export async function writeCheckReceipt(
+  receiptPath: string,
+  receipt: RunnerCheckReceipt,
+): Promise<void> {
   await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 })
   await writeFile(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })
   await rename(`${receiptPath}.tmp`, receiptPath)
@@ -1073,7 +1076,7 @@ export async function runDeclaredCheck(
   check: ExecutableVerificationCheck,
   receiptPath: string,
   options: CheckRunOptions = {},
-): Promise<CheckReceipt> {
+): Promise<RunnerCheckReceipt> {
   const commands = recognizedVerificationPhases(check.command, options.profile?.commands)
   if (!commands) return runCheck(directory, artifact, check, receiptPath, options)
   const phases: CheckPhaseReceipt[] = []
@@ -1087,7 +1090,7 @@ export async function runDeclaredCheck(
   const inactivityDeadline = options.inactivityDeadline ?? {
     value: performance.now() + inactivityTimeoutMs,
   }
-  let latest: CheckReceipt | undefined
+  let latest: RunnerCheckReceipt | undefined
   for (let index = 0; index < commands.length; index++) {
     const command = commands[index]!
     if (options.signal?.aborted || deadline <= performance.now()) {
@@ -1154,7 +1157,7 @@ export async function runDeclaredCheck(
   if (!latest) throw new Error("Recognized verification command has no executable phases")
   const { effectiveCommand: _lastPhaseCommand, ...lastPhase } = latest
   const effectiveCommand = withTestHangGuard(check.command)
-  const result: CheckReceipt = {
+  const result: RunnerCheckReceipt = {
     ...lastPhase,
     id: check.id,
     command: check.command,

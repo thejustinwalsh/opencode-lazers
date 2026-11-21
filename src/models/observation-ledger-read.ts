@@ -13,7 +13,6 @@ import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
 import type { AccountingAttempt, AccountingRoute } from "../trajectory/accounting.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import {
-  decisionProgressFact,
   list,
   nonnegativeOrNull,
   numberOrNull,

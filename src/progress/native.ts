@@ -79,7 +79,7 @@ function object(value: unknown): Record<string, unknown> | undefined {
  * last deciding message, so folding a re-delivered tail again gives the same answer and a
  * caller can carry `visible` from the previous read instead of rereading the conversation.
  */
-export function foldVisibleHandoff(visible: boolean, messages: readonly unknown[]): boolean {
+function foldVisibleHandoff(visible: boolean, messages: readonly unknown[]): boolean {
   for (const raw of messages) {
     const message = object(raw)
     if (

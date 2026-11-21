@@ -17,10 +17,10 @@ import { planIn, planIs, samePlan } from "../runner/identity-read.ts"
 const DAY_MS = 86_400_000
 
 /** Plan states that never run again without an explicit new command. */
-export const TERMINAL_PLAN_STATES = ["integrated", "cancelled"] as const
+const TERMINAL_PLAN_STATES = ["integrated", "cancelled"] as const
 
 /** Progress record kinds that are activity detail; verification, outcome and usage records stay. */
-export const DETAIL_PROGRESS_KINDS = [
+const DETAIL_PROGRESS_KINDS = [
   "tool",
   "step",
   "native-observation",
@@ -36,7 +36,7 @@ export const DETAIL_PROGRESS_KINDS = [
  * Transition events that only narrate delivery and renewal churn. No reader selects them by
  * name; each plan keeps its latest transition and its latest per task regardless.
  */
-export const NOISE_TRANSITION_EVENTS = [
+const NOISE_TRANSITION_EVENTS = [
   "OUTCOME_OWNER_TRANSFER_UNCERTAIN",
   "OUTCOME_HOST_ADMITTED",
   "OUTCOME_SEND_STARTED",
@@ -99,7 +99,7 @@ type Kind = {
   specs: (ctx: Context, db: Database) => Spec[]
 }
 
-export type Context = {
+type Context = {
   now: number
   days: number
   cutoff: number
@@ -203,7 +203,7 @@ function outsideFactWindow(db: Database): Array<[string, number]> {
 const inPlans = "(SELECT value FROM json_each(?))"
 const PLAN_LIST = "SELECT value FROM json_each(?)"
 
-export const KINDS: Kind[] = [
+const KINDS: Kind[] = [
   {
     id: "progress",
     label: "Worker activity",
@@ -405,20 +405,13 @@ KINDS.push({
   ],
 })
 
-export const RETENTION_KINDS = KINDS.map(({ id, label, detail, ageIndependent }) => ({
-  id,
-  label,
-  detail,
-  ageIndependent,
-}))
-
 const turn = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 function tableExists(db: Database, name: string) {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) !== null
 }
 
-export function retentionContext(now: number, days: number, retired: string[]): Context {
+function retentionContext(now: number, days: number, retired: string[]): Context {
   const cutoff = now - days * DAY_MS
   return {
     now,
@@ -546,7 +539,7 @@ export function classifyPlans(db: Database, now: number, days: number) {
   return { retired, kept }
 }
 
-export function selectSpecs(db: Database, ctx: Context, kind: Kind) {
+function selectSpecs(db: Database, ctx: Context, kind: Kind) {
   return kind.specs(ctx, db).filter((spec) => !spec.optional || tableExists(db, spec.table))
 }
 
@@ -558,7 +551,7 @@ const sized = (expression: string) =>
 const WINDOW = 100_000
 
 /** Exact rows and estimated bytes of one spec, scanned in rowid windows with a turn between. */
-export async function measure(db: Database, spec: Spec) {
+async function measure(db: Database, spec: Spec) {
   const bounds = db
     .query<{ lo: number | null; hi: number | null }, []>(
       `SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM ${spec.table}`,

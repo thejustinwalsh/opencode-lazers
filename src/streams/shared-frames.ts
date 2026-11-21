@@ -24,9 +24,6 @@ export function allocateSharedFrames(frameBytes: number): SharedArrayBuffer {
   return buffer
 }
 
-export const sharedFrameBytes = (buffer: SharedArrayBuffer) =>
-  new Int32Array(buffer, 0, 16)[SHARED_FRAME_BYTES]!
-
 export class SharedFrameWriter {
   private readonly control: Int32Array
   private index = 0

@@ -10,8 +10,6 @@ export const PLAN_KEYS = "lazers_plan_keys"
 export const ATTEMPT_KEYS = "lazers_attempt_keys"
 export const KEY_BACKFILL = "lazers_key_backfill"
 
-export const IDENTITY_KEY_TABLES = [PLAN_KEYS, ATTEMPT_KEYS, KEY_BACKFILL] as const
-
 export function installIdentityKeys(db: Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${PLAN_KEYS} (n INTEGER PRIMARY KEY, plan_id TEXT NOT NULL UNIQUE);

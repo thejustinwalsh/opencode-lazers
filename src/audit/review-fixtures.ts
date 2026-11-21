@@ -5,7 +5,7 @@ import { TaskRepository } from "../storage.ts"
 
 /** Hand-written two-commit repositories for the audit tests. Not shipped. */
 
-export const FIXTURE_CONFIG = { entry: ["src/index.ts"], rules: { "unused-class-members": "off" } }
+const FIXTURE_CONFIG = { entry: ["src/index.ts"], rules: { "unused-class-members": "off" } }
 
 export async function git(cwd: string, ...args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" })

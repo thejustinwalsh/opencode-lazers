@@ -13,7 +13,7 @@ import {
 } from "./catalog-projection.ts"
 import type { CatalogEntry, ObservedFacts, TokenProfile } from "./catalog-projection.ts"
 import { routeKey } from "./benchmark-baseline.ts"
-import type { ModelCandidate } from "./comparison-state.ts"
+import type { ModelCandidate } from "./comparison-presentation.ts"
 
 /** A candidate priced by OpenRouter (USD per token strings) or by the native catalog. */
 function candidate(

@@ -556,7 +556,7 @@ async function checkoutFiles(root: string): Promise<string[]> {
 
 function fallowIgnorePatterns(root: string): string[] {
   try {
-    const config = JSON.parse(readFileSync(join(root, ".fallowrc.json"), "utf8")) as {
+    const config = Bun.JSONC.parse(readFileSync(join(root, ".fallowrc.json"), "utf8")) as {
       ignorePatterns?: unknown
     }
     return Array.isArray(config.ignorePatterns)

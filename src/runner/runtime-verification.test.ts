@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { git } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 
 import {
   forgetVerificationActivity,
@@ -109,7 +109,8 @@ test.each([false, true])(
     expect(attempt.artifact).toBeTruthy()
     const preparation = f.store.effects(plan.id).find((effect) => effect.kind === "mechanical-fix")!
     expect(preparation.state).toBe("completed")
-    const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: CheckReceipt }).check
+    const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: RunnerCheckReceipt })
+      .check
     expect(preparedReceipt.preparation?.inputFingerprint).not.toBe(
       preparedReceipt.preparation?.resultingFingerprint,
     )
@@ -477,7 +478,7 @@ test("registered plan command resumes settled combined verification without repl
   )
   // No fingerprint binds the re-run to the interrupted check: it only supersedes it.
   expect(freshPayload).not.toHaveProperty("combinedContinuationFingerprint")
-  const freshReceipt = (JSON.parse(freshCompleted.receipt!) as { check: CheckReceipt }).check
+  const freshReceipt = (JSON.parse(freshCompleted.receipt!) as { check: RunnerCheckReceipt }).check
   expect(freshReceipt).toMatchObject({ artifact: freshPayload.artifact, exitCode: 0 })
   expect(freshReceipt.aborted).not.toBe(true)
   expect(freshPayload.receiptPath).not.toBe(receiptPath)
@@ -613,7 +614,7 @@ test.each([false, true])(
         .effects(f.receipt.planID)
         .find((candidate) => candidate.id === effect.id)!
       const envelope = JSON.parse(uncertain.receipt!) as {
-        result: { check: CheckReceipt }
+        result: { check: RunnerCheckReceipt }
       }
       expect(uncertain.state).toBe("uncertain")
       expect(envelope.result.check).toMatchObject({
@@ -1043,7 +1044,7 @@ test("project timing configuration overrides legacy task and combined timeout me
       effect.kind.startsWith("graph-verify:") && effect.kind !== "graph-verify:fallow-audit"
     if (!authoredVerifyEffect(effect) && !authoredCombined) return []
     if (!effect.receipt) return []
-    const envelope = JSON.parse(effect.receipt) as { check?: CheckReceipt }
+    const envelope = JSON.parse(effect.receipt) as { check?: RunnerCheckReceipt }
     return envelope.check ? [{ kind: effect.kind, check: envelope.check }] : []
   })
   expect(receipts.map(({ kind }) => kind).sort()).toEqual([

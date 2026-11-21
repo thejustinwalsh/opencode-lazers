@@ -3,7 +3,7 @@ import type { ModelPolicy } from "./schema.ts"
 import type { OutcomeOwnership, OutcomeInboxEntry } from "./inbox.ts"
 import type { PrivacyStats } from "../trajectory/privacy.ts"
 
-export type HostMessage = {
+export type RunnerHostMessage = {
   id: string
   text: string
   type?: string
@@ -101,7 +101,7 @@ export type HostSession = {
    * message after it, oldest first. Earlier history is not read; use `RunnerHost.message` for
    * one older message.
    */
-  messages: HostMessage[]
+  messages: RunnerHostMessage[]
   /** Assistant messages in `messages` (detailed reads only). */
   turnAssistants?: number
 }
@@ -136,7 +136,7 @@ export interface RunnerHost {
    * session holds. Absent means the host has no such message. Older injected hosts without it
    * can still be asked through the current turn that `session(..., { messages: true })` returns.
    */
-  message?(sessionID: string, messageID: string): Promise<HostMessage | undefined>
+  message?(sessionID: string, messageID: string): Promise<RunnerHostMessage | undefined>
   /**
    * Text of the newest assistant message that precedes the current turn: one assistant-only
    * descending page, skipping the `skip` assistant messages the current turn already holds.

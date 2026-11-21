@@ -5,7 +5,6 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   SQLITE_BUSY_TIMEOUT_MS,
-  StorageBusyError,
   TaskRepository,
   acquireSharedConnection,
   sharedConnectionCount,

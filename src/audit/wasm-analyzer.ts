@@ -214,11 +214,6 @@ export function setFallowThreads(mode: FallowThreads): void {
   threadsMode = mode
 }
 
-/** Why analysis runs single-threaded although `fallowThreads` is on, once that has happened. */
-export function fallowThreadsFallback(): string | undefined {
-  return threadsFallback
-}
-
 /** Record the first fallback and log it once; later calls stay on the single-threaded module. */
 function noteFallback(reason: string): void {
   if (threadsFallback !== undefined) return

@@ -11,7 +11,7 @@ export const DraftID = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)
  * idempotency key, and is validated with `TaskProposalSchema`, not copied from it: an incomplete
  * draft is stored, and `validateBody` lists what is missing.
  */
-export const TaskDraft = z.strictObject({
+const TaskDraft = z.strictObject({
   draftID: DraftID,
   dependsOn: z.array(DraftID).max(100).default([]),
   persona: WorkerPersona.optional(),

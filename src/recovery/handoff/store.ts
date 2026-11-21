@@ -136,6 +136,29 @@ const DraftInput = HandoffDraftSubmissionInput
 
 const NotificationLimit = 100
 
+/** The page size and the position a handoff history read starts before; refuses a bad limit or cursor. */
+function historyPaging(
+  input: { limit?: number; cursor?: string },
+  requestID: string,
+): { limit: number; before: number | undefined } {
+  const limit = input.limit ?? 20
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    throw new Error("Use a handoff history limit from 1 to 100")
+  let before: number | undefined
+  if (input.cursor !== undefined) {
+    try {
+      const cursor = HandoffHistoryCursor.parse(
+        JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")),
+      )
+      if (cursor.requestID !== requestID) throw new Error("cursor request mismatch")
+      before = cursor.before
+    } catch {
+      throw new Error("Invalid handoff history cursor")
+    }
+  }
+  return { limit, before }
+}
+
 /**
  * SQLite persistence for source-attached recovery reports. This module stores
  * exact review reservations/results; review scoring and round progression stay
@@ -1815,21 +1838,7 @@ export class HandoffStore {
     | undefined {
     const requestID = HandoffRequestInput.shape.requestID.parse(input.requestID)
     const caller = HandoffActor.parse(callerInput)
-    const limit = input.limit ?? 20
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-      throw new Error("Use a handoff history limit from 1 to 100")
-    let before: number | undefined
-    if (input.cursor !== undefined) {
-      try {
-        const cursor = HandoffHistoryCursor.parse(
-          JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")),
-        )
-        if (cursor.requestID !== requestID) throw new Error("cursor request mismatch")
-        before = cursor.before
-      } catch {
-        throw new Error("Invalid handoff history cursor")
-      }
-    }
+    const { limit, before } = historyPaging(input, requestID)
     return this.repository.atomic((db) => {
       const request = this.requireRequest(db, requestID)
       this.assertHandoffReader(db, request, caller)
@@ -1963,21 +1972,7 @@ export class HandoffStore {
     cursor?: string
   }): HandoffHistoryPage | undefined {
     const requestID = HandoffRequestInput.shape.requestID.parse(input.requestID)
-    const limit = input.limit ?? 20
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-      throw new Error("Use a handoff history limit from 1 to 100")
-    let before: number | undefined
-    if (input.cursor !== undefined) {
-      try {
-        const cursor = HandoffHistoryCursor.parse(
-          JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")),
-        )
-        if (cursor.requestID !== requestID) throw new Error("cursor request mismatch")
-        before = cursor.before
-      } catch {
-        throw new Error("Invalid handoff history cursor")
-      }
-    }
+    const { limit, before } = historyPaging(input, requestID)
     return this.repository.atomic((db) => {
       const requestRow = this.requestRow(db, requestID)
       if (!requestRow) return undefined

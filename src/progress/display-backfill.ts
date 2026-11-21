@@ -127,7 +127,7 @@ export type BackfillPacing = {
   retryMs: number
 }
 
-export const DEFAULT_BACKFILL_PACING: BackfillPacing = {
+const DEFAULT_BACKFILL_PACING: BackfillPacing = {
   startMs: 2_000,
   quiet: { sliceMs: 40, waitMs: 25 },
   busy: { sliceMs: 6, waitMs: 500 },

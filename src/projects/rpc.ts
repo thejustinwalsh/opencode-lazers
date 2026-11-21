@@ -43,8 +43,6 @@ import {
 import type { ProfileRevisionRow } from "./profile-store.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
 
-export { Projects }
-
 export type ProjectsDefaults = {
   global?: Partial<GlobalSettings>
   project?: Partial<ProjectSettings>
@@ -80,7 +78,7 @@ function profileState(repository: Controls, key: string) {
   }
 }
 
-export const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
+const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
   revision: row.revision,
   state: row.state,
   profile: row.profile,
@@ -99,7 +97,7 @@ export const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
 })
 
 /** Everything the Projects section shows, read fresh from the shared database. */
-export function listProjects(
+function listProjects(
   repository: Controls,
   loaded: () => Iterable<string>,
   defaults: ProjectsDefaults = {},

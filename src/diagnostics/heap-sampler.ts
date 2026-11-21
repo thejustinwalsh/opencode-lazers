@@ -90,7 +90,7 @@ const top = (counts: TypeCounts | undefined): [string, number][] =>
     .sort((a, b) => b[1] - a[1])
     .slice(0, TOP)
 
-export class HeapSampler {
+class HeapSampler {
   private timer: ReturnType<typeof setInterval> | undefined
   private writing: Promise<void> = Promise.resolve()
   private size: number | undefined

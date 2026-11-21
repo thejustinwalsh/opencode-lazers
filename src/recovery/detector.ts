@@ -12,7 +12,7 @@ import {
   type TrajectoryTail,
 } from "./trajectory-facts.ts"
 
-export { readTrajectoryTail, type TrajectoryTail }
+export type { TrajectoryTail }
 
 /**
  * The producer of recovery concerns. Deterministic rules read the recorded trajectory of each
@@ -64,9 +64,9 @@ export const DETECTOR_THRESHOLDS = {
 export type DetectorThresholds = { readonly [K in keyof typeof DETECTOR_THRESHOLDS]: number }
 
 /** A follow-up on a condition cannot be evaluated by the runtime; reassess it after this long. */
-export const CONDITION_REASSESS_MS = 2 * 3_600_000
+const CONDITION_REASSESS_MS = 2 * 3_600_000
 
-export const WORKER_CONCERN_EVENT = "WORKER_CONCERN_RAISED"
+const WORKER_CONCERN_EVENT = "WORKER_CONCERN_RAISED"
 export const DETECTOR_ACTOR = {
   sessionID: "lazers-runtime",
   agent: "lazers-runtime",
@@ -95,7 +95,7 @@ export type RuleID =
  */
 export type ConcernAction = "acknowledge" | "steer" | "takeover" | "cancel"
 
-export type Finding = {
+export type RecoveryFinding = {
   ruleID: RuleID
   reason: string
   /** The rule's measure in its natural unit; materially larger than before is new evidence. */
@@ -120,9 +120,9 @@ export function evaluateRules(
   tail: TrajectoryTail,
   where: string,
   options: RuleOptions = {},
-): Finding[] {
+): RecoveryFinding[] {
   const t = options.thresholds ?? DETECTOR_THRESHOLDS
-  const found: Finding[] = []
+  const found: RecoveryFinding[] = []
   const add = (
     ruleID: RuleID,
     reason: string,
@@ -306,7 +306,7 @@ export type OpenConcern = {
 const ADVICE_NOTE = /; magnitude=\d+; action=(acknowledge|steer|takeover|cancel); because=(.*)$/s
 
 /** The evidence note a finding is recorded with; `magnitude=` and the advice are read back from it. */
-function evidenceNote(finding: Finding, note: string): string {
+function evidenceNote(finding: RecoveryFinding, note: string): string {
   return `${note}; magnitude=${finding.magnitude}; action=${finding.action}; because=${finding.because}`
 }
 
@@ -429,7 +429,7 @@ export class RecoveryDetector {
     planID: string,
     taskID: string,
     attemptID: string,
-    finding: Finding,
+    finding: RecoveryFinding,
     tail: TrajectoryTail,
   ) {
     const { store, handoff } = this.deps

@@ -452,7 +452,7 @@ export function sourceTitle(source: ModelSource["source"]) {
 }
 
 /** "retrieved <date>", or nothing when the date is missing. */
-export function retrievedLabel(value: string | null | undefined) {
+function retrievedLabel(value: string | null | undefined) {
   const date = formatDate(value)
   return date ? `retrieved ${date}` : undefined
 }
@@ -530,16 +530,6 @@ export function candidateFocusIndex(index: number, count: number, key: string) {
   if (key === "Home") return 0
   if (key === "End") return count - 1
   return Math.max(0, Math.min(count - 1, index + (key === "ArrowDown" ? 1 : -1)))
-}
-
-export function recordReferenceLabel(reference: {
-  source: string
-  snapshotID: string
-  generation: number
-  recordIndex: number
-  recordID: string
-}) {
-  return `${reference.source} · generation ${reference.generation} · record ${reference.recordIndex + 1} (${reference.recordID}) · snapshot ${reference.snapshotID}`
 }
 
 /** `$0.35 – 0.67`: one currency sign, the rounded range, no caveats. */

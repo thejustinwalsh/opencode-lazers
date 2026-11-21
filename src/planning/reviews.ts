@@ -34,7 +34,7 @@ export type AgentSelection = {
 }
 
 /** What a review needs to run again after a restart, kept in `planning_reviews.selection_json`. */
-export type ReviewSelection = {
+type ReviewSelection = {
   agents: AgentSelection[]
   parentSessionID: string
   directory: string

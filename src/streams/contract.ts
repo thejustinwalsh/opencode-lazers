@@ -12,7 +12,7 @@ import { z } from "zod"
  * events are not addressed) is matched to a stream before `open` returns, and the event carries
  * no rows: a window that owns the stream pulls the frame with `read`.
  */
-export const StreamAnchor = z.union([
+const StreamAnchor = z.union([
   z.literal("head"),
   z.literal("tail"),
   z.strictObject({
@@ -23,7 +23,7 @@ export const StreamAnchor = z.union([
 export type StreamAnchorInput = z.input<typeof StreamAnchor>
 
 /** A frame in the stream's own numbering: apply it only if `seq` is newer than the last applied. */
-export const StreamFrame = z.strictObject({ seq: z.int().nonnegative(), data: z.string() })
+const StreamFrame = z.strictObject({ seq: z.int().nonnegative(), data: z.string() })
 export type StreamFrame = z.infer<typeof StreamFrame>
 
 const Id = z.string().min(1).max(200)

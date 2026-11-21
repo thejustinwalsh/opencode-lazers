@@ -32,7 +32,7 @@ import type { AttemptRow, RunnerStore } from "./store.ts"
  */
 
 /** Attempts the Architect works itself have no native worker session; this marks their id. */
-export const TAKEOVER_SESSION_PREFIX = "lazers-takeover:"
+const TAKEOVER_SESSION_PREFIX = "lazers-takeover:"
 /**
  * How long the worker has to commit and write its handoff, from the request. A handoff is a
  * commit plus one tool call; a steered notice is read at the worker's next step boundary, and a
@@ -40,17 +40,12 @@ export const TAKEOVER_SESSION_PREFIX = "lazers-takeover:"
  * tool count does not bound wall time. Five minutes covers two ordinary steps and stays well
  * below the 15-minute check inactivity allowance the Architect would otherwise wait on.
  */
-export const TAKEOVER_HANDOFF_WINDOW_MS = 5 * 60_000
+const TAKEOVER_HANDOFF_WINDOW_MS = 5 * 60_000
 /** After the window, a busy worker is interrupted and given this long to go quiet. */
-export const TAKEOVER_STOP_WAIT_MS = 60_000
+const TAKEOVER_STOP_WAIT_MS = 60_000
 
-export type TakeoverState =
-  "notifying" | "awaiting-handoff" | "stopping" | "taken-over" | "cancelled"
-export const OPEN_TAKEOVER_STATES: readonly TakeoverState[] = [
-  "notifying",
-  "awaiting-handoff",
-  "stopping",
-]
+type TakeoverState = "notifying" | "awaiting-handoff" | "stopping" | "taken-over" | "cancelled"
+const OPEN_TAKEOVER_STATES: readonly TakeoverState[] = ["notifying", "awaiting-handoff", "stopping"]
 
 export const TakeoverInput = z.strictObject({
   attemptID: z.uuid().describe("The worker attempt to take over (its latest attempt)."),
@@ -213,7 +208,7 @@ export type TakeoverDeps = {
   ) => void
 }
 
-export function isTakeoverSession(id: string): boolean {
+function isTakeoverSession(id: string): boolean {
   return id.startsWith(TAKEOVER_SESSION_PREFIX)
 }
 

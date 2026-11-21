@@ -4,6 +4,7 @@ import { budgetFromEnv, sharedByteLru } from "./byte-lru.ts"
 
 import {
   ENDPOINT_PRICING_PRODUCTS,
+  aggregateEndpointState,
   EndpointPricingReadSchema,
   EndpointPricingScenarioSchema,
   EndpointPricingSnapshotSchema,
@@ -27,7 +28,6 @@ const parsedEndpointSnapshots = sharedByteLru<EndpointPricingSnapshot>(
   "model-endpoint-pricing-snapshots",
   budgetFromEnv("LAZERS_ENDPOINT_CACHE_MIB", 16),
 )
-export const clearParsedEndpointSnapshotCache = () => parsedEndpointSnapshots.clear()
 
 type RefreshRow = {
   product_id: EndpointPricingProductID
@@ -146,17 +146,7 @@ function readSnapshot(
 
 function aggregate(scenarios: EndpointPricingScenario[]): EndpointPricingRead {
   const states = scenarios.map(({ state }) => state)
-  const state: EndpointPricingRead["state"] = states.every((value) => value === "never")
-    ? "never"
-    : states.some((value) => value === "refreshing")
-      ? "refreshing"
-      : states.every((value) => value === "succeeded")
-        ? "succeeded"
-        : states.every((value) => value === "cancelled")
-          ? "cancelled"
-          : states.every((value) => value === "failed")
-            ? "failed"
-            : "partial"
+  const state = aggregateEndpointState(states)
   return EndpointPricingReadSchema.parse({
     state,
     generation: Math.max(...scenarios.map(({ generation }) => generation)),

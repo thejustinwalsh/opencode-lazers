@@ -12,7 +12,7 @@ async function git(cwd: string, ...args: string[]) {
   await proc.exited
 }
 
-export type TestProject = {
+type TestProject = {
   key: string
   code: string
   directory: string

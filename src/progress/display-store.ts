@@ -1,21 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { DISPLAY_VERSION, progressDisplay, type DisplayRow } from "./display.ts"
 
-/**
- * `runner_progress_display`: what the live history list shows of each progress row, stored beside
- * it so a reader needs no payload. One narrow row per progress row, keyed by its `seq`, written
- * in the transaction that writes the progress row from {@link progressDisplay}, the same pure
- * function the read-time projection uses. Narrow on purpose: a reader scans these rows and never
- * the wide `runner_progress` rows (a payload is about 2 KB and can spill to overflow pages).
- *
- * ```
- * recorder ── INSERT/UPDATE runner_progress ──► refreshProgressDisplay(seq) ──► display row
- * retention ── DELETE runner_progress ─────────► trigger ───────────────────► display row gone
- * legacy rows (before this table) ── backfill ──► display row           (see display-backfill.ts)
- * ```
- */
-export const PROGRESS_DISPLAY_TABLE = "runner_progress_display"
-
 export function installProgressDisplaySchema(db: Database) {
   // Derived data: a table from before the project id and version columns is dropped and rebuilt
   // (the backfill refills it).
