@@ -1,4 +1,4 @@
-import { readFrame, type Columns, type FrameHeader } from "./frame.ts"
+import { readFrame, type Columns, type FrameHeader, type Row } from "./frame.ts"
 import type { PoolStream, ReaderPool } from "./pool.ts"
 import { SHARED_SEQUENCE, SHARED_STOP, type Anchor, type FromReader } from "./protocol.ts"
 import { SharedFrameConsumer } from "./shared-frames.ts"
@@ -16,8 +16,6 @@ export type StreamOptions<F> = {
    */
   transport?: "shared" | "transfer" | "copy"
 }
-
-export type Row<C extends Columns> = { readonly [K in keyof C]: unknown }
 
 export type Stream<C extends Columns> = {
   /** The current frame's bytes as delivered; only on the copy transport (what an RPC server forwards). */

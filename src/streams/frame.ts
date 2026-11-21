@@ -22,6 +22,8 @@
 
 export type ColumnType = "int" | "float" | "text" | "json" | "bool" // nullable always allowed
 export type Columns = Readonly<Record<string, ColumnType>>
+
+export type Row<C extends Columns> = { readonly [K in keyof C]: unknown }
 export type FrameHeader = {
   revision: number
   count: number
