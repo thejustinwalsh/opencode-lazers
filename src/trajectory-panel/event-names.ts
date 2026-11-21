@@ -53,6 +53,7 @@ export const runnerTransitions: Record<string, string> = {
   ADMITTED: "Admitted",
   ADOPT_ACCEPT: "Adoption accepted",
   ARCHITECT_CONTINUATION_READY: "Architect continuation ready",
+  ARCHITECT_CONTINUITY_COVERAGE_REPAIRED: "Architect checkpoint summary rebuilt from its rows",
   ARCHITECT_CONTINUITY_RECORDED: "Architect continuity recorded",
   ARCHITECT_CONTINUITY_TRANSFERRED: "Architect continuity transferred",
   ARCHITECT_RENEWAL_ARCHIVE_DEFERRED: "Architect renewal archive deferred",
