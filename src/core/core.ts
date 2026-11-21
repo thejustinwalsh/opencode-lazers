@@ -3,6 +3,7 @@ import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { startProjection } from "../projections/owner.ts"
 import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
 import { ensureModelCandidatesSchema } from "../models/candidate-store.ts"
+import { ensureModelAssignmentViewSchema } from "../models/assignment-view.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { startHostSessionFold } from "../host-sessions/fold.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
@@ -207,6 +208,8 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   )
   // The comparison candidates' tables and triggers; the Models server's decision worker builds them.
   ensureModelCandidatesSchema(repository)
+  // The Models assignments' layer rows, kept by triggers on `model_mappings`.
+  ensureModelAssignmentViewSchema(repository)
   // The Projects section's rows: kept by triggers in each writer's transaction; this start
   // resolves settings with this service's plugin-option defaults and marks the project loaded.
   ensureProjectOverviewSchema(repository)

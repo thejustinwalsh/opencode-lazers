@@ -1,14 +1,20 @@
 import { defineSource, type StreamContext } from "../source.ts"
-import { openDecisionViewFor, releaseDecisionViewFor } from "../../models/decision-view-registry.ts"
+import {
+  openDecisionViewFor,
+  refreshHostAgentsFor,
+  releaseDecisionViewFor,
+} from "../../models/decision-view-registry.ts"
 import {
   MODELS_SOURCES,
   modelCandidateColumns,
   modelCandidateDetail,
   modelCatalogColumns,
+  modelAssignmentColumns,
   modelContributorColumns,
   modelPointColumns,
   modelViewColumns,
   modelViewDetail,
+  type ModelAssignmentsFilter,
   type ModelCandidatesFilter,
   type ModelCatalogFilter,
   type ModelContributorsFilter,
@@ -180,4 +186,36 @@ export const modelContributorsSource = defineSource({
     }
   },
   columns: modelContributorColumns,
+})
+
+/**
+ * The Models assignments (`model_assignment_view`): the shared layer, this project's layer and
+ * host rows, and the selected task's layer. Replaces the `settings` RPC (`lz-get-model-settings`).
+ */
+export const modelAssignmentsSource = defineSource({
+  name: MODELS_SOURCES.assignments,
+  table: "model_assignment_view",
+  key: ["id"],
+  orders: {
+    subject: [
+      { column: "subject", direction: "asc" },
+      { column: "layer", direction: "asc" },
+      { column: "id", direction: "asc" },
+    ],
+  },
+  count: { exact: "scan" },
+  async authorize(input: ModelAssignmentsFilter, context) {
+    const checked = await scoped(input, context, "lz-get-model-settings")
+    refreshHostAgentsFor(context.projectDirectory)
+    return checked
+  },
+  filter(input: ModelAssignmentsFilter) {
+    return {
+      where: `(model_assignment_view.layer = 'shared' OR (model_assignment_view.project_directory = ?
+        AND (model_assignment_view.layer IN ('project','host')
+          OR (model_assignment_view.layer = 'task' AND model_assignment_view.task_id = ?))))`,
+      params: [input.projectDirectory, input.taskID ?? ""],
+    }
+  },
+  columns: modelAssignmentColumns,
 })

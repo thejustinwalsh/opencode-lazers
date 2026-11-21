@@ -4,7 +4,12 @@
  * sources (`src/streams/sources/models.ts`, also loaded in reader workers) call it. It holds
  * closures only, on globalThis because every plugin copy has its own module scope.
  */
-type Opener = { open(request: unknown): number; release(viewID: number): void }
+type Opener = {
+  open(request: unknown): number
+  release(viewID: number): void
+  /** Read the agents' host routes again and store what changed (asynchronous, never awaited). */
+  refreshHostAgents?(): void
+}
 const key = Symbol.for("lazers.models.decisionViewOpeners.v1")
 const host = globalThis as typeof globalThis & { [key]?: Map<string, Opener[]> }
 const openers = () => (host[key] ??= new Map())
@@ -34,4 +39,12 @@ export function openDecisionViewFor(projectDirectory: string, request: unknown):
 /** A stream that `openDecisionViewFor` admitted no longer holds the view. */
 export function releaseDecisionViewFor(projectDirectory: string, viewID: number) {
   openers().get(projectDirectory)?.at(-1)?.release(viewID)
+}
+
+/**
+ * An assignments stream opened: the host's agent routes are read again in the background, as the
+ * replaced `settings` read did on every open, and a changed route reaches the stream as a write.
+ */
+export function refreshHostAgentsFor(projectDirectory: string) {
+  openers().get(projectDirectory)?.at(-1)?.refreshHostAgents?.()
 }

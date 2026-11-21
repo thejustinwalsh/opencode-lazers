@@ -28,7 +28,8 @@ import {
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
-import { readAgentRoutes } from "./agent-routes.ts"
+import { readAgentRoutes, readHostAgentFacts } from "./agent-routes.ts"
+import { writeHostAgentFacts } from "./assignment-view.ts"
 import { LAZERS_AGENTS, isAgentSubject } from "./agent-ids.ts"
 import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 
@@ -349,6 +350,33 @@ export function registerModelsServer(
     return ModelSettingsOutputSchema.parse({ ...output, agents })
   }
 
+  /**
+   * What the host resolves for each agent, stored for the assignments stream. One read at a time;
+   * a request during a read runs once more after it, so the last open sees the last state.
+   */
+  let hostRead: Promise<void> | undefined
+  let hostAgain = false
+  const refreshHostAgents = (): Promise<void> => {
+    if (hostRead) {
+      hostAgain = true
+      return hostRead
+    }
+    hostRead = (async () => {
+      try {
+        do {
+          hostAgain = false
+          const facts = await readHostAgentFacts(ctx)
+          withService((service) => writeHostAgentFacts(service.repository, facts))
+        } while (hostAgain)
+      } catch {
+        // The next open reads again; the stored rows stay as they were.
+      } finally {
+        hostRead = undefined
+      }
+    })()
+    return hostRead
+  }
+
   return Effect.gen(function* () {
     // One decision worker per database per process, shared by every location's registration.
     const lease = acquireDecisionWorker({ path, readPriceInputs })
@@ -364,6 +392,7 @@ export function registerModelsServer(
     const releaseOpener = registerDecisionViewOpener(projectDirectory, {
       open: (request) => lease.openView(projectDirectory, DecisionViewRequestSchema.parse(request)),
       release: (viewID) => lease.releaseView(viewID),
+      refreshHostAgents: () => void refreshHostAgents(),
     })
     yield* Effect.addFinalizer(() => Effect.sync(releaseOpener))
     const decisionReader = lease.reader(projectDirectory)
@@ -445,8 +474,10 @@ export function registerModelsServer(
             )
             // An agent's route is applied by its transform: run the transforms again so OpenCode
             // starts the next session of that agent on the new model, without a restart.
-            if (written.status === "updated" && isAgentSubject(update.persona))
+            if (written.status === "updated" && isAgentSubject(update.persona)) {
               await Effect.runPromise(ctx.agent.reload(), { signal })
+              await refreshHostAgents()
+            }
             return written
           },
           catch: failure,

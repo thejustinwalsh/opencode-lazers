@@ -226,9 +226,9 @@ export const schemaModules = {
     ],
   },
   "model-mappings": {
-    generation: 1,
-    source: "src/models/mapping-store.ts",
-    tables: ["model_mappings"],
+    generation: 2,
+    source: "src/models/assignment-view.ts",
+    tables: ["model_mappings", "model_assignment_view"],
   },
   audit: {
     generation: 2,

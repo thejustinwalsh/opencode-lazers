@@ -10,6 +10,7 @@ export const MODELS_SOURCES = {
   catalog: "models.catalog",
   points: "models.points",
   contributors: "models.contributors",
+  assignments: "models.assignments",
 } as const
 
 /** Every Models filter: the project is set by the service, whatever the caller sends. */
@@ -119,3 +120,22 @@ export const modelContributorColumns = {
   task_id: "text",
   detail: "json",
 } as const satisfies Columns
+
+/** The assignments of the project, plus the task layer of `taskID` when one is selected. */
+export type ModelAssignmentsFilter = Scoped & { taskID?: string | null }
+
+/** One layer row (`model_assignment_view`): a mapping record, or an agent's host fact. */
+export const modelAssignmentColumns = {
+  id: "int",
+  layer: "text",
+  task_id: "text",
+  subject: "text",
+  revision: "int",
+  record: "json",
+} as const satisfies Columns
+
+/**
+ * Rows of one read: 7 subjects in the shared and project layers, 3 personas in the task layer and
+ * 4 agents' host rows, at most 21; the window is that bound (`ASSIGNMENT_SUBJECTS`).
+ */
+export const MODEL_ASSIGNMENTS_WINDOW = 7 + 7 + 3 + 4
