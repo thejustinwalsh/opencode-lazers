@@ -2,8 +2,14 @@ import type { Database } from "bun:sqlite"
 
 /**
  * A projection's dirty queue: one row per source key (`ref`) whose projection rows are stale.
- * Guarded triggers on the source tables queue refs with `INSERT OR REPLACE` (a new change resets
- * a parked entry's backoff); {@link drainQueue} refreshes them inside a write transaction.
+ * Guarded triggers on the source tables queue refs with {@link queueRef} or {@link queueRefs}: an
+ * existing entry is reset (a new change ends a parked entry's backoff), a missing one inserted;
+ * {@link drainQueue} refreshes them inside a write transaction.
+ *
+ * Never `INSERT OR REPLACE` in a trigger body: SQLite applies the outer statement's conflict
+ * handling to the statements of the triggers it fires, so an outer upsert (`ON CONFLICT DO
+ * UPDATE`) turns the replace into a failing insert and the writer's statement fails. The update,
+ * then insert-if-missing form never conflicts.
  *
  * ```
  * source write ─trigger─► queue(ref, next_at=0) ─drain (same transaction)─► projection rows
@@ -27,9 +33,16 @@ export function queueTableSQL(table: string) {
   `
 }
 
-/** The statement a trigger body uses to queue `ref` (an SQL expression). */
+/** The statements a trigger body uses to queue `ref` (an SQL expression). */
 export const queueRef = (table: string, ref: string) =>
-  `INSERT OR REPLACE INTO ${table}(ref) VALUES(${ref});`
+  `UPDATE ${table} SET next_at=0,attempts=0,error=NULL WHERE ref=${ref};
+   INSERT INTO ${table}(ref) SELECT ${ref} WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ref=${ref});`
+
+/** The statements a trigger body uses to queue every `ref` a SELECT returns (its column named `ref`). */
+export const queueRefs = (table: string, select: string) =>
+  `UPDATE ${table} SET next_at=0,attempts=0,error=NULL WHERE ref IN (SELECT ref FROM (${select}));
+   INSERT INTO ${table}(ref) SELECT DISTINCT s.ref FROM (${select}) s
+     WHERE NOT EXISTS (SELECT 1 FROM ${table} q WHERE q.ref=s.ref);`
 
 /** The probe the drain hook runs in every write transaction: one index seek. */
 export const dueProbeSQL = (table: string) => `SELECT 1 FROM ${table} WHERE next_at<=? LIMIT 1`

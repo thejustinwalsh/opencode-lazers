@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Exit, Fiber, Queue, Stream } from "effect"
-import { ObservationReadChangedError, ObservationReads } from "./read.ts"
+import { ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
@@ -14,7 +14,7 @@ import {
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
-import { LiveRadarOutput, SnapshotOutput, type RadarRequestInput } from "./contract.ts"
+import { LiveRadarOutput, SnapshotOutput } from "./contract.ts"
 
 type LiveScope = { kind: "session"; sessionID: string } | { kind: "project"; sessionID: string }
 type LiveHandlers = {
@@ -23,77 +23,6 @@ type LiveHandlers = {
 type RegisteredHandlers = LiveHandlers & {
   snapshot(input: { scope: LiveScope }): Effect.Effect<unknown>
 }
-
-test.each([2, 3])(
-  "S8-1 destructive Radar retries at most three reads after %s changes",
-  async (changes) => {
-    const fixture = makeFixture()
-    const reads = operationalReads(fixture, "project", new Uint8Array(32).fill(82))
-    const original = reads.radar.bind(reads)
-    let calls = 0
-    reads.radar = async (...args) => {
-      if (++calls <= changes) throw new ObservationReadChangedError("native")
-      return original(...args)
-    }
-    type Handler = (
-      input: RadarRequestInput,
-      context: {
-        error(type: string, message: string, data: unknown): unknown
-      },
-    ) => Effect.Effect<unknown, unknown>
-    let radar: Handler | undefined
-    const ctx = {
-      rpc: {
-        register: (_definition: unknown, methods: { radar: Handler }) => {
-          radar = methods.radar
-          return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
-        },
-      },
-      session: {
-        get: ({ sessionID }: { sessionID: string }) =>
-          Effect.succeed({
-            id: sessionID,
-            projectID: "project",
-            agent: "architect",
-            time: {},
-          }),
-      },
-      permission: { assert: () => Effect.void },
-      event: { subscribe: () => Stream.never },
-    } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
-    try {
-      const result = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            yield* registerObservability(ctx, reads, "project")
-            return yield* radar!(
-              { scope: { kind: "project", sessionID: "ses-owner" } },
-              {
-                error: (type, message, data) => ({ type, message, data }),
-              },
-            ).pipe(
-              Effect.match({
-                onFailure: (error) => ({ error }),
-                onSuccess: () => ({ success: true }),
-              }),
-            )
-          }),
-        ),
-      )
-      expect(calls).toBe(3)
-      if (changes === 2) expect(result).toEqual({ success: true })
-      else
-        expect(result).toMatchObject({
-          error: {
-            type: "observation_changed",
-            data: { source: "native", recovery: "retry" },
-          },
-        })
-    } finally {
-      fixture.close()
-    }
-  },
-)
 
 function insertLiveProgress(
   fixture: ReturnType<typeof makeFixture>,
@@ -508,7 +437,7 @@ test("history cache hits remain permission-first and continuation data stays sco
           },
         ): Effect.Effect<unknown, unknown>
         trajectoryStatus(input: unknown): Effect.Effect<unknown>
-        topology(input: unknown): Effect.Effect<unknown>
+        snapshot(input: unknown): Effect.Effect<unknown>
       }
     | undefined
   const rpcContext = {
@@ -548,17 +477,17 @@ test("history cache hits remain permission-first and continuation data stays sco
       ),
     )
     const scope = { kind: "project" as const, sessionID: "ses-owner" }
-    expect(await Effect.runPromise(handlers!.topology({ scope }))).toMatchObject({
+    expect(await Effect.runPromise(handlers!.snapshot({ scope }))).toMatchObject({
       plans: [{ nodes: [{ taskID }] }],
     })
     expect(permissionCalls.at(-1)).toBe("read")
     denied = true
-    await expect(Effect.runPromise(handlers!.topology({ scope }))).rejects.toThrow(
+    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow(
       "native permission denied",
     )
     denied = false
     foreignProject = true
-    await expect(Effect.runPromise(handlers!.topology({ scope }))).rejects.toThrow(
+    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow(
       "Observation scope is unavailable",
     )
     foreignProject = false

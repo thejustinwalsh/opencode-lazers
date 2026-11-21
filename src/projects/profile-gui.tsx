@@ -53,11 +53,7 @@ function failureNote(proof: Proof | undefined): string | undefined {
  * proof, its earlier revisions, and an editor for the same JSON the Architect sets and the store
  * keeps (one document, one schema). A save is active at once.
  */
-export function VerificationGroup(props: {
-  ctx: Ctx
-  project: ProjectView
-  refresh: () => void
-}): JSX.Element {
+export function VerificationGroup(props: { ctx: Ctx; project: ProjectView }): JSX.Element {
   const { ctx } = props
   const Ui = ctx.ui
   const rpc = () => ctx.client.rpc(Projects)
@@ -110,7 +106,6 @@ export function VerificationGroup(props: {
       directory: found.location.directory,
     })
     await load()
-    props.refresh()
   }
   const openEditor = () => {
     setText(seed())
@@ -153,7 +148,6 @@ export function VerificationGroup(props: {
       toast.dismiss()
       setBusy(false)
       await load()
-      props.refresh()
     }
   }
   const Cmd = (cmd: { command: string; proof?: Proof | undefined; fixOrInstall?: boolean }) => {

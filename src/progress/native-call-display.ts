@@ -20,13 +20,14 @@ import type { TaskRepository } from "../storage.ts"
  * and a 240-character error, extracted from the payload. Kept by triggers, so every writer of the
  * wide table (the recorder's insert, merge and identity promotion, project-key backfill,
  * retention) keeps it current with no code of its own. The row's `id` is the call's rowid, which
- * an identity promotion keeps, so a stream updates the row in place.
+ * an identity promotion keeps, so a stream updates the row in place. Trigger bodies delete, then
+ * insert (never `INSERT OR REPLACE`, which fails under an outer upsert; see `projections/queue.ts`).
  */
 const MODULE = schemaModules["native-call-display"]
 export const NATIVE_CALL_DISPLAY = "native-call-display"
 
 /** Bump when the derived columns change: the backfill rewrites every row. */
-export const NATIVE_CALL_DISPLAY_GENERATION = 1
+const NATIVE_CALL_DISPLAY_GENERATION = 1
 
 const COLUMNS =
   "id,project_directory,session_id,identity_kind,invocation_id,call_id,detail_call_id,message_id,agent,tool,attempt_id,status,detail,error,first_observed_at,last_observed_at"
@@ -59,10 +60,12 @@ const WATCHED =
 
 const TRIGGERS_SQL = `
   CREATE TRIGGER native_tool_call_display_insert AFTER INSERT ON native_tool_calls BEGIN
-    INSERT OR REPLACE INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
+    DELETE FROM native_tool_call_display WHERE id=NEW.rowid;
+    INSERT INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
   END;
   CREATE TRIGGER native_tool_call_display_update AFTER UPDATE OF ${WATCHED} ON native_tool_calls BEGIN
-    INSERT OR REPLACE INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
+    DELETE FROM native_tool_call_display WHERE id=NEW.rowid;
+    INSERT INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
   END;
   CREATE TRIGGER native_tool_call_display_delete AFTER DELETE ON native_tool_calls BEGIN
     DELETE FROM native_tool_call_display WHERE id=OLD.rowid;
@@ -75,7 +78,7 @@ const TRIGGERS = [
 ]
 
 /** The table and triggers, rebuilt from nothing; the backfill refills the rows. */
-export function installNativeCallDisplaySchema(db: Database) {
+function installNativeCallDisplaySchema(db: Database) {
   for (const name of TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${name}`)
   db.exec("DROP TABLE IF EXISTS native_tool_call_display")
   db.exec(TABLE_SQL)

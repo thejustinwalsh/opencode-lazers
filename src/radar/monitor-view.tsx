@@ -1,14 +1,4 @@
-import {
-  For,
-  Index,
-  untrack,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-} from "solid-js"
+import { For, Index, untrack, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { Accessor, JSX } from "solid-js"
 import type { Ui } from "@opencode/plugin/gui"
 import type { ObservationScope } from "../observability/contract.ts"
@@ -27,7 +17,7 @@ import {
   Section,
   StatRow,
 } from "../details/index.ts"
-import type { LiveAttemptResponse, LiveGroupResponse } from "../observability/contract.ts"
+import { createGroupRead, createWorkerAttempt, type GroupRead } from "./radar-streams.ts"
 import {
   callTarget,
   idleText,
@@ -39,7 +29,6 @@ import {
   workerState,
   workerStats,
 } from "./worker-pane.ts"
-import type { WorkerAttempt } from "./worker-pane.ts"
 import { isHeldWorker } from "./worker-hold.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import type { DetailsState } from "../details-pane.ts"
@@ -99,20 +88,16 @@ type Props = {
   onScopeChange: (choice: MonitorScopeChoice) => void
   onSelectSession: (sessionID: string) => void
   onRefresh: () => void
-  /** Where the selected worker's older calls are read from; absent when there is no stream. */
+  /**
+   * The project's streams: the selected worker's attempt and older calls, and a Map group's tasks.
+   * Absent when there is no stream service.
+   */
   history?: HistorySource
   onView: (view: RadarViewChoice) => void
   onOpenTasks?: () => void
   onOpenWorker?: (sessionID: string) => void
   onOpenTask?: (taskID: string) => void
   onOpenTrajectory?: (taskID: string, reference?: string) => void
-  /** The selected worker's call count, model and tick summary; absent on an older server. */
-  readAttempt?: (sessionID: string, signal: AbortSignal) => Promise<LiveAttemptResponse>
-  /** The tasks behind a Map group node; absent on an older server. */
-  readGroup?: (
-    group: "needs-you" | "failed" | "queued",
-    signal: AbortSignal,
-  ) => Promise<LiveGroupResponse>
   /** The task lifecycle statechart, kept behind the ⋯ menu. */
   onOpenLifecycle?: () => void
   /** Idle sessions are hidden by default; the choice is stored with the view state. */
@@ -723,26 +708,18 @@ export function RadarMonitorView(props: Props) {
   )
   const paneNode = () =>
     props.view === "map" && mapSelection()?.sessionID === undefined ? mapSelection() : undefined
-  /** The selected worker's attempt read, refreshed at most every ten seconds of live updates. */
-  const [attemptRead, setAttemptRead] = createSignal<{
-    sessionID: string
-    attempt: WorkerAttempt | null
-  }>()
-  createEffect(() => {
-    const session = paneSession()
-    void Math.floor((live()?.observedAt ?? 0) / 10_000)
-    const read = props.readAttempt
-    if (!read || !session?.assignment) return
-    const sessionID = session.sessionID
-    const controller = new AbortController()
-    onCleanup(() => controller.abort())
-    read(sessionID, controller.signal).then(
-      (response) => {
-        if (!controller.signal.aborted) setAttemptRead({ sessionID, attempt: response.attempt })
-      },
-      () => {},
-    )
-  })
+  /**
+   * The selected worker's attempt, as a stream over its stored rows: it updates when the attempt
+   * or its calls change, with no polling (the old read ran again every ten seconds of updates).
+   */
+  const attemptRead = createWorkerAttempt(
+    () => props.history,
+    () => {
+      const session = paneSession()
+      const attemptID = session?.assignment?.attemptID
+      return session && attemptID ? { sessionID: session.sessionID, attemptID } : undefined
+    },
+  )
   const attemptOf = (session: LiveSession) => {
     const read = attemptRead()
     return read?.sessionID === session.sessionID ? read.attempt : undefined
@@ -760,27 +737,19 @@ export function RadarMonitorView(props: Props) {
           ? ("queued" as const)
           : undefined
   }
-  const [groupRead, setGroupRead] = createSignal<
-    { group: string; read: LiveGroupResponse } | undefined
-  >()
-  createEffect(() => {
-    const node = paneNode()
-    const workload = live()?.workload
-    void workload?.queued
-    void workload?.needsYou
-    void workload?.failed
-    const group = node ? groupOf(node) : undefined
-    const read = props.readGroup
-    if (!read || !group) return
-    const controller = new AbortController()
-    onCleanup(() => controller.abort())
-    read(group, controller.signal).then(
-      (response) => {
-        if (!controller.signal.aborted) setGroupRead({ group, read: response })
-      },
-      () => {},
-    )
-  })
+  /** The tasks behind the selected Map group, as streams over the stored task list. */
+  const groupRead = createGroupRead(
+    () => props.history,
+    () => {
+      const node = paneNode()
+      return node ? groupOf(node) : undefined
+    },
+  )
+  /** Tasks the group holds beyond the rows read; none when every task is listed. */
+  const groupMore = (read: GroupRead) =>
+    read.indexing === false && read.total > read.tasks.length
+      ? read.total - read.tasks.length
+      : undefined
   const groupTasks = (node: { id: string; kind: string; parent: string | null }) => {
     const read = groupRead()
     return read && read.group === groupOf(node) ? read.read : undefined
@@ -1149,24 +1118,40 @@ export function RadarMonitorView(props: Props) {
                     />
                     <Show when={groupOf(node())}>
                       <Show when={groupTasks(node())}>
-                        {(group) => (
-                          <>
-                            <Rows columns="72px minmax(0, 1fr)" label="Tasks" items={group().tasks}>
-                              {(task) => (
-                                <Row onSelect={() => props.onOpenTask?.(task.taskID)}>
-                                  <code style={{ "font-family": props.monoFont }}>
-                                    {task.reference ?? task.taskID.slice(0, 8)}
-                                  </code>
-                                  <span class="lazers-radar-row-title">{task.title}</span>
-                                </Row>
-                              )}
-                            </Rows>
-                            <Show when={group().total > group().tasks.length}>
+                        {(read) => (
+                          <Show
+                            when={read().indexing === false ? read() : undefined}
+                            fallback={
                               <p class="lazers-radar-note">
-                                {group().total - group().tasks.length} more are in Tasks.
+                                The task list is still being indexed; this group fills in when it is
+                                done.
                               </p>
-                            </Show>
-                          </>
+                            }
+                          >
+                            {(group) => (
+                              <>
+                                <Rows
+                                  columns="72px minmax(0, 1fr)"
+                                  label="Tasks"
+                                  items={(group() as Extract<GroupRead, { indexing: false }>).tasks}
+                                >
+                                  {(task) => (
+                                    <Row onSelect={() => props.onOpenTask?.(task.taskID)}>
+                                      <code style={{ "font-family": props.monoFont }}>
+                                        {task.reference ?? task.taskID.slice(0, 8)}
+                                      </code>
+                                      <span class="lazers-radar-row-title">{task.title}</span>
+                                    </Row>
+                                  )}
+                                </Rows>
+                                <Show when={groupMore(group())}>
+                                  {(more) => (
+                                    <p class="lazers-radar-note">{more()} more are in Tasks.</p>
+                                  )}
+                                </Show>
+                              </>
+                            )}
+                          </Show>
                         )}
                       </Show>
                     </Show>
@@ -1269,7 +1254,7 @@ export function RadarMonitorView(props: Props) {
                     renderEarlier={renderCallRow}
                     source={props.history}
                     target={olderTarget()}
-                    indexing={paneAttempt()?.historyIndexing === true}
+                    indexing={false}
                     monoFont={props.monoFont}
                   />
                   <Disclosure label="Files" count={sessionFiles().length}>

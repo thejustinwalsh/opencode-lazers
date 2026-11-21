@@ -1,23 +1,20 @@
-import type { SnapshotResponse } from "../observability/contract.ts"
+import type { TaskMachineDefinition } from "../runner/task-machine-config.ts"
 import { activeState } from "./projection.ts"
 import type { ObservationNode } from "./projection.ts"
 
 /** Retain live inputs even while the same selected-state Show stays mounted. */
 export function flowStateInspector(
   node: () => ObservationNode | undefined,
-  snapshot: () => SnapshotResponse | undefined,
+  machine: () => TaskMachineDefinition | undefined,
   stateID: () => string,
 ) {
   return () => {
     const currentNode = node()
-    const currentSnapshot = snapshot()
+    const currentMachine = machine()
     const selected = stateID()
     let current: string | undefined
-    if (currentNode && currentSnapshot) {
-      if (
-        !currentNode.machineSupported ||
-        currentNode.machineVersion !== currentSnapshot.machine.version
-      )
+    if (currentNode && currentMachine) {
+      if (!currentNode.machineSupported || currentNode.machineVersion !== currentMachine.version)
         current = "Unsupported machine"
       else if (!currentNode.snapshot) current = undefined
       else if (
@@ -25,14 +22,14 @@ export function flowStateInspector(
         currentNode.snapshot.value !== currentNode.state
       )
         current = "Snapshot mismatch"
-      else current = activeState(currentNode, currentSnapshot) === selected ? "Yes" : "No"
+      else current = activeState(currentNode, currentMachine) === selected ? "Yes" : "No"
     }
     return {
       current,
-      initial: currentSnapshot?.machine.initialState === selected ? "Yes" : "No",
+      initial: currentMachine?.initialState === selected ? "Yes" : "No",
       matchesRecordedState: currentNode?.state === selected,
       reason: currentNode?.reason ?? undefined,
-      machine: currentSnapshot?.machine.version,
+      machine: currentMachine?.version,
       taskID: currentNode?.taskID,
     }
   }

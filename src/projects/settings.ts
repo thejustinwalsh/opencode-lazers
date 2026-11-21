@@ -130,6 +130,14 @@ export function projectSettings(
   )
 }
 
+/** `globalSettings` inside an open transaction (the Projects overview refresh). */
+export function globalSettingsIn(
+  db: Database,
+  defaults: Partial<GlobalSettings> = {},
+): GlobalSettings {
+  return resolve(globalSchema, builtInGlobal, defaults, storedValues(db, GLOBAL_SCOPE))
+}
+
 /**
  * `projectSettings` inside an open transaction (dispatch admission reads it there). A database
  * without the settings table yet reads as never set.

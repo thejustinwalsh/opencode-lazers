@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { databaseChanges } from "../database-events.ts"
 import { workIsActive } from "../retention/store.ts"
+import type { BackfillPacing } from "../progress/display-backfill.ts"
 import { TaskRepository } from "../storage.ts"
 import {
   advanceProjectionState,
@@ -50,18 +51,8 @@ export type ProjectionSpec = {
   queue?: { table: string; drain(db: Database): QueueDrain }
 }
 
-export type BackfillPacing = {
-  /** Wait before the first slice, so a starting service is not slowed by it. */
-  startMs: number
-  /** Time a slice may take, and the wait after it, when no attempt is preparing, running or verifying. */
-  quiet: { sliceMs: number; waitMs: number }
-  busy: { sliceMs: number; waitMs: number }
-  /** Wait after a failed slice. */
-  retryMs: number
-}
-
 /** The progress display backfill's pacing (`src/progress/display-backfill.ts`), measured there. */
-export const DEFAULT_PROJECTION_PACING: BackfillPacing = {
+const DEFAULT_PROJECTION_PACING: BackfillPacing = {
   startMs: 2_000,
   quiet: { sliceMs: 40, waitMs: 25 },
   busy: { sliceMs: 6, waitMs: 500 },

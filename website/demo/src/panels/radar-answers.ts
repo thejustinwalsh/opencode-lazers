@@ -1,20 +1,14 @@
 import { ObservabilityChanged, Observability } from "../../../../src/observability/contract.ts"
-import type {
-  LiveAttemptResponse,
-  LiveGroupResponse,
-  LiveRadarResponse,
-  ObservationScope,
-} from "../../../../src/observability/contract.ts"
-import { frameSize, writeFrame } from "../../../../src/streams/frame.ts"
+import type { LiveRadarResponse, ObservationScope } from "../../../../src/observability/contract.ts"
 import { Streams } from "../../../../src/streams/contract.ts"
-import { liveHistoryColumns } from "../../../../src/streams/sources/live-history-ref.ts"
+import { radarStreams } from "./radar-streams.ts"
 import type { Read } from "../adapter.ts"
 import { T0 } from "../story.ts"
 
 /**
  * Pure answers for the Radar panel: a compact description of the world at one moment, expanded
- * into the exact `lazers.observability` live reads (`liveRadar`, `liveAttempt`,
- * `liveGroup`) the real panel reads. No browser or Solid code, so the build script can validate it.
+ * into the `lazers.observability` live read (`liveRadar`) and the stream frames (`radar-streams.ts`)
+ * the real panel reads. No browser or Solid code, so the build script can validate it.
  * Times are story milliseconds: 0 is the story's start and the demo's `Date.now()` is `T0 + clock`.
  */
 export interface DemoCall {
@@ -294,105 +288,20 @@ function live(data: RadarData, scope: ObservationScope): LiveRadarResponse {
   }
 }
 
-/** The demo keeps no progress rows to list: its older-calls stream is always an empty window. */
-function emptyHistoryFrame() {
-  const bytes = new Uint8Array(frameSize(liveHistoryColumns, []))
-  writeFrame(
-    bytes.buffer,
-    0,
-    liveHistoryColumns,
-    { revision: 0, count: 0, before: 0, after: 0 },
-    [],
-  )
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return { seq: 1, data: btoa(binary) }
-}
-
-/** One tick per tool call: the ones the read lists, and earlier ones spread from the start. */
-function ticks(worker: DemoWorker) {
-  const listed = worker.calls.map((call) => ({
-    at: abs(call.at),
-    ...(call.failed !== undefined ? { failed: true as const } : {}),
-  }))
-  const earlier = Math.max(0, worker.toolCount - worker.calls.length)
-  const first = worker.calls[0]?.at ?? worker.startedAt + 60_000
-  const span = Math.max(1, first - worker.startedAt)
-  const before = Array.from({ length: earlier }, (_, index) => ({
-    at: abs(worker.startedAt + Math.round(((index + 1) * span) / (earlier + 1))),
-  }))
-  return [...before, ...listed]
-}
-
-function attempt(data: RadarData, sessionID: string, scope: ObservationScope): LiveAttemptResponse {
-  void scope
-  const worker = data.workers.find((candidate) => workerSession(candidate.n) === sessionID)
-  return {
-    schemaVersion: 1,
-    projectID: PROJECT.id,
-    sessionID,
-    attempt: worker
-      ? {
-          id: attemptID(worker.n),
-          number: 1,
-          state: worker.state,
-          startedAt: abs(worker.startedAt),
-          toolCount: worker.toolCount,
-          model: {
-            providerID: worker.model.providerID,
-            id: worker.model.id,
-            ...(worker.model.variant ? { variant: worker.model.variant } : {}),
-          },
-          summary: {
-            lastActivityAt: abs(lastTouch(worker.calls, worker.startedAt)),
-            ticks: ticks(worker),
-            ...(worker.files ? { files: worker.files } : {}),
-          },
-          task: {
-            state: worker.held ? "blocked" : worker.state === "verifying" ? "verifying" : "running",
-            reason: worker.held ?? null,
-            planState: "running",
-            planReason: null,
-          },
-          ...(worker.concern ? { concern: worker.concern } : {}),
-        }
-      : null,
-  }
-}
-
-function group(data: RadarData, name: "needs-you" | "failed" | "queued"): LiveGroupResponse {
-  const tasks = name === "needs-you" ? data.needsYou : name === "failed" ? data.failed : data.queued
-  return {
-    schemaVersion: 1,
-    projectID: PROJECT.id,
-    group: name,
-    total: tasks.length,
-    tasks: tasks.map((task) => ({
-      taskID: taskID(task.n),
-      reference: ref(task.n),
-      title: task.title,
-    })),
-  }
-}
-
 export function rpc(data: () => RadarData) {
   return {
     [Observability.id]: {
       liveRadar: (input: { scope: ObservationScope }) => live(data(), input.scope),
-      liveAttempt: (input: { scope: ObservationScope; sessionID: string }) =>
-        attempt(data(), input.sessionID, input.scope),
-      liveGroup: (input: { group: "needs-you" | "failed" | "queued" }) =>
-        group(data(), input.group),
     },
-    [Streams.id]: {
-      open: () => emptyHistoryFrame(),
-      slide: () => emptyHistoryFrame(),
-      seek: () => emptyHistoryFrame(),
-      read: () => emptyHistoryFrame(),
-      touch: () => ({ alive: true }),
-      close: () => ({ closed: true }),
-    },
-  } as Record<string, Record<string, (input: never) => unknown>>
+    [Streams.id]: radarStreams(data, {
+      project: PROJECT.canonical,
+      taskID,
+      attemptID,
+      ref,
+      workerSession,
+      abs,
+    }),
+  } as unknown as Record<string, Record<string, (input: never) => unknown>>
 }
 
 /** Every distinct read this data answers, with the contract schema that must accept it. */
@@ -405,20 +314,6 @@ export function reads(data: RadarData): Read[] {
       label: `lazers.observability.liveRadar ${scope.kind}`,
       schema: Observability.methods.liveRadar.output,
       value: live(data, scope),
-    })
-  const ids = [ARCHITECT, ...data.workers.map((worker) => workerSession(worker.n))]
-  for (const id of ids) {
-    out.push({
-      label: `lazers.observability.liveAttempt ${id}`,
-      schema: Observability.methods.liveAttempt.output,
-      value: attempt(data, id, session),
-    })
-  }
-  for (const name of ["needs-you", "failed", "queued"] as const)
-    out.push({
-      label: `lazers.observability.liveGroup ${name}`,
-      schema: Observability.methods.liveGroup.output,
-      value: group(data, name),
     })
   out.push({
     label: "lazers.observability.changed",

@@ -1,7 +1,5 @@
 import { RadarLocationNotLoadedError } from "./project.ts"
 import type {
-  LiveAttemptResponse,
-  LiveGroupResponse,
   LiveRadarResponse,
   ObservationChange,
   ObservationScope,
@@ -14,14 +12,6 @@ export type RadarMonitorRPC = {
     input: { scope: ObservationScope; includeUnmanagedSessions: boolean },
     options: RPCOptions,
   ): Promise<LiveRadarResponse>
-  liveAttempt(
-    input: { scope: ObservationScope; sessionID: string },
-    options: RPCOptions,
-  ): Promise<LiveAttemptResponse>
-  liveGroup(
-    input: { scope: ObservationScope; group: "needs-you" | "failed" | "queued" },
-    options: RPCOptions,
-  ): Promise<LiveGroupResponse>
   events: {
     subscribe(
       name: "changed",
@@ -36,22 +26,14 @@ export type RadarMonitorTransport = {
     includeUnmanagedSessions: boolean,
     signal: AbortSignal,
   ): Promise<LiveRadarResponse>
-  /** The selected worker's call count, model and tick summary. Absent on older transports. */
-  liveAttempt?(
-    scope: ObservationScope,
-    sessionID: string,
-    signal: AbortSignal,
-  ): Promise<LiveAttemptResponse>
-  liveGroup?(
-    scope: ObservationScope,
-    group: "needs-you" | "failed" | "queued",
-    signal: AbortSignal,
-  ): Promise<LiveGroupResponse>
   changes(signal: AbortSignal): AsyncIterable<ObservationChange>
   online(): boolean
 }
 
-/** The monitor's primary adapter intentionally has no legacy snapshot/radar methods. */
+/**
+ * The monitor's live read: the sessions half of the Radar until `radar.sessions` replaces it (Task
+ * 3). The worker pane and the Map groups read streams (`radar-streams.ts`).
+ */
 export function createRadarMonitorTransport(
   rpc: () => RadarMonitorRPC,
   directory: string,
@@ -70,14 +52,6 @@ export function createRadarMonitorTransport(
         { scope, includeUnmanagedSessions },
         { location: { directory }, signal },
       )
-    },
-    liveAttempt: async (scope, sessionID, signal) => {
-      await requireLoaded()
-      return rpc().liveAttempt({ scope, sessionID }, { location: { directory }, signal })
-    },
-    liveGroup: async (scope, group, signal) => {
-      await requireLoaded()
-      return rpc().liveGroup({ scope, group }, { location: { directory }, signal })
     },
     changes: (signal) =>
       (async function* () {

@@ -19,7 +19,7 @@ import type { SchedulerCoordinator, SchedulerProjectStatus } from "./scheduler-c
  */
 const MODULE = schemaModules["scheduler-status"]
 
-export function installSchedulerStatusSchema(db: Database) {
+function installSchedulerStatusSchema(db: Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS scheduler_project_status (
       id INTEGER PRIMARY KEY,

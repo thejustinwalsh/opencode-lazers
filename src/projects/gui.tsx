@@ -1,5 +1,5 @@
 import { Plugin, Style, bindPlugin } from "@opencode/plugin/gui"
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createSignal, For, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import type { JSX } from "solid-js"
 import { Label } from "../details/components.tsx"
@@ -7,6 +7,10 @@ import { SettingLabel, settingLabelStyles } from "../settings-label.tsx"
 import { Projects } from "./contract.ts"
 import type { ProjectScope, ProjectsListing, ProjectsOutcome, ProjectView } from "./contract.ts"
 import { VerificationGroup, verificationStyles } from "./profile-gui.tsx"
+import { globalViewOf, projectViewOf } from "./overview-view.ts"
+import { Streams } from "../streams/contract.ts"
+import { createStream, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import { projectsRefs } from "../streams/sources/projects-ref.ts"
 import {
   MODEL_CHOICES,
   SLICER_CHOICES,
@@ -15,7 +19,8 @@ import {
 } from "../planning/settings-view.ts"
 
 type Ctx = Parameters<Plugin.Setup>[0]
-const REFRESH_MS = 3_000
+/** Rows the projects window starts with; it doubles while rows remain after it (3 live). */
+const FIRST_WINDOW = 16
 
 const scopeKey = (scope: ProjectScope) => (scope.kind === "global" ? "global" : scope.key)
 
@@ -31,8 +36,9 @@ function parseField(text: string, whole: boolean): { value: number | null } | { 
 
 /**
  * The Projects section of the LAZERS settings page: dispatch pause for all projects and for each
- * one, a project's code, and its limit, weight and spend ceiling. Every write is followed by a
- * re-read, so the page shows what is stored.
+ * one, a project's code, and its limit, weight and spend ceiling. The rows are two streams over
+ * the stored overview (`projects.list`, `projects.global`), so a write shows when it is stored
+ * and an idle page reads nothing.
  */
 export function setupProjects(ctx: Ctx) {
   const Ui = ctx.ui
@@ -46,20 +52,34 @@ export function setupProjects(ctx: Ctx) {
     const [drafts, setDrafts] = createSignal<Record<string, string>>({})
 
     const signal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
-    const refresh = async () => {
-      try {
-        // Reconciled by key: a project's row keeps its identity, focus and unsent drafts.
-        const next = await ctx.client.rpc(Projects).list({}, { signal: signal() })
-        setListing("value", reconcile(next, { key: "key", merge: true }))
-        setUnreachable(false)
-      } catch {
-        if (!ctx.signal.aborted) setUnreachable(true)
+    const transport = rpcStreamsTransport(
+      () => ctx.client.rpc(Streams) as unknown as StreamsRpc,
+      ctx.signal,
+    )
+    const [window, setWindow] = createSignal(FIRST_WINDOW)
+    const list = createStream(transport, projectsRefs.list, () => ({
+      filter: {},
+      order: "registry",
+      window: window(),
+    }))
+    const global = createStream(transport, projectsRefs.global, () => ({
+      filter: {},
+      order: "key",
+      window: 1,
+    }))
+    createEffect(() => {
+      if (list.loaded() && list.after() !== 0) setWindow((current) => current * 2)
+    })
+    createEffect(() => {
+      setUnreachable(Boolean(list.error() ?? global.error()))
+      const head = global.items()[0]
+      if (!list.loaded() || !global.loaded() || !head) return
+      // Reconciled by key: a project's row keeps its identity, focus and unsent drafts.
+      const next: ProjectsListing = {
+        projects: list.items().map((row) => projectViewOf(row)),
+        ...globalViewOf(head),
       }
-    }
-    onMount(() => {
-      void refresh()
-      const timer = setInterval(() => void refresh(), REFRESH_MS)
-      onCleanup(() => clearInterval(timer))
+      setListing("value", reconcile(next, { key: "key", merge: true }))
     })
 
     const setDraft = (id: string, text: string | undefined) =>
@@ -72,12 +92,11 @@ export function setupProjects(ctx: Ctx) {
         const { [id]: _removed, ...rest } = all
         return message === undefined ? rest : { ...rest, [id]: message }
       })
-    /** Runs a write, shows a refusal beside `id`, and re-reads either way. */
+    /** Runs a write and shows a refusal beside `id`; the stored result arrives on the stream. */
     const write = async (id: string, call: () => Promise<ProjectsOutcome>) => {
       try {
         const outcome = await call()
         refuse(id, outcome.ok ? undefined : outcome.message)
-        await refresh()
         return outcome.ok
       } catch {
         refuse(id, "Could not save. Try again.")
@@ -458,7 +477,7 @@ export function setupProjects(ctx: Ctx) {
           {(project) => (
             <>
               <Row project={project} />
-              <VerificationGroup ctx={ctx} project={project} refresh={() => void refresh()} />
+              <VerificationGroup ctx={ctx} project={project} />
               <PlanningSwitch project={project} />
             </>
           )}

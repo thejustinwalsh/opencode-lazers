@@ -3,7 +3,7 @@ import { section, timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
-import { Effect, Stream } from "effect"
+import { Effect } from "effect"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
@@ -12,10 +12,8 @@ import { Observability, type ObservationChange } from "./contract.ts"
 import { allProjectsAccess, callerSession } from "../projects/read-access.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
 import type { ObservationReads } from "./read.ts"
-import { ObservationReadChangedError } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { databaseChanges } from "../database-events.ts"
-import { LiveHistoryUnavailableError } from "./live-store.ts"
 
 type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
 
@@ -132,26 +130,6 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
-      topology: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            if (input.scope.kind === "all")
-              return reads.topologyAll(
-                { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
-                tracker,
-                await accessFor(input.scope),
-              )
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            return reads.topology(input.scope, tracker)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
       progressDiagnostics: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -198,59 +176,6 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
-      radar: (input, context) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all") {
-              const access = await accessFor(input.scope)
-              const scope = input.scope
-              for (let attempt = 1; ; attempt++) {
-                signal.throwIfAborted()
-                try {
-                  return await reads.radarAll(
-                    {
-                      scope,
-                      includeUnmanagedSessions: input.includeUnmanagedSessions,
-                      ...(input.cursor ? { cursor: input.cursor } : {}),
-                    },
-                    tracker,
-                    signal,
-                    access,
-                  )
-                } catch (error) {
-                  if (!(error instanceof ObservationReadChangedError) || attempt === 3) throw error
-                }
-              }
-            }
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            for (let attempt = 1; ; attempt++) {
-              signal.throwIfAborted()
-              try {
-                return await reads.radar(input, tracker, signal)
-              } catch (error) {
-                if (!(error instanceof ObservationReadChangedError) || attempt === 3) throw error
-              }
-            }
-          },
-          catch: (error) => error,
-        }).pipe(
-          Effect.catch((error) =>
-            error instanceof ObservationReadChangedError
-              ? Effect.fail(
-                  context.error("observation_changed", error.message, {
-                    source: error.source,
-                    recovery: "retry",
-                  }),
-                )
-              : Effect.die(new Error(safeError(error, privacyStats()))),
-          ),
-        ),
       liveRadar: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -276,58 +201,6 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
-      liveGroup: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all")
-              return reads.liveGroupAll(
-                {
-                  scope: input.scope,
-                  group: input.group,
-                  ...(input.cursor ? { cursor: input.cursor } : {}),
-                },
-                tracker,
-                signal,
-                await accessFor(input.scope),
-              )
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            return reads.liveGroup(input, signal)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
-      liveAttempt: (input, context) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all")
-              return reads.liveAttemptAll(input, tracker, signal, await accessFor(input.scope))
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            return reads.liveAttempt(input, signal)
-          },
-          catch: (error) => error,
-        }).pipe(
-          Effect.catch((error) =>
-            error instanceof LiveHistoryUnavailableError
-              ? Effect.fail(
-                  context.error("live_history_unavailable", error.message, {
-                    reason: error.reason,
-                    recovery: "restart",
-                  }),
-                )
-              : Effect.die(new Error(safeError(error, privacyStats()))),
-          ),
-        ),
       trajectory: (input) =>
         Effect.tryPromise({
           try: async (signal) => {

@@ -361,17 +361,6 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         })
         return reads.liveRadar(input, tracker!, options.signal, tracker!.streamEpoch)
       },
-      liveAttempt: (
-        input: { scope: { kind: "session" | "project"; sessionID: string }; sessionID: string },
-        options: { signal: AbortSignal },
-      ) => Promise.resolve(reads.liveAttempt(input, options.signal)),
-      liveGroup: (
-        input: {
-          scope: { kind: "session" | "project"; sessionID: string }
-          group: "needs-you" | "failed" | "queued"
-        },
-        options: { signal: AbortSignal },
-      ) => Promise.resolve(reads.liveGroup(input, options.signal)),
       snapshot: async () => {
         legacyCalls.snapshot++
         throw new Error("Observation scope is too large; narrow it")
@@ -690,8 +679,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     ).toEqual(["Tool", "Target", "Duration", "Time"])
     expect(inspectorText()).not.toMatch(/Grep|read\b/)
     // The worker's older calls open as a stream of the attempt, tools only, from before its live calls.
-    await until(() => streamOpens.length > 0)
-    expect(streamOpens.at(-1)).toMatchObject({
+    // The pane also opens the attempt's own streams (its row, its whole call lane, its newest
+    // row); the older-calls list is the one bounded before the live read's earliest call.
+    const olderOpen = () => streamOpens.filter((open) => open.filter.beforeAt !== undefined).at(-1)
+    await until(() => olderOpen() !== undefined)
+    expect(streamOpens.map((open) => open.source)).toContain("radar.attempt")
+    expect(olderOpen()).toMatchObject({
       source: "observability.liveHistory",
       filter: {
         projectDirectory: fixture.directory,
@@ -702,7 +695,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     })
     // The live read lists the newest calls, some of the 150 among them; the stream lists the
     // rest: every call at a time before the live read's earliest (they are at times 1 to 150).
-    const olderCount = () => (streamOpens.at(-1)!.filter.beforeAt as number) - 1
+    const olderCount = () => (olderOpen()!.filter.beforeAt as number) - 1
     expect(olderCount()).toBeGreaterThan(60)
     await openDisclosure("Calls")
     await until(() => container.querySelector(".lazers-radar-history [role=row] code") !== null)
@@ -939,6 +932,15 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     expect(container.querySelector(".lazers-details-header")?.textContent).toBe("No state selected")
     expect(headerShape()).toEqual(monitorHeaderShape)
+    // The lifecycle reads streams (plans, the plan's nodes, the node's recorded edges), never the
+    // snapshot: the statechart draws with the recorded ACCEPT edge of the fixture's task.
+    await until(() => container.querySelector(".lazers-radar-statechart") !== null)
+    for (const source of ["tasks.plans", "radar.nodes", "radar.planEvents"])
+      expect(streamOpens.map((open) => open.source)).toContain(source)
+    expect(legacyCalls.snapshot).toBe(0)
+    await until(
+      () => container.querySelector('.lazers-radar-statechart g[data-recorded="true"]') !== null,
+    )
     ;[...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Back to Flow")!
       .click()

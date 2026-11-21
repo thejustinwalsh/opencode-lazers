@@ -752,6 +752,29 @@ transaction as `refreshProgressDisplay`; backfill 79,365 rows. Commit
 the fold), `src/observability/changes.ts` (tracker no longer owns live signals once Task 6
 lands). Tests in 1.5. Commit `feat(events): fold host session state into the database`.
 
+★ As built (`src/host-sessions/{state,fold,native}.ts`, module `host-sessions` generation 1;
+source `radar.sessions` in `src/streams/sources/host-sessions{,-ref}.ts`). Corrections:
+
+- Own directory, not `src/events/` (another lane owns it). `event-hub.ts` is unchanged: the
+  fold joins it with `joinNativeEvents` from the project core; `changes.ts` is Task 6's.
+- An event is a hint, not a fact: the fold re-reads the session (`session.get`, one call) and
+  the inbox/permission/form counts (`RunnerHost.session` without messages) only when the
+  session is busy and unknown or the event can move them. A hint created before the last read
+  began reads nothing. A read older than the stored `host_updated_at` is ignored.
+- Columns added: `agent`, `title`, `directory`, `created_at`; `updated_at` is when a shown
+  column last changed (the `recent` order), `host_updated_at` the host's stamp. ★ `title` is the
+  session record's own label (lead's decision: a session attribute, not transcript text),
+  redacted and cut to 200 characters as the live monitor showed it; never derived from messages. Archived sessions keep their row
+  (`archived = 1`; Task 12 shows it); foreign sessions are never stored; deleted ones are.
+- Backfill: the shared owner's pages cannot await a host read, so the `projection` lifecycle
+  covers a seed (attempt and task sessions queued into `host_session_dirty`, the shared queue
+  shape, 6 pages of 200, slowest 0.6 ms) and the fold drains the queue asynchronously.
+  Every subscription attach (start and reattach) resyncs: `session.list` of the project's live
+  sessions by cursor, idle ones written from the listed record, busy ones queued, stored live
+  rows not listed queued. That, not a per-restart re-stamp, is what converges after lost events.
+- One writer: one fold per (database, project) per process; one service process per database
+  (owner decision), so the update hook sees every write.
+
 ### Task 4: Native call display and scheduler status (M)
 
 Built (see 1.2). `native_tool_call_display` (module `native-call-display` 1) and
@@ -781,6 +804,42 @@ reason and ids. So the source is the latest row per edge of one node, grouped at
 Task 6 deletes that part of the old read.
 
 ### Task 6: Radar GUI on streams and deletions (L) — 1.4; demo `radar-streams.ts`.
+
+Built, except the sessions part (below):
+
+- Worker pane: `radar.attempt` (window 1, detail) plus `observability.liveHistory` (tools whole
+  for the lane, newest row for the last activity) in `src/radar/radar-streams.ts`; the 10 s
+  re-read effect and the old 1,000-tick lane cap are gone (the lane window starts at 256 calls and
+  doubles while rows remain). ★ The stored concern (`task_schedule.concern`) carries the line
+  only; the rule's recommended action and reason were read from `openConcerns` and are not shown
+  until `task_schedule` stores them (Task 12). ★ "older calls still indexing" (`historyIndexing`)
+  is not shown: it read the display backfill watermark on the main thread.
+- Map group pane: `radar.group` (window 50 = the old 25-row head plus 25 of slop) and
+  `radar.workload` (window 1) for the total. `ready = false` renders "still being indexed",
+  never an empty group or a zero.
+- Lifecycle view: `tasks.plans` (whole, first window 64: 221 plans live), ★ new `radar.nodes`
+  (`runner_nodes` with the persisted machine snapshot; whole, first window 16) and
+  `radar.planEvents` (whole, first window 64: at most one row per machine edge), plus a
+  window-1 detail stream anchored at the selected edge for its reason. ★ The machine definition
+  is plain data (`src/runner/task-machine-config.ts`), shared by the runner and the GUI, so the
+  GUI bundles no XState. Deleted: `RadarPanelState` (`src/radar/state.ts`),
+  `createRadarTransport` (`src/radar/transport.ts`), `ObservationSyncState`
+  (`src/observability/state.ts`), `planTransitions`, `transitionForSequence`.
+- Server deletions: RPCs `radar`, `topology`, `liveAttempt`, `liveGroup` and their all-projects
+  variants; `loadRadarSource` and the Radar edge, route and session builders (about 1,300 lines
+  of `src/observability/read.ts`); `LiveReadStore.readAttempt`/`readGroupTasks`;
+  `LIVE_GROUP_TASKS` (25); snapshot `transitions` and the plan-level transition read (the
+  snapshot now reads only a task's `WORKER_STARTED`/`WORKER_STOPPED`, which Trajectory's attempt
+  executions use). ★ Kept, with their owner: the snapshot read itself and its 1,000-plan and
+  10,001-row limits are Trajectory's (task choices, attempts, checks) until Task 13/14.
+- SEAM (Task 3): `radar.sessions` is declared in `radar-ref.ts` (name and the 1.2 columns) with
+  no server source. The monitor's sessions, calls and flow still come from `liveRadar`
+  (`RadarMonitorState`, `kept.ts`, `monitor-transport.ts`, the 512 KB response cap); they are
+  deleted together when Task 3's table lands.
+- Demo: `website/demo/src/panels/radar-streams.ts` answers `radar.attempt`,
+  `observability.liveHistory`, `radar.group` and `radar.workload` with real frames over the mock
+  world (a shared engine in `stream-answers.ts` serves Tasks and Radar); the `Streams` stub and
+  the `liveAttempt`/`liveGroup` answers are gone.
 
 ### Task 7: Host transcript fold and `trajectory_task_effort` (XL)
 
@@ -877,6 +936,30 @@ Module `model-mappings` generation 1 → 2; 3.4; demo `models-streams.ts`.
 
 Module `project-overview` generation 1; `projects` generation 2 → 3 (paths index); 4.2–4.5.
 
+★ As built (`src/projects/overview-store.ts`, `presence.ts`, `overview-view.ts`; sources
+`projects.list`, `projects.global` in `src/streams/sources/projects{,-ref}.ts`). Corrections:
+
+- Settings are one resolved JSON column (`settings`, the exact `ProjectSettings` /
+  `GlobalSettings` object), not one column each; pauses and Architect contact carry a `paused` /
+  `architect_contact` flag (a pause reason may be empty). `canonical_checkouts` (real paths,
+  resolved once at refresh) is what `loaded` matches `project_presence.canonical` against.
+- Writers are not edited: guarded triggers on `lazers_projects`, `lazers_project_paths`,
+  `lazers_settings`, `lazers_dispatch_pause`, `runner_architect_contact` and
+  `lazers_profile_revisions` queue the key, and the projections hook drains it in the writer's
+  transaction (the shared owner retries parked entries). Trigger bodies queue with UPDATE then
+  INSERT-if-missing, never `INSERT OR REPLACE`: under a writer's upsert (`ON CONFLICT DO
+UPDATE`, which `setPause` and the settings writer use) SQLite applies the outer conflict
+  handling to trigger statements, and a second `OR REPLACE` of the same ref failed the writer
+  with a UNIQUE error (found by the writers test).
+- The backfill is one owner page (queue every key and the global row, drain); new plugin-option
+  defaults (`setProjectOverviewDefaults`, at each core start) queue every row again.
+- Presence is written by the project core (create, dispose), refcounted per root (a reload
+  builds the new core before disposing the old); the first write of a process clears other
+  instances' rows.
+- `projects.revisions` / `projects.proofs` are not built yet: the Verification group still reads
+  the `profile` RPC, now once per stored profile change (driven by the list row), not per poll.
+  The `list` RPC is removed; `listProjects` stays as the parity oracle until Task 14.
+
 ### Task 12: Tasks detail, activity, current activity, search fields (L)
 
 Sources `tasks.detail` (`task_schedule` + `tasks.body` cold), `tasks.attempts`
@@ -939,10 +1022,10 @@ registration edits are one line per task and merged in wave order.
 | `task-events`            | new, 1     | T1, T2 | create tables, triggers (plus `projections` new, 1: `projection_state`) | measured: 225 transition pages, 53 effect pages, 318 progress pages; 2.6 s of writer time in pages of at most about 36 ms, spread over the owner's pacing |
 | `projects`               | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows)                        | none                                                                                                                                                      |
 | `project-overview`       | new, 1     | T11    | create                                                                  | 1 transaction (3 rows)                                                                                                                                    |
-| ★ `model-candidates`     | new, 1     | T8     | create `model_candidates`, `model_candidate_sets`, queue, triggers      | measured: 1 build per project, 145 ms (5 body parses, 1,466 rows, 6.2 MB)                                                                                 |
+| ★ `model-candidates`     | new, 1     | T8     | create `model_candidates`, `model_candidate_sets`, queue, triggers      | 1 build per project in the decision worker; main thread writes changed rows in pages                                                                      |
 | ★ `native-call-display`  | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
 | ★ `scheduler-status`     | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
-| `host-sessions`          | new, 1     | T3     | create                                                                  | ≈260 host `get` calls, 20 per page                                                                                                                        |
+| `host-sessions`          | new, 1     | T3     | create (★ table + `host_session_dirty` queue)                           | ★ seed: 6 queue pages (slowest 0.6 ms); then one `session.get` per seeded session, async                                                                  |
 | ★ `model-decision-views` | new, 1     | T9     | create view tables                                                      | none (materialized on open)                                                                                                                               |
 | `trajectory-projection`  | new, 1     | T7     | create effort table                                                     | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
 | `model-mappings`         | 1 → 2      | T10    | create view                                                             | 1 transaction per project                                                                                                                                 |

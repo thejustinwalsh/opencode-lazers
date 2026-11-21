@@ -30,7 +30,7 @@ export const schemaModules = {
     tables: ["delegated_agent_admissions"],
   },
   projects: {
-    generation: 2,
+    generation: 3,
     source: "src/project-key.ts",
     tables: [
       "lazers_projects",
@@ -271,6 +271,16 @@ export const schemaModules = {
     generation: 1,
     source: "src/runner/scheduler-status.ts",
     tables: ["scheduler_project_status"],
+  },
+  "project-overview": {
+    generation: 1,
+    source: "src/projects/overview-store.ts",
+    tables: ["project_overview", "project_global", "project_presence", "project_overview_dirty"],
+  },
+  "host-sessions": {
+    generation: 1,
+    source: "src/host-sessions/state.ts",
+    tables: ["host_session_state", "host_session_dirty"],
   },
   observability: {
     generation: 1,
