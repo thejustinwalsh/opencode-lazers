@@ -89,8 +89,11 @@ function messages(): HostMessage[] {
 
 /**
  * A host message list with the page cursors the real one has: `f:<n>` reads forward from
- * boundary n, `b:<n>` reads the messages before boundary n; every page carries `next` (after its
- * last message) and `previous` (before its first).
+ * boundary n, `b:<n>` reads the messages before boundary n, each page ascending. As the real host
+ * does (probed read-only through the driver client, 2026-11-21: `.cache/driver/
+ * claude-backward-paging.ts`, `claude-tail-paging.ts`), every page with messages carries both
+ * `next` (after its last message) and `previous` (before its first), at the ends of the list too;
+ * the page read through an end's cursor is empty and carries neither.
  */
 function fakeHost(store: Map<string, HostMessage[]>) {
   const state = { lists: 0 }
@@ -107,10 +110,7 @@ function fakeHost(store: Map<string, HostMessage[]>) {
           kind === "f" ? [at, Math.min(n, at + input.limit)] : [Math.max(0, at - input.limit), at]
         return {
           data: all.slice(lo, hi),
-          cursor: {
-            next: hi < n ? `f:${hi}` : null,
-            previous: lo > 0 ? `b:${lo}` : null,
-          },
+          cursor: hi > lo ? { next: `f:${hi}`, previous: `b:${lo}` } : {},
         }
       },
     },
@@ -279,6 +279,30 @@ test("tail anchors the last window; seek to a key centers it; head resets", asyn
   await stream.seek("head")
   expect(idsOf(stream)).toEqual(refIds(0, 10))
   stream.close()
+})
+
+test("the real host's list ends: a stored end cursor and the first page's previous read as ends", async () => {
+  // The transcript fold stores the cursor it last read through: at the end of the list, the
+  // `next` of the last page, whose page is empty and carries no cursor.
+  const n = store.get(session)!.length
+  db.run("INSERT INTO transcript_sessions VALUES(?,?,?)", [project, session, `f:${n}`])
+  try {
+    const stream = open(10, "tail")
+    await stream.ready()
+    expect(idsOf(stream)).toEqual(refIds(reference.length - 10, reference.length))
+    // Back to the head across pages: each preceding page is read ascending, and the first page's
+    // `previous` (an empty page) ends the walk instead of naming a position.
+    await stream.slide(-100_000)
+    expect(idsOf(stream)).toEqual(refIds(0, 10))
+    expect(stream.before).toBe(0)
+    // A refresh re-reads from the window's start: still the head window, not the empty page.
+    await stream.slide(3)
+    await stream.slide(-3)
+    expect(idsOf(stream)).toEqual(refIds(0, 10))
+    stream.close()
+  } finally {
+    db.run("DELETE FROM transcript_sessions WHERE session_id=?", [session])
+  }
 })
 
 test("a hint after a new message updates a tail window; close stops the host reads", async () => {

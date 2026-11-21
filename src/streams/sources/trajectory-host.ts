@@ -133,12 +133,24 @@ function messagePager(
     }
   }
 
+  type Page = Awaited<ReturnType<typeof list>>
+  /**
+   * The page through `cursor`, or undefined at an end of the list. The real host sets `next` and
+   * `previous` on every page with messages, its first and last included; the page read through an
+   * end's cursor is empty and carries neither. A position never names that empty page.
+   */
+  const follow = async (cursor: string | null, from: string | null, signal: AbortSignal) => {
+    if (cursor === null || cursor === from) return undefined
+    const page = await list(cursor, signal)
+    return page.messages.length > 0 ? page : undefined
+  }
+
   /** Up to `need` rows after `from`. */
   const forward = async (from: Position, need: number, signal: AbortSignal): Promise<Chunk> => {
     const rows: unknown[][] = []
     let { c, i, k } = from
+    let page: Page = await list(c, signal)
     for (;;) {
-      const page = await list(c, signal)
       let at = i
       let skip = k
       while (at < page.messages.length) {
@@ -155,22 +167,25 @@ function messagePager(
         if (rows.length >= need) break
       }
       const rest = page.messages.slice(at).some((m) => messageRows(m).length > 0)
-      const more = rest || page.next !== null
-      if (at >= page.messages.length && page.next !== null && page.next !== c) {
-        if (rows.length >= need)
-          return {
-            rows,
-            start: from,
-            end: { c: page.next, i: 0, k: 0 },
-            before: !atHead(from),
-            after: true,
-          }
+      // The window is full at this page's end: the boundary stays on this page, so a later read
+      // follows `next` itself (and finds new messages there).
+      if (at >= page.messages.length && rows.length >= need)
+        return {
+          rows,
+          start: from,
+          end: { c, i: at, k: 0 },
+          before: !atHead(from),
+          after: page.next !== null,
+        }
+      const following = at >= page.messages.length ? await follow(page.next, c, signal) : undefined
+      if (following) {
         c = page.next
+        page = following
         i = 0
         k = 0
         continue
       }
-      return { rows, start: from, end: { c, i: at, k: 0 }, before: !atHead(from), after: more }
+      return { rows, start: from, end: { c, i: at, k: 0 }, before: !atHead(from), after: rest }
     }
   }
 
@@ -179,7 +194,7 @@ function messagePager(
     const reversed: unknown[][][] = []
     let taken = 0
     let { c, i, k } = from
-    let page = await list(c, signal)
+    let page: Page = await list(c, signal)
     for (;;) {
       for (let at = Math.min(k > 0 ? i : i - 1, page.messages.length - 1); at >= 0; at--) {
         const events = messageRows(page.messages[at]!, at)
@@ -193,12 +208,14 @@ function messagePager(
         reversed.push(slice)
         taken += slice.length
         if (taken >= need) {
+          // True when unsure: the first page carries a `previous` too.
           const before = at > 0 || page.previous !== null
           const start = before ? { c, i: at, k: 0 } : HEAD
           return { rows: reversed.reverse().flat(), start, end: from, before, after: true }
         }
       }
-      if (page.previous === null || page.previous === c)
+      const preceding = await follow(page.previous, c, signal)
+      if (!preceding)
         return {
           rows: reversed.reverse().flat(),
           start: { c, i: 0, k: 0 },
@@ -207,7 +224,7 @@ function messagePager(
           after: true,
         }
       c = page.previous
-      page = await list(c, signal)
+      page = preceding
       i = page.messages.length
       k = 0
     }
@@ -224,10 +241,17 @@ function messagePager(
             )
             .get(filter.projectDirectory, sessionID)?.cursor,
       ) ?? null
+    let page: Page = await list(c, signal)
+    // A stored cursor at the list's end reads the empty page: the tail is then the start's last.
+    if (page.messages.length === 0 && c !== null) {
+      c = null
+      page = await list(c, signal)
+    }
     for (;;) {
-      const page = await list(c, signal)
-      if (page.next === null || page.next === c) return { c, i: page.messages.length, k: 0 }
+      const following = await follow(page.next, c, signal)
+      if (!following) return { c, i: page.messages.length, k: 0 }
       c = page.next
+      page = following
     }
   }
 
