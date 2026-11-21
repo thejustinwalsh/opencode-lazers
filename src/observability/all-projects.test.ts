@@ -9,8 +9,6 @@ import { ObservationChangeTracker } from "./changes.ts"
 import { LiveRadarOutput, SnapshotOutput } from "./contract.ts"
 import { ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
-import { AssociationTaskReads } from "./task-reads.ts"
-import { registerTaskReads } from "../tasks/rpc.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -217,32 +215,6 @@ test("a reference resolves in its own project, and an old code resolves only whe
   expect(owner("QQQ-1")).toBeUndefined()
 })
 
-test("Tasks get and current activity for another project's task", async () => {
-  const { three, units } = await fixture(() => [])
-  const [a, b] = three.projects
-  const reads = new AssociationTaskReads(a!.repository)
-  const taskID = b!.taskIDs[0]!
-  const reference = b!.repository.referenceFor(taskID)!
-  for (const id of [taskID, reference]) {
-    const found = await reads.getAll(
-      { allProjects: true, sessionID: "ses-caller", taskID: id },
-      { units: units() },
-    )
-    expect(found.status === "found" && found.project?.code).toBe("BBB")
-  }
-  const unknown = await reads.getAll(
-    { allProjects: true, sessionID: "ses-caller", taskID: "QQQ-1" },
-    { units: units() },
-  )
-  expect(unknown.status).toBe("not_found")
-  const targets = await reads.currentActivityTargetsAll([taskID, crypto.randomUUID()], {
-    units: units(),
-  })
-  expect(targets[0]).toMatchObject({ authorized: true, project: { code: "BBB" } })
-  expect(targets[1]?.authorized).toBe(false)
-  expect(() => reads.get({ allProjects: true, sessionID: "s", taskID })).toThrow()
-})
-
 test("a cursor names a checkout by hash, and a checkout that is gone is refused", async () => {
   const { reads, tracker, units } = await fixture(() => [])
   const first = await reads.snapshotAll({ scope: all }, tracker, { units: units() })
@@ -355,7 +327,6 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
   const taskID = b!.taskIDs[0]!
   const reference = b!.repository.referenceFor(taskID)!
   addAttempt(b!.repository, b!.planIDs[0]!, taskID, "ses-beta-worker")
-  const tasks = await tasksRpc(f, { sessionProjectID: "project" })
   const { Database } = await import("bun:sqlite")
   const writer = new Database(f.three.path)
   writer.exec("BEGIN IMMEDIATE")
@@ -366,93 +337,12 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
     ] as const)
       expect((await f.walk(method, extra)).length).toBe(3)
     await f.call("trajectory", { scope: all, reference, limit: 5 })
-    await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
-    await tasks.currentActivity({ sessionID: "ses-caller", scope: "all", taskIDs: [taskID] })
   } finally {
     writer.exec("ROLLBACK")
     writer.close()
   }
   expect(a).toBeDefined()
 }, 30_000)
-
-type TaskHandlers = Record<string, (input: unknown) => Effect.Effect<unknown>>
-
-/** The Tasks RPC over the same three projects; its own project is the first one. */
-async function tasksRpc(
-  f: Awaited<ReturnType<typeof fixture>>,
-  options: { sessionProjectID?: string; asserts?: unknown[] } = {},
-) {
-  let handlers: TaskHandlers | undefined
-  const ctx = {
-    rpc: {
-      register: (definition: { id: string }, methods: TaskHandlers) => {
-        if (definition.id === "lazers.tasks") handlers = methods
-        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
-      },
-    },
-    session: {
-      get: ({ sessionID }: { sessionID: string }) =>
-        Effect.succeed({
-          id: sessionID,
-          projectID: options.sessionProjectID ?? "project",
-          agent: "architect",
-          time: {},
-          location: { directory: "/caller" },
-        }),
-    },
-    permission: {
-      assert: (input: unknown) => {
-        options.asserts?.push(input)
-        return Effect.void
-      },
-    },
-  } as unknown as Parameters<typeof registerTaskReads>[0]
-  const reads = new AssociationTaskReads(f.three.projects[0]!.repository)
-  const runtime = { projectID: "project", host: { session: async () => null } }
-  await Effect.runPromise(
-    Effect.scoped(
-      registerTaskReads(ctx, reads, runtime as never, {
-        loaded: () => [f.three.projects[2]!.directory],
-      }).pipe(Effect.asVoid),
-    ),
-  )
-  const call = (name: string) => (input: unknown) => Effect.runPromise(handlers![name]!(input))
-  return {
-    get: call("get") as (input: unknown) => Promise<{ status: string; project?: { code: string } }>,
-    currentActivity: call("currentActivity") as (input: unknown) => Promise<{
-      activities: { taskID: string; project?: { code: string }; foreground: string }[]
-    }>,
-  }
-}
-
-test("rpc: Tasks get and current activity across projects", async () => {
-  const f = await fixture(() => [])
-  const asserts: unknown[] = []
-  const tasks = await tasksRpc(f, { asserts })
-  const [, b] = f.three.projects
-  const taskID = b!.taskIDs[0]!
-  const reference = b!.repository.referenceFor(taskID)!
-  const found = await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
-  expect(found).toMatchObject({ status: "found", project: { code: "BBB" } })
-  const activity = await tasks.currentActivity({
-    sessionID: "ses-caller",
-    scope: "all",
-    taskIDs: [taskID],
-  })
-  expect(activity.activities[0]).toMatchObject({ taskID, project: { code: "BBB" } })
-  expect(activity.activities[0]?.foreground).toBe("unknown")
-  expect(asserts).toEqual([])
-})
-
-test("rpc: Tasks reads in all need a calling session of this project", async () => {
-  const f = await fixture(() => [])
-  const foreign = await tasksRpc(f, { sessionProjectID: "foreign-project" })
-  await expect(
-    foreign.get({ allProjects: true, sessionID: "ses-caller", taskID: crypto.randomUUID() }),
-  ).rejects.toThrow()
-  const own = await tasksRpc(f)
-  await expect(own.get({ allProjects: true, taskID: crypto.randomUUID() })).rejects.toThrow()
-})
 
 test("agent tools never offer all projects: their schemas have no such field and the reads refuse it", async () => {
   const { AgentGetInput, AgentQueryInput } = await import("../tasks/contract.ts")
@@ -462,9 +352,10 @@ test("agent tools never offer all projects: their schemas have no such field and
       .success,
   ).toBe(false)
   expect(AgentQueryInput.safeParse({ limit: 5 }).success).toBe(true)
-  const { three } = await fixture(() => [])
-  const reads = new AssociationTaskReads(three.projects[0]!.repository)
-  expect(() =>
-    reads.get({ allProjects: true, sessionID: "ses-x", taskID: three.projects[0]!.taskIDs[0] }),
-  ).toThrow("An all-projects read is read with getAll")
+  // The Tasks RPC reads this project only: its input has no all-projects field either.
+  const { GetInput } = await import("../tasks/contract.ts")
+  expect(
+    GetInput.safeParse({ allProjects: true, sessionID: "ses-x", taskID: crypto.randomUUID() })
+      .success,
+  ).toBe(false)
 })

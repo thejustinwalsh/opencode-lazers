@@ -3,7 +3,7 @@ import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
 import { SnapshotOutput } from "./contract.ts"
 import { makeFixture, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
-import { AssociationTaskReads } from "./task-reads.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import type { TrajectoryHost, TrajectorySession } from "../trajectory/native.ts"
 import { unavailableTaskValuation } from "../models/task-valuation.ts"
@@ -174,19 +174,22 @@ test("snapshot supplies complete task labels and recorded Timeline intervals wit
   }
 })
 
-test("associated task reads resolve references for session gets", () => {
+test("associated task reads resolve references for session gets", async () => {
   const fixture = makeFixture()
   try {
-    const reads = new AssociationTaskReads(fixture.repository)
     fixture.store.updatePlanOwner(fixture.receipt.planID, "ses-owner", "ses-reviewer")
     for (const sessionID of ["ses-owner", "ses-reviewer", "ses-failed", "ses-accepted"]) {
-      expect(reads.get({ taskID: "LZ-1", sessionID })).toMatchObject({
+      expect(
+        await getTaskDetail(fixture.repository, { taskID: "LZ-1", session: sessionID }),
+      ).toMatchObject({
         status: "found",
         reference: "LZ-1",
         task: { id: taskID },
       })
     }
-    expect(reads.get({ taskID: "LZ-1", sessionID: "ses-unrelated" })).toEqual({
+    expect(
+      await getTaskDetail(fixture.repository, { taskID: "LZ-1", session: "ses-unrelated" }),
+    ).toEqual({
       status: "not_found",
     })
   } finally {

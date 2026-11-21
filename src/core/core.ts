@@ -24,7 +24,6 @@ import { UsageCache } from "../budget/server.ts"
 import { ProjectIndex } from "../context/index.ts"
 import { nativeContextPermission } from "../context/tools.ts"
 import { createModelsTaskValuationProvider } from "../models/server.ts"
-import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { nativeRadarSessionHost } from "../observability/native.ts"
 import { historyCacheBytes } from "../trajectory/history.ts"
 import { trajectoryCachePair } from "../trajectory/cache-pair.ts"
@@ -71,7 +70,6 @@ export type LazersCore = {
   readonly runtime: TaskRuntime
   readonly host: ReturnType<typeof nativeHost>
   readonly reads: ObservationReads
-  readonly taskReads: AssociationTaskReads
   readonly trajectoryHost: ReturnType<typeof nativeTrajectoryHost>
   readonly taskValuationProvider: ReturnType<typeof createModelsTaskValuationProvider>
   readonly managedUsageStore: ManagedUsageStore
@@ -305,7 +303,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     trajectoryCachePair(observationSecret, historyBytes),
   )
   built("observationReads")
-  const taskReads = new AssociationTaskReads(repository)
   const usageCache = new UsageCache()
   const inferenceBroker = new InferenceBroker()
 
@@ -363,7 +360,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     runtime,
     host: nativeRunnerHost,
     reads,
-    taskReads,
     trajectoryHost,
     taskValuationProvider,
     managedUsageStore,

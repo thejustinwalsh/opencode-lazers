@@ -2,7 +2,6 @@ import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
-import { AssociationTaskReads } from "../../src/observability/task-reads.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
 import { registerObservability } from "../../src/observability/rpc.ts"
 import type { RadarNativeSession, RadarSessionHost } from "../../src/observability/native.ts"
@@ -56,7 +55,7 @@ test("registered Tasks reads discover durable worker links without widening proj
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerTaskReads(ctx, new AssociationTaskReads(fixture.repository), runtime)
+          yield* registerTaskReads(ctx, fixture.repository, runtime)
         }),
       ),
     )

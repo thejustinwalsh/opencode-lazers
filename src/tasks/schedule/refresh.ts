@@ -7,7 +7,7 @@ import { outerPauseIn, outerPauseReason } from "../../projects/pause.ts"
 import { canStruggle, readTrajectoryFacts } from "../../recovery/trajectory-facts.ts"
 import { isTakeoverAttempt, openConcerns } from "../../recovery/detector.ts"
 import { TaskSpecSchema } from "../../task.ts"
-import { auditHistoryIn } from "../../audit/history.ts"
+import { auditHistoryIn } from "../../audit/history-read.ts"
 import { MAX_EXECUTION_PLAN_WAIT_REFERENCES } from "../../runner/schema.ts"
 import { adviceSnapshotIn } from "../advice.ts"
 import { taskClassificationFor } from "../classification.ts"
@@ -226,7 +226,7 @@ const NODE_PLAN_SQL = `SELECT n.plan_id,n.ordinal,n.state,n.reason,n.version,p.r
 /**
  * The one task row, its edges, blockers, waits, sessions and scopes. A task with several plans
  * (impossible through the writers, `UNIQUE(task_id, spec_revision)` with revision 1) shows its
- * newest plan by rowid, as `currentActivityTargets` and `tasks.list` did.
+ * newest plan by rowid, as the old current-activity read and `tasks.list` did.
  */
 export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): boolean {
   const record = db

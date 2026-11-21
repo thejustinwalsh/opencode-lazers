@@ -43,7 +43,7 @@ export const searchQueries = {
 } as const
 
 /** Host sessions as the old read saw them, and as `host_session_state` stores them. */
-export function hostRecords({ tasks, f, workerSession }: Corpus) {
+function hostRecords({ tasks, f, workerSession }: Corpus) {
   const attempt = (taskID: string, number: number) =>
     f.repository.read(
       (db) =>

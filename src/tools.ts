@@ -18,8 +18,7 @@ import {
   AgentQueryOutput,
 } from "./tasks/contract.ts"
 import { enrollScheduleConnection } from "./tasks/schedule/hook.ts"
-import { queryTaskPage } from "./tasks/stream-query.ts"
-import { TaskReads } from "./tasks/read.ts"
+import { getTaskDetail, queryTaskPage } from "./tasks/stream-query.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import {
@@ -115,21 +114,19 @@ async function submitTaskReceipt(
       timeoutDefaults,
     )
     if (submitted.status !== "submitted") return submitted
-    const detail = new TaskReads(connection).get({ taskID: submitted.taskID })
-    if (detail.status !== "found") return submitted
+    // Point reads of the task this transaction wrote: a new task has no plan yet.
+    const task = connection.get(submitted.taskID)
+    const classification = connection.taskClassification(submitted.taskID)
+    if (!task || !classification) return submitted
     // The submitting session wrote this task, so it has seen its records.
     observeRevision(
       connection,
       context.sessionID,
       submitted.taskID,
       "classification",
-      detail.classification.revision,
+      classification.current.revision,
     )
-    return taskSubmissionSummary(
-      submitted,
-      detail.task,
-      detail.execution?.state ?? detail.task.status,
-    )
+    return taskSubmissionSummary(submitted, task, task.status)
   })
   return receipt
 }
@@ -419,10 +416,13 @@ export function registerTaskTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async (signal) => {
-                  const { format, ...query } = input
-                  const detail = await withRepository((connection) =>
-                    new TaskReads(connection).get(query),
-                  )
+                  const { format, sessionID, ...query } = AgentGetInput.extend({
+                    format: z.enum(["instructions", "structured"]).optional(),
+                  }).parse(input)
+                  const detail = await getTaskDetail(repository, {
+                    ...query,
+                    ...(sessionID ? { creator: sessionID } : {}),
+                  })
                   if (detail.status === "found" && detail.classification)
                     await withRepository((connection) => {
                       observeRevision(

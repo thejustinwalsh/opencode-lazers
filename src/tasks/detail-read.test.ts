@@ -13,7 +13,7 @@ import {
 } from "./detail-corpus-queries.ts"
 import { detailCorpus, named } from "./detail.fixture.ts"
 import { readActivityPayload, readCurrentActivity, readTaskDetail } from "./detail-read.ts"
-import { poolRead, queryTaskPage } from "./stream-query.ts"
+import { getTaskDetail, poolRead, queryTaskPage } from "./stream-query.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -151,4 +151,35 @@ test("idle: the detail, activity and search reads run no statement on the main c
     expect(db.query("SELECT COUNT(*) AS n FROM task_schedule_dirty").get()).toEqual({ n: 0 })
     expect(db.query("SELECT COUNT(*) AS n FROM task_events_dirty").get()).toEqual({ n: 0 })
   })
+})
+
+test("lz-get-task returns every field the old read returned, on the recorded corpus", async () => {
+  const made = await corpus()
+  for (const [key, query] of Object.entries(detailQueries(made))) {
+    if ("linked" in query) continue
+    const { sessionID, ...rest } = query.input as { sessionID?: string; taskID: string }
+    const detail = await getTaskDetail(made.f.repository, {
+      ...rest,
+      ...(sessionID ? { creator: sessionID } : {}),
+    })
+    expect({ key, detail: named(detail, made.names) }).toEqual({ key, detail: RECORDED.get[key] })
+  }
+})
+
+test("lz-list-tasks keeps its fields: the default page of lz-query-tasks, as recorded", async () => {
+  const made = await corpus()
+  const listed = (await queryTaskPage(made.f.repository, { limit: 100 })).tasks
+  const recorded = (RECORDED.search.none as { tasks: unknown[] }).tasks
+  expect(recorded).toEqual([])
+  // Every field a summary carried is still carried (the regression this guards: count,
+  // stateCounts, concern and waitingOnPlans once went missing).
+  const grind = named(
+    listed.find((task) => task.taskID === made.tasks.grind),
+    made.names,
+  ) as Record<string, unknown>
+  const before = (RECORDED.search.objective as { tasks: Record<string, unknown>[] }).tasks[0]!
+  expect(Object.keys(grind).toSorted()).toEqual(Object.keys(before).toSorted())
+  const page = await queryTaskPage(made.f.repository, { limit: 100 })
+  expect(page.count).toBeNumber()
+  expect(page.stateCounts).toBeDefined()
 })

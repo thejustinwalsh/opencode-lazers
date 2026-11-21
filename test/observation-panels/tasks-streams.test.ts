@@ -14,7 +14,8 @@ import { readerPool, type ReaderPool } from "../../src/streams/pool.ts"
 import { createStreamsService } from "../../src/streams/rpc.ts"
 import "../../src/streams/sources/index.ts"
 import { TaskRepository } from "../../src/storage.ts"
-import { TaskReads } from "../../src/tasks/read.ts"
+import { RunnerStore } from "../../src/runner/store.ts"
+import { ensureHostSessionStateSchema } from "../../src/host-sessions/state.ts"
 import { TaskScheduleOwner } from "../../src/tasks/schedule/owner.ts"
 import { installTasksLayout } from "./virtual-layout.ts"
 import { openedTaskView } from "./fixtures/open-details.ts"
@@ -65,8 +66,7 @@ function changeBus<T>() {
 
 let directory: string
 let repository: TaskRepository
-let detailRepository: TaskRepository
-let reads: TaskReads
+let reads: { runner: RunnerStore }
 let owner: TaskScheduleOwner
 let pool: ReaderPool
 const ids: Record<string, string> = {}
@@ -125,7 +125,9 @@ function plan(name: string, nodes: string[], state: string, dependencies: [strin
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "lazers-tasks-streams-"))
   repository = new TaskRepository(join(directory, "tasks.sqlite"), PROJECT)
-  reads = new TaskReads(repository)
+  reads = { runner: new RunnerStore(repository) }
+  // The project core's host fold installs the session table the current activity joins.
+  ensureHostSessionStateSchema(repository)
   // One plan whose second step waits on the first, and the third on both.
   plan("Chain", ["one", "two", "three"], "queued", [
     ["one", "two"],
@@ -150,15 +152,12 @@ beforeAll(async () => {
     2_000,
   )
   pool = readerPool(repository.path, { workers: 1 })
-  // The detail read of a task is a point read on its own connection: not the one the meter counts.
-  detailRepository = new TaskRepository(repository.path, PROJECT)
 }, 120_000)
 
 afterAll(async () => {
   owner?.close()
   await pool?.close()
   repository?.close()
-  detailRepository?.close()
   await rm(directory, { recursive: true, force: true })
 })
 
@@ -343,6 +342,16 @@ async function withPanel(
   }
 }
 
+/** Sources the panel reads in one-shot windows (`detail-read.ts`), closed as soon as read. */
+const ONE_SHOT = new Set([
+  "tasks.detail",
+  "tasks.attempts",
+  "tasks.activity",
+  "tasks.activityPayloads",
+  "tasks.attemptCalls",
+  "tasks.currentActivity",
+])
+
 async function mountPanel(dom: Window, options: Options) {
   const host = (await loadHost()) as unknown as Record<string, any>
   const browserDocument = dom.document as unknown as Document
@@ -359,45 +368,39 @@ async function mountPanel(dom: Window, options: Options) {
     },
   })
   const opens: { source: string; filter: Record<string, unknown>; window: number }[] = []
+  /** Live streams by id; the detail and activity reads open and close one-shot windows. */
+  const live = new Map<string, string>()
   const streamsRpc = {
-    open: (input: { source: string; filter: Record<string, unknown>; window: number }) => {
+    open: (input: {
+      stream: string
+      source: string
+      filter: Record<string, unknown>
+      window: number
+    }) => {
       opens.push(input)
+      live.set(input.stream, input.source)
       return service.open(input as never)
     },
     slide: (input: never) => service.slide(input),
     seek: (input: never) => service.seek(input),
     read: (input: never) => service.read(input),
     touch: (input: never) => service.touch(input),
-    close: (input: never) => service.close(input),
+    close: (input: { stream: string }) => {
+      live.delete(input.stream)
+      return service.close(input as never)
+    },
     events: {
       subscribe: (_name: string, subscription: { signal: AbortSignal }) =>
         streamBus.subscribe(subscription.signal),
     },
   }
-  const detailReads = { count: 0 }
-  const detailRead = new TaskReads(detailRepository)
-  const tasksRpc = {
-    get: async (input: { taskID: string }) => {
-      detailReads.count++
-      return detailRead.get(input)
+  // The selected task's detail is the `tasks.detail` window, opened like every other stream.
+  const detailReads = {
+    get count() {
+      return opens.filter((open) => open.source === "tasks.detail").length
     },
-    currentActivity: async ({ taskIDs }: { taskIDs: string[] }) => ({
-      activities: taskIDs.map((taskID) => ({
-        taskID,
-        workerSessionID: null,
-        attemptID: null,
-        foreground: "inactive",
-        unknownReason: null,
-        recordedState: null,
-        waiting: false,
-        holdReason: null,
-        pendingInput: false,
-        pendingPermissions: 0,
-        pendingForms: 0,
-        outcome: null,
-        observedAt: Date.now(),
-      })),
-    }),
+  }
+  const tasksRpc = {
     start: async () => ({ status: "existing", planID: crypto.randomUUID(), state: "running" }),
   }
   const events = changeBus<{ type: string; data?: unknown }>()
@@ -502,7 +505,8 @@ async function mountPanel(dom: Window, options: Options) {
     list().scrollTop
   const treeHeight = () =>
     Number.parseFloat(container.querySelector<HTMLElement>(".lazers-tasks-tree")!.style.height)
-  const streamsOpen = () => service.size
+  // The list, counts and relations streams a view holds; one-shot detail windows are not held.
+  const streamsOpen = () => [...live.values()].filter((source) => !ONE_SHOT.has(source)).length
   return {
     dom,
     host,
@@ -767,8 +771,8 @@ test("open, scroll, expand and a chip switch read nothing from the main reposito
       await until(() => h.topLevel().length === 2)
       h.chooseFilter("Open")
       await until(() => h.topLevel().length > 10)
-      // The detail of the selected task is a point read on its own connection; every list,
-      // count, dependency and relation read ran on a reader worker.
+      // The detail of the selected task, and every list, count, dependency and relation read,
+      // ran on a reader worker.
       expect(h.detailReads.count).toBeGreaterThan(0)
     })
   } finally {

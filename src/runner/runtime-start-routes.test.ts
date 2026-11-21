@@ -7,7 +7,7 @@ import type { RunnerHost } from "./host.ts"
 import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
 import type { WorkerPersona } from "./schema.ts"
-import { TaskReads } from "../tasks/read.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import { sharedScheduler, schedulerProjectKey } from "./scheduler-coordinator.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import {
@@ -151,7 +151,7 @@ test("inspector Start admits one real runtime plan and returns record-backed tas
 
   await drive(f.runtime)
   expect(f.store.execution(task.id)?.state).toBe("accepted")
-  const detail = new TaskReads(f.repository).get({ taskID: task.id })
+  const detail = await getTaskDetail(f.repository, { taskID: task.id })
   expect(detail).toMatchObject({
     status: "found",
     execution: { planID: first.planID, state: "accepted" },

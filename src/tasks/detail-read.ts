@@ -33,7 +33,7 @@ export type WindowRead = <F, C extends Columns>(
     filter: F
     order: string
     window: number
-    anchor?: "head" | "tail" | { key: readonly unknown[]; place: "start" | "center" }
+    anchor?: "head" | "tail" | { key: (string | number | null)[]; place: "start" | "center" }
   },
 ) => Promise<Array<Record<string, unknown>>>
 
@@ -41,7 +41,7 @@ export type WindowRead = <F, C extends Columns>(
 const WHOLE_WINDOW = 64
 
 /** Every row of a stream, a window at a time: the window grows until the rows fit. */
-export async function readWhole<F, C extends Columns>(
+async function readWhole<F, C extends Columns>(
   read: WindowRead,
   source: SourceRef<F, C>,
   options: { filter: F; order: string },
@@ -76,7 +76,7 @@ export type PanelTaskDetail =
   | Exclude<TaskDetail, { status: "found" }>
 
 /** The transitions the scope review reads: the latest scope report and amendment. */
-export const SCOPE_EVENTS = ["SCOPE_REPORTED", "SCOPE_AMENDED"] as const
+const SCOPE_EVENTS = ["SCOPE_REPORTED", "SCOPE_AMENDED"] as const
 
 const UUID = /^[0-9a-f]{8}-/i
 const text = (value: unknown) => (typeof value === "string" ? value : null)

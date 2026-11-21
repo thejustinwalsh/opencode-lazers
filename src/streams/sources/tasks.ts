@@ -392,7 +392,7 @@ async function scopedTo<T extends { scope?: TaskScope; session?: string; project
  * `Tasks.get` (`TaskReads.get`, `AssociationTaskReads`): a reference resolves in this project,
  * `creator` is the old `sessionID` check of the agent tool, `session` the panel's link check.
  */
-export const taskDetailSource = defineSource({
+defineSource({
   name: TASK_SOURCES.detail,
   table: `(SELECT t.task_id AS task_id, t.project_directory AS project_directory,
       t.reference AS reference, t.revision AS revision, t.status AS status,
@@ -437,7 +437,7 @@ export const taskDetailSource = defineSource({
 })
 
 /** The attempts of a task in its plan, oldest first (`RunnerStore.attempts` order). */
-export const taskAttemptsSource = defineSource({
+defineSource({
   name: TASK_SOURCES.attempts,
   table: `(SELECT a.id AS id, a.plan_id AS plan_id, a.task_id AS task_id, a.number AS number,
       a.state AS state, a.started_at AS started_at, a.artifact AS artifact,
@@ -500,7 +500,7 @@ const activityOrders = {
  * A task's transitions in its plan, by transition id (`RunnerStore.activity`), from `task_events`;
  * the raw payload is cold: the History view reads it at window 1 when a row opens.
  */
-export const taskActivitySource = defineSource({
+defineSource({
   name: TASK_SOURCES.activity,
   table: activityTable,
   tables: ["task_events", "task_schedule", "task_schedule_sessions"],
@@ -514,7 +514,7 @@ export const taskActivitySource = defineSource({
 })
 
 /** The same rows with the payload on every row: the agent tool's activity and the scope review. */
-export const taskActivityPayloadsSource = defineSource({
+defineSource({
   name: TASK_SOURCES.activityPayloads,
   table: activityTable,
   tables: ["task_events", "task_schedule", "task_schedule_sessions"],
@@ -530,7 +530,7 @@ export const taskActivityPayloadsSource = defineSource({
  * (`readAttemptSummary`, which read `runner_progress`), through
  * `runner_progress_display_attempt (project_directory, attempt_id, session_id, seq, ...)`.
  */
-export const taskAttemptCallsSource = defineSource({
+defineSource({
   name: TASK_SOURCES.attemptCalls,
   table: "runner_progress_display",
   tables: ["runner_progress_display", "runner_attempts", "task_schedule", "task_schedule_sessions"],
@@ -573,7 +573,7 @@ export const taskAttemptCallsSource = defineSource({
  * attempt session's host facts. Replaces the `currentActivity` RPC, which read the host twice per
  * row on the main thread.
  */
-export const taskCurrentActivitySource = defineSource({
+defineSource({
   name: TASK_SOURCES.currentActivity,
   table: `(SELECT t.task_id AS task_id, t.project_directory AS project_directory,
       t.node_state AS node_state, t.plan_state AS plan_state, t.node_reason AS node_reason,
@@ -607,7 +607,7 @@ export const taskCurrentActivitySource = defineSource({
 })
 
 /** The search fields of a page's tasks, so a search hit shows where it matched. Server-side only. */
-export const taskSearchFieldsSource = defineSource({
+defineSource({
   name: TASK_SOURCES.searchFields,
   table: "task_schedule_search",
   tables: ["task_schedule_search", "task_schedule"],

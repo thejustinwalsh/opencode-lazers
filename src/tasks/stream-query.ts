@@ -11,12 +11,16 @@ import {
 import { taskSearchFieldsRef } from "../streams/sources/tasks-ref.ts"
 import type { StreamPool } from "../streams/client.ts"
 import { findSource, streamColumns } from "../streams/source.ts"
-import type { WindowRead } from "./detail-read.ts"
+import { readTaskDetail, type TaskDetailQuery, type WindowRead } from "./detail-read.ts"
+import { GetOutput, type TaskDetail } from "./contract.ts"
+import { startProjection } from "../projections/owner.ts"
+import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { bucketsFor } from "./schedule/key.ts"
 import { BUCKETS } from "./schedule/buckets.ts"
 import { AgentQueryInput, type TaskSummary } from "./contract.ts"
 import { TaskStateFilter, effectiveTaskStateFilter as effective } from "./state-filter.ts"
 import { backfillPage } from "./schedule/backfill.ts"
+import { RunnerStore } from "../runner/store.ts"
 import { summaryOf } from "./summary-row.ts"
 
 /**
@@ -137,13 +141,13 @@ async function waitsOf(pool: StreamPool, project: string, taskID: string, count:
   }
 }
 
-export async function queryTaskPage(
+/**
+ * A fresh process has no schedule owner yet: index the project here, a page per write
+ * transaction, so a tool never answers that tasks which exist are missing.
+ */
+function ensureScheduleIndexed(
   repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomic">,
-  input: unknown,
-): Promise<TaskToolPage> {
-  const query = AgentQueryInput.parse(input)
-  // A fresh process has no schedule owner yet: index the project here, a page per write
-  // transaction, so a tool never answers that tasks which exist are missing.
+) {
   const ready = () =>
     repository.read(
       (db) =>
@@ -157,6 +161,50 @@ export async function queryTaskPage(
     repository.atomic((db) => {
       backfillPage(db, repository.projectDirectory)
     })
+}
+
+/**
+ * `lz-get-task`: one task's detail from the stored rows, every transition payload included. The
+ * task events are folded first (the core's owner, shared; a process without one folds here), so
+ * the activity is whole, never a partial list.
+ */
+export async function getTaskDetail(
+  repository: TaskRepository,
+  query: Omit<TaskDetailQuery, "project">,
+): Promise<TaskDetail> {
+  // A repository opened without the runner store has not installed the runner tables or the
+  // projection yet; the store installs both.
+  const installed = repository.read((db) =>
+    Boolean(db.query("SELECT 1 FROM sqlite_master WHERE name='task_schedule_state'").get()),
+  )
+  if (!installed) new RunnerStore(repository)
+  ensureScheduleIndexed(repository)
+  const events = startProjection(repository.path, repository.projectDirectory, taskEventsProjection)
+  try {
+    await events.owner.settle()
+  } finally {
+    events.release()
+  }
+  const lease = acquireReaderPool(repository.path)
+  try {
+    return GetOutput.parse(
+      await readTaskDetail(
+        poolRead(lease.pool),
+        { ...query, project: repository.projectDirectory },
+        { payloads: "all" },
+      ),
+    )
+  } finally {
+    lease.release()
+  }
+}
+
+export async function queryTaskPage(
+  repository: Pick<TaskRepository, "path" | "projectDirectory" | "read" | "atomic">,
+  input: unknown,
+): Promise<TaskToolPage> {
+  const query = AgentQueryInput.parse(input)
+  ensureScheduleIndexed(repository)
   const lease = acquireReaderPool(repository.path)
   try {
     const stream = openStream(lease.pool, taskScheduleSource, {

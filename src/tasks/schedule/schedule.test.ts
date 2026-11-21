@@ -478,7 +478,7 @@ test("a generation reinstall drops the projection and the backfill refills it", 
 
 // ---- Several plans for one task -------------------------------------------------------------
 
-test("a task in two plans shows its newest plan, like currentActivityTargets", () => {
+test("a task in two plans shows its newest plan, as the current activity read did", () => {
   const f = open()
   const a = insertTask(f.repository, "alpha")
   const first = submitPlan(f, "first", [a])
@@ -497,7 +497,6 @@ test("a task in two plans shows its newest plan, like currentActivityTargets", (
     a,
   )[0]
   expect(row).toEqual({ plan_id: second, node_state: "running" })
-  expect(f.reads.currentActivityTargets([a])[0]?.planID).toBe(second)
 })
 
 // ---- Owner ----------------------------------------------------------------------------------

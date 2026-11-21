@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
 import { ObservationChangeTracker } from "../observability/changes.ts"
 import { ObservationReads } from "../observability/read.ts"
-import { AssociationTaskReads } from "../observability/task-reads.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { ModelEvidenceStore } from "../models/source-store.ts"
 import { PlanningStore } from "../planning/store.ts"
@@ -496,8 +496,9 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
   )
   expect(before.report).toBeDefined()
   expect(after.report).toBeDefined()
-  const tasks = new AssociationTaskReads(fixture.repository)
-  expect(tasks.get({ taskID: "LZ-1", sessionID: "ses-failed" })).toMatchObject({
+  expect(
+    await getTaskDetail(fixture.repository, { taskID: "LZ-1", session: "ses-failed" }),
+  ).toMatchObject({
     status: "found",
     reference: "LZ-1",
   })
