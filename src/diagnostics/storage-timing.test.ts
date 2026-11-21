@@ -125,7 +125,9 @@ export function bundledFast(repo: TaskRepository) {
   return 1
 }
 function section(name: string, run: () => unknown) {
-  return run()
+  // Not a tail call, like the stall probe's own wrapper, so its frame stays on the stack.
+  const result = run()
+  return name ? result : undefined
 }
 export function bundledSection(repo: TaskRepository) {
   section("tick:x", repo.atomic.bind(repo, () => { const end = performance.now() + 5; while (performance.now() < end); }))
