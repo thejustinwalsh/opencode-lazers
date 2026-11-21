@@ -3,6 +3,11 @@ import {
   PROJECTS_SOURCES,
   projectGlobalColumns,
   projectListColumns,
+  projectProofColumns,
+  projectRevisionColumns,
+  projectRevisionDetail,
+  type ProjectProofsFilter,
+  type ProjectRevisionsFilter,
   type ProjectsFilter,
 } from "./projects-ref.ts"
 
@@ -45,5 +50,48 @@ export const projectsGlobalSource = defineSource({
   orders: { key: [{ column: "id", direction: "asc" }] },
   filter: (_input: ProjectsFilter) => ({ where: "1=1", params: [] }),
   columns: projectGlobalColumns,
+  count: { exact: "scan" },
+})
+
+/**
+ * A project's profile revisions, newest first, through `lazers_profile_revisions_key`. The
+ * Verification group reads the active one (`window: 1` adds the profile document) and the earlier
+ * ones as a list.
+ */
+export const projectRevisionsSource = defineSource({
+  name: PROJECTS_SOURCES.revisions,
+  table: "lazers_profile_revisions",
+  key: ["id"],
+  orders: {
+    newest: [
+      { column: "revision", direction: "desc" },
+      { column: "id", direction: "desc" },
+    ],
+  },
+  filter: (input: ProjectRevisionsFilter) =>
+    input.state
+      ? { where: "project_key = ? AND state = ?", params: [input.key, input.state] }
+      : { where: "project_key = ?", params: [input.key] },
+  columns: projectRevisionColumns,
+  detail: projectRevisionDetail,
+  count: { exact: "scan" },
+})
+
+/** One revision's proofs in the order they were recorded (the table's primary key index). */
+const PROOFS = `(SELECT rowid AS ord, revision_id, command_key, command, effective_command, outcome,
+    exit_code, timed_out, duration_ms, reason, stdout_tail, stderr_tail, tool_version, ran_at
+  FROM lazers_profile_proofs) AS project_proofs`
+
+export const projectProofsSource = defineSource({
+  name: PROJECTS_SOURCES.proofs,
+  table: PROOFS,
+  tables: ["lazers_profile_proofs"],
+  key: ["ord"],
+  orders: { recorded: [{ column: "ord", direction: "asc" }] },
+  filter: (input: ProjectProofsFilter) => ({
+    where: "project_proofs.revision_id = ?",
+    params: [input.revisionID],
+  }),
+  columns: projectProofColumns,
   count: { exact: "scan" },
 })

@@ -376,7 +376,6 @@ export function registerProjects(
         },
         catch: (error) => (error instanceof Error ? error : new Error(String(error))),
       }).pipe(Effect.orDie),
-    profile: (input) => Effect.sync(() => operations.profile(input.key)),
     setupStatus: (input) => Effect.promise(() => operations.setupStatus(input.sessionID)),
     startSetup: (input) => Effect.promise(() => operations.startSetup(input.sessionID)),
     dismissSetup: (input) => Effect.sync(() => operations.dismissSetup(input.key)),

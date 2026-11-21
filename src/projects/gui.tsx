@@ -477,7 +477,7 @@ export function setupProjects(ctx: Ctx) {
           {(project) => (
             <>
               <Row project={project} />
-              <VerificationGroup ctx={ctx} project={project} />
+              <VerificationGroup ctx={ctx} project={project} transport={transport} />
               <PlanningSwitch project={project} />
             </>
           )}

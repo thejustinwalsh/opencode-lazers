@@ -846,9 +846,13 @@ UPDATE`, which `setPause` and the settings writer use) SQLite applies the outer 
 - Presence is written by the project core (create, dispose), refcounted per root (a reload
   builds the new core before disposing the old); the first write of a process clears other
   instances' rows.
-- `projects.revisions` / `projects.proofs` are not built yet: the Verification group still reads
-  the `profile` RPC, now once per stored profile change (driven by the list row), not per poll.
-  The `list` RPC is removed; `listProjects` stays as the parity oracle until Task 14.
+- `projects.revisions` (order `newest`; `state` filter; `window: 1` adds `payload`,
+  `map_preview`) and `projects.proofs` (order `recorded`, the proof rowid) feed the Verification
+  group: the active revision, its proofs and the earlier ones are three streams, and the
+  `profile` RPC is removed (`profileViewOf` stays for the Architect's profile tool). The earlier
+  list does not read documents, so a superseded revision whose payload no longer parses is listed
+  (the old read dropped it); no writer can store one (`activateRevision` validates). The `list`
+  RPC is removed; `listProjects` stays as the parity oracle until Task 14.
 
 ### Task 12: Tasks detail, activity, current activity, search fields (L)
 

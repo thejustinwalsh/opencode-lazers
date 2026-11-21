@@ -9,13 +9,18 @@ import { TaskRepository } from "../storage.ts"
 import { openStream } from "../streams/client.ts"
 import { readerPool } from "../streams/pool.ts"
 import { streamColumns } from "../streams/source.ts"
-import { projectsGlobalSource, projectsListSource } from "../streams/sources/projects.ts"
+import {
+  projectProofsSource,
+  projectRevisionsSource,
+  projectsGlobalSource,
+  projectsListSource,
+} from "../streams/sources/projects.ts"
 import {
   ensureProjectOverviewSchema,
   setProjectOverviewDefaults,
   type ProjectsDefaults,
 } from "./overview-store.ts"
-import { globalViewOf, projectViewOf } from "./overview-view.ts"
+import { globalViewOf, projectViewOf, revisionViewOf } from "./overview-view.ts"
 import { acquirePresence } from "./presence.ts"
 import { activateRevision } from "./profile-store.ts"
 import { projectsOperations } from "./rpc.ts"
@@ -247,4 +252,101 @@ test("idle: an open Projects stream issues no statement on the main connection",
     stream.close()
     meter.stop()
   }
+})
+
+test("projects.revisions and projects.proofs parity: the Verification group's revisions equal the profile read", async () => {
+  const f = await fixture()
+  const key = f.keys[0]!
+  const profile = (command: string) =>
+    ({
+      toolchains: [],
+      verify: [{ id: "check", command }],
+      fix: [],
+      env: ["API_TOKEN", "HOME_DIR"],
+      audit: "fallow",
+      source: { include: ["src/**"], exclude: [] },
+    }) as never
+  const proof = (outcome: "proven" | "failed") => ({
+    key: "verify:check",
+    command: "bun test",
+    outcome,
+    exitCode: outcome === "failed" ? 1 : 0,
+    timedOut: false,
+    durationMs: 12,
+    stdoutTail: "ok",
+    stderrTail: outcome === "failed" ? "boom" : "",
+    ranAt: 5,
+    ...(outcome === "failed" ? { reason: "exit 1" } : { toolVersion: "1.4" }),
+  })
+  activateRevision(f.a, {
+    projectKey: key,
+    profile: profile("bun test"),
+    author: { kind: "owner" },
+    reason: "one",
+    proofs: [proof("failed")],
+  })
+  activateRevision(f.a, {
+    projectKey: key,
+    profile: profile("bun test --bail"),
+    author: { kind: "architect", sessionID: "ses-a", agent: "architect" },
+    reason: "two",
+    proofs: [proof("proven")],
+    mapPreview: {
+      files: 3,
+      names: 4,
+      tokens: 5,
+      largestFolders: [],
+      currentFiles: 3,
+      currentTokens: 5,
+    },
+  })
+  const read = async (source: never, filter: unknown, order: string, window: number) => {
+    const stream = openStream(f.pool, source, { filter, order, window, transport: "copy" })
+    await stream.ready()
+    const columns = Object.keys(streamColumns(source, window))
+    const rows = stream.items.map((row) =>
+      Object.fromEntries(
+        columns.map((column) => [column, (row as Record<string, unknown>)[column]]),
+      ),
+    )
+    stream.close()
+    return rows
+  }
+  const [active] = await read(
+    projectRevisionsSource as never,
+    { key, state: "active" },
+    "newest",
+    1,
+  )
+  const proofs = await read(
+    projectProofsSource as never,
+    { revisionID: active!.id },
+    "recorded",
+    16,
+  )
+  const history = await read(
+    projectRevisionsSource as never,
+    { key, state: "superseded" },
+    "newest",
+    16,
+  )
+  const expected = f.ops.profile(key)
+  expect(revisionViewOf(active!, proofs)).toEqual(expected.active)
+  expect(expected.active?.credentialLikeEnv).toEqual(["API_TOKEN"])
+  // The earlier list shows revision, author, time and reason (its document is not read).
+  expect(
+    history.map((row) => {
+      const {
+        profile: _profile,
+        proofs: _proofs,
+        credentialLikeEnv: _env,
+        ...shown
+      } = revisionViewOf(row, [])!
+      return shown
+    }),
+  ).toEqual(
+    expected.history.map(
+      ({ profile: _profile, proofs: _proofs, credentialLikeEnv: _env, ...shown }) => shown,
+    ),
+  )
 })

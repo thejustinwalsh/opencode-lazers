@@ -8,6 +8,9 @@ import {
   PROJECTS_SOURCES,
   projectGlobalColumns,
   projectListColumns,
+  projectProofColumns,
+  projectRevisionColumns,
+  projectRevisionDetail,
 } from "../../src/streams/sources/projects-ref.ts"
 import type {
   ProfileOutcomeView,
@@ -116,7 +119,10 @@ export function harness(
    * the real codec from the in-memory projects. Opening or re-reading the list counts as a `list`
    * call; a write pushes a change to every open stream, as the server's revision feed does.
    */
-  const streams = new Map<string, string>()
+  const streams = new Map<
+    string,
+    { source: string; window: number; filter: Record<string, unknown> }
+  >()
   const listeners = new Set<(event: { data: { stream: string; seq: number } }) => void>()
   let seq = 0
   const encode = (columns: Columns, rows: Record<string, unknown>[]) => {
@@ -140,10 +146,64 @@ export function harness(
     pause_by: pause?.by ?? null,
     pause_at: pause?.at ?? null,
   })
+  /** Revision rows of a project: the active one (id 1) and earlier ones (ids from 2). */
+  const revisionRows = (key: string) => {
+    const view = options.profiles?.[key]
+    if (!view) return []
+    return [...(view.active ? [view.active] : []), ...view.history].map((revision, index) => ({
+      id: revision.state === "active" ? 1 : index + 2,
+      revision: revision.revision,
+      state: revision.state,
+      author_kind: revision.author.kind,
+      session_id: revision.author.sessionID ?? null,
+      reason: revision.reason,
+      created_at: revision.createdAt,
+      decided_at: revision.supersededAt ?? null,
+      payload: revision.profile,
+      map_preview: revision.mapPreview ?? null,
+      proofs: revision.proofs,
+    }))
+  }
   const frameOf = (id: string) => {
-    const source = streams.get(id)
+    const open = streams.get(id)!
+    const source = open.source
     if (source === PROJECTS_SOURCES.global)
       return encode(projectGlobalColumns, [{ id: 1, ...pauseColumns(globalPause), settings }])
+    if (source === PROJECTS_SOURCES.revisions) {
+      const rows = revisionRows(String(open.filter.key))
+        .filter((row) => !open.filter.state || row.state === open.filter.state)
+        .sort((a, b) => b.revision - a.revision)
+        .slice(0, open.window)
+      return encode(
+        open.window === 1
+          ? { ...projectRevisionColumns, ...projectRevisionDetail }
+          : projectRevisionColumns,
+        rows,
+      )
+    }
+    if (source === PROJECTS_SOURCES.proofs) {
+      const revision = Object.keys(options.profiles ?? {})
+        .flatMap(revisionRows)
+        .find((row) => row.id === open.filter.revisionID && row.state === "active")
+      return encode(
+        projectProofColumns,
+        (revision?.proofs ?? []).map((proof, index) => ({
+          ord: index + 1,
+          command_key: proof.key,
+          command: proof.command,
+          effective_command: proof.effectiveCommand ?? null,
+          outcome: proof.outcome,
+          exit_code: proof.exitCode,
+          timed_out: proof.timedOut,
+          duration_ms: proof.durationMs,
+          reason: proof.reason ?? null,
+          stdout_tail: proof.stdoutTail,
+          stderr_tail: proof.stderrTail,
+          tool_version: proof.toolVersion ?? null,
+          ran_at: proof.ranAt,
+        })),
+      )
+    }
     calls.push({ method: "list", input: {} })
     return encode(
       projectListColumns,
@@ -170,7 +230,11 @@ export function harness(
   }
   const streamMethods: Record<string, (input: Record<string, unknown>) => unknown> = {
     open: (input) => {
-      streams.set(String(input.stream), String(input.source))
+      streams.set(String(input.stream), {
+        source: String(input.source),
+        window: Number(input.window),
+        filter: (input.filter ?? {}) as Record<string, unknown>,
+      })
       return frameOf(String(input.stream))
     },
     read: (input) => frameOf(String(input.stream)),
@@ -219,7 +283,8 @@ export function harness(
                     const result = (methods as Record<string, (i: never) => unknown>)[method]!(
                       input as never,
                     )
-                    if (method.startsWith("set")) queueMicrotask(changed)
+                    if (method.startsWith("set") || method === "saveProfile")
+                      queueMicrotask(changed)
                     return result
                   },
           },

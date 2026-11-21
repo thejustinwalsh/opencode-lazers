@@ -1,9 +1,14 @@
 import { Plugin } from "@opencode/plugin/gui"
-import { createEffect, createSignal, For, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import type { JSX } from "solid-js"
 import { Label } from "../details/components.tsx"
 import { Projects } from "./contract.ts"
-import type { ProfileRevisionView, ProfileView, ProjectView } from "./contract.ts"
+import type { ProfileRevisionView, ProjectView } from "./contract.ts"
+import { revisionViewOf } from "./overview-view.ts"
+import type { Columns } from "../streams/frame.ts"
+import { createStream, type GuiStream, type StreamsTransport } from "../streams/gui.ts"
+import type { SourceRef } from "../streams/source.ts"
+import { projectsRefs } from "../streams/sources/projects-ref.ts"
 import type { ProjectProfile } from "./profile.ts"
 import { startSetupInSession } from "./setup-notice.tsx"
 
@@ -48,40 +53,63 @@ function failureNote(proof: Proof | undefined): string | undefined {
     .join(": ")
 }
 
+/** A stream that holds every row of its filter: the window doubles while rows remain after it. */
+function wholeList<F, C extends Columns>(
+  transport: StreamsTransport,
+  source: SourceRef<F, C>,
+  options: () => { filter: F; order: string },
+): GuiStream<C> {
+  const [window, setWindow] = createSignal(16)
+  const stream = createStream(transport, source, () => ({ ...options(), window: window() }))
+  createEffect(() => {
+    if (stream.loaded() && stream.after() !== 0) setWindow((current) => current * 2)
+  })
+  return stream
+}
+
 /**
  * The Verification group of one project in Settings: the active profile with each command's
  * proof, its earlier revisions, and an editor for the same JSON the Architect sets and the store
  * keeps (one document, one schema). A save is active at once.
  */
-export function VerificationGroup(props: { ctx: Ctx; project: ProjectView }): JSX.Element {
+export function VerificationGroup(props: {
+  ctx: Ctx
+  project: ProjectView
+  transport: StreamsTransport
+}): JSX.Element {
   const { ctx } = props
   const Ui = ctx.ui
   const rpc = () => ctx.client.rpc(Projects)
-  const [view, setView] = createSignal<ProfileView | undefined>()
   const [editing, setEditing] = createSignal(false)
   const [text, setText] = createSignal("")
   const [reason, setReason] = createSignal("")
   const [problem, setProblem] = createSignal<string | undefined>()
   const [busy, setBusy] = createSignal(false)
 
-  const load = async () => {
-    try {
-      setView(
-        await rpc().profile(
-          { key: props.project.key },
-          { signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)]) },
-        ),
-      )
-    } catch {
-      // The next list refresh retries.
+  // Three streams over the stored revisions: the active one with its document (`window: 1`), its
+  // proofs, and the earlier ones. A save, a setup or an Architect revision shows when stored.
+  const active = createStream(props.transport, projectsRefs.revisions, () => ({
+    filter: { key: props.project.key, state: "active" as const },
+    order: "newest",
+    window: 1,
+  }))
+  const activeRow = () => active.items()[0]
+  const proofs = wholeList(props.transport, projectsRefs.proofs, () => ({
+    filter: { revisionID: Number(activeRow()?.id ?? -1) },
+    order: "recorded",
+  }))
+  const history = wholeList(props.transport, projectsRefs.revisions, () => ({
+    filter: { key: props.project.key, state: "superseded" as const },
+    order: "newest",
+  }))
+  const view = createMemo(() => {
+    const row = activeRow()
+    const current = row ? revisionViewOf(row, proofs.items()) : undefined
+    return {
+      ...(current ? { active: current } : {}),
+      history: history.items().flatMap((item) => revisionViewOf(item, []) ?? []),
     }
-  }
-  onMount(() => void load())
-  createEffect(() => {
-    JSON.stringify(props.project.profile)
-    void load()
   })
-
   const seed = () => {
     const current = view()
     const source = current?.active?.profile ?? TEMPLATE
@@ -105,7 +133,6 @@ export function VerificationGroup(props: { ctx: Ctx; project: ProjectView }): JS
       server: found.server,
       directory: found.location.directory,
     })
-    await load()
   }
   const openEditor = () => {
     setText(seed())
@@ -147,7 +174,6 @@ export function VerificationGroup(props: { ctx: Ctx; project: ProjectView }): JS
     } finally {
       toast.dismiss()
       setBusy(false)
-      await load()
     }
   }
   const Cmd = (cmd: { command: string; proof?: Proof | undefined; fixOrInstall?: boolean }) => {
