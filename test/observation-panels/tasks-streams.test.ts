@@ -278,7 +278,11 @@ const globalNames = [
   "cancelAnimationFrame",
 ] as const
 
-type Options = { view?: Record<string, unknown> }
+type Options = {
+  view?: Record<string, unknown>
+  defaults?: Record<string, string[]>
+  sessionID?: string
+}
 
 /**
  * One Happy DOM window serves every test: the bundle registers its delegated event listeners on the
@@ -417,9 +421,10 @@ async function mountPanel(dom: Window, options: Options) {
   const taskStore = host.createReactiveStore({
     projects: { [PROJECT]: { ...openedTaskView(), ...options.view } },
   })
+  const defaultsStore = host.createReactiveStore({ projects: options.defaults ?? {} })
   const registrations: Array<{ token: unknown; value: unknown }> = []
   const session = {
-    id: SESSION,
+    id: options.sessionID ?? SESSION,
     location: { directory: PROJECT },
     directory: PROJECT,
     server: { id: "tasks-server", connected: true, client },
@@ -455,6 +460,7 @@ async function mountPanel(dom: Window, options: Options) {
     layout: { open: () => {} },
     stores: {
       taskView: () => taskStore,
+      taskStateDefaults: defaultsStore,
       modelsView: () => host.createReactiveStore({ projects: {} }),
       trajectoryView: () => host.createReactiveStore({ projects: {} }),
     },
@@ -527,6 +533,7 @@ async function mountPanel(dom: Window, options: Options) {
     opens,
     detailReads,
     taskStore,
+    defaultsStore,
     search: (text: string) => {
       const input = container.querySelector<HTMLInputElement>('input[aria-label="Find tasks"]')
       if (!input) {
@@ -648,6 +655,7 @@ test("switching the chip reads the other state from the head, with counts from t
     await until(() => header().includes("open"))
     expect(header()).toContain(`${QUEUED + 3 + 3} open`)
     expect(header()).toContain("3 running")
+    h.chooseFilter("Open")
     h.chooseFilter("Failed")
     await until(() => h.topLevel().length === 2)
     expect(h.topLevel().map((item) => item.dataset.taskId)).toEqual(
@@ -659,6 +667,90 @@ test("switching the chip reads the other state from the head, with counts from t
     expect(header()).toBe(String(QUEUED + 3 + 3 + 2 + 3))
     expect(h.list().scrollTop).toBe(0)
   })
+})
+
+test("toggles persist immediately and union overlapping buckets in the real stream window", async () => {
+  let saved: Record<string, string[]> = {}
+  await withPanel(async (h) => {
+    await until(() => h.topLevel().length > 0)
+    expect(h.defaultsStore.value.projects).toEqual({})
+    const detailReads = h.detailReads.count
+    h.chooseFilter("Running")
+    await until(() => h.text().includes("flow"))
+    expect(h.defaultsStore.value.projects[PROJECT]).toEqual(["open", "running"])
+    const header = () => h.container.querySelector(".lazers-tasks-count")?.textContent ?? ""
+    await until(() =>
+      header().startsWith(String(storedCount("running", "queued", "paused", "blocked", "open"))),
+    )
+    const filters = h.opens.filter(
+      (entry) => entry.source === "tasks.schedule" && !entry.filter.taskID,
+    )
+    expect(filters.at(-1)?.filter.states).toEqual(["open", "running"])
+    expect(filters.at(-1)!.window).toBeLessThan(100)
+    expect(h.detailReads.count).toBe(detailReads)
+    h.chooseFilter("Open")
+    h.chooseFilter("Queued")
+    await until(() =>
+      (h.container.querySelector(".lazers-tasks-state-filter button")?.textContent ?? "").includes(
+        "Motive",
+      ),
+    )
+    expect(h.defaultsStore.value.projects[PROJECT]).toEqual(["queued", "running"])
+    saved = structuredClone(h.defaultsStore.value.projects)
+    h.chooseFilter("All")
+    expect(h.defaultsStore.value.projects[PROJECT]).toEqual([])
+    await until(
+      () =>
+        header() ===
+        String(
+          storedCount(
+            "running",
+            "queued",
+            "paused",
+            "blocked",
+            "open",
+            "accepted",
+            "integrated",
+            "failed",
+            "cancelled",
+          ),
+        ),
+    )
+    await settle()
+    const scheduleOpens = () =>
+      h.opens.filter((entry) => entry.source === "tasks.schedule" && !entry.filter.taskID).length
+    const openCount = scheduleOpens()
+    h.chooseFilter("All")
+    await settle()
+    expect(scheduleOpens()).toBe(openCount)
+  })
+  await withPanel(
+    async (h) => {
+      await until(() => h.topLevel().length > 0)
+      const filter = h.opens.find(
+        (entry) => entry.source === "tasks.schedule" && !entry.filter.taskID,
+      )?.filter
+      expect(filter?.states).toEqual(["queued", "running"])
+      expect(h.container.querySelector(".lazers-tasks-state-filter button")?.textContent).toContain(
+        "Motive",
+      )
+      expect(h.defaultsStore.value.projects).toEqual(saved)
+    },
+    { defaults: saved, sessionID: "another-session", view: { scope: "project" } },
+  )
+  await withPanel(
+    async (h) => {
+      await until(() => h.topLevel().length > 0)
+      expect(
+        h.opens.find((entry) => entry.source === "tasks.schedule" && !entry.filter.taskID)?.filter
+          .states,
+      ).toEqual([])
+      expect(h.container.querySelector(".lazers-tasks-state-filter button")?.textContent).toBe(
+        "All",
+      )
+    },
+    { defaults: { [PROJECT]: [] } },
+  )
 })
 
 test("a search narrows the list from the stored text and shows no count", async () => {
@@ -767,6 +859,7 @@ test("open, scroll, expand and a chip switch read nothing from the main reposito
         .querySelector<HTMLButtonElement>(".lazers-tasks-disclosure")!
         .click()
       await until(() => h.rows().some((item) => item.dataset.itemKey!.includes(">")))
+      h.chooseFilter("Open")
       h.chooseFilter("Failed")
       await until(() => h.topLevel().length === 2)
       h.chooseFilter("Open")
@@ -817,6 +910,7 @@ test("the state menu marks the current chip and shows the stored counts", async 
       "Running",
       "Blocked / waiting",
       "Paused",
+      "Completed",
       "Accepted",
       "Integrated",
       "Failed / exhausted",
@@ -824,7 +918,10 @@ test("the state menu marks the current chip and shows the stored counts", async 
       "All",
     ])
     // The current value carries the check; counts ride in the trailing keys column.
-    expect(items().map((item) => item.dataset.icon)).toEqual(["check", ...Array(9).fill(undefined)])
+    expect(items().map((item) => item.dataset.icon)).toEqual([
+      "check",
+      ...Array(10).fill(undefined),
+    ])
     const count = (name: string) => items().find((item) => item.textContent === name)!.dataset.keys
     expect(count("Open")).toBe(
       String(storedCount("running", "queued", "paused", "blocked", "open")),
@@ -879,5 +976,18 @@ test("the list remembers the first row in view and reopens around it", async () 
       expect(h.row(storedOrder(open)[0]!)).not.toBeNull()
     },
     { view: { anchorTaskID: ids["A1 only"] } },
+  )
+  await withPanel(
+    async (h) => {
+      await until(() => h.topLevel().length > 0)
+      await settle()
+      expect(h.taskStore.value.projects[PROJECT]?.anchorTaskID).toBe(storedOrder(open)[5])
+      h.chooseFilter("All")
+      await until(() => h.list().scrollTop === 0)
+      await settle()
+      expect(h.list().scrollTop).toBe(0)
+      expect(h.topLevel()[0]?.dataset.taskId).toBe(storedOrder()[0])
+    },
+    { view: { anchorTaskID: storedOrder(open)[5] } },
   )
 })

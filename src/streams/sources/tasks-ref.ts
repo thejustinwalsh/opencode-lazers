@@ -48,6 +48,8 @@ export type TaskScheduleFilter = {
   /** Required over RPC; ignored by server-side callers, which name `session` directly. */
   scope?: TaskScope
   state?: TaskStateFilter
+  /** Explicit union, applied before ordering/windowing; empty means All. */
+  states?: readonly Exclude<TaskStateFilter, "all" | "legacy">[]
   /** One task by id. */
   taskID?: string
   /** The tasks of one plan; read them with order `plan`. */

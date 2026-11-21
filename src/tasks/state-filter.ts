@@ -14,6 +14,19 @@ export const TaskStateFilter = z.enum([
   "all",
 ])
 export type TaskStateFilter = z.infer<typeof TaskStateFilter>
+export const TaskStateSelection = z.enum([
+  "open",
+  "queued",
+  "running",
+  "blocked",
+  "paused",
+  "completed",
+  "accepted",
+  "integrated",
+  "failed",
+  "cancelled",
+])
+export type TaskStateSelection = z.infer<typeof TaskStateSelection>
 export type TaskQueryState = TaskStateFilter | "legacy"
 
 /** Keep the pre-filter query contract distinct from the new explicit `open` filter. */

@@ -1,4 +1,4 @@
-import { bucketsFor } from "../../tasks/schedule/key.ts"
+import { bucketsForSelection } from "../../tasks/schedule/key.ts"
 import type { Bucket } from "../../tasks/schedule/schema.ts"
 import { defineSource, type StreamContext } from "../source.ts"
 import {
@@ -138,7 +138,7 @@ export const taskScheduleSource = defineSource({
       params.push(input.planID)
     }
     if (input.includeRetired !== true) clauses.push("task_schedule.retired = 0")
-    const buckets: readonly Bucket[] | undefined = bucketsFor(input.state)
+    const buckets: readonly Bucket[] | undefined = bucketsForSelection(input.states, input.state)
     if (buckets) {
       clauses.push(`task_schedule.bucket IN (${placeholders(buckets)})`)
       params.push(...buckets)
