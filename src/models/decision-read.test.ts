@@ -7,6 +7,7 @@ import {
   ModelPriceSourceSettingsSchema,
 } from "./price-source-settings.ts"
 import { acceptedDurationMs, createModelDecisionReader, median } from "./decision-read.ts"
+import type { DecisionViewParts } from "./decision-read.ts"
 import type { ModelDecisionRoute } from "./decision-contract.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
@@ -553,6 +554,22 @@ function addAdoptedUsage(fixture: ReturnType<typeof makeLedgerFixture>, route: M
   rewriteAttemptFacts(fixture.path, fixture.projectID, fixture.attempts.adoption.id, route, [50])
 }
 
+/** One configuration's inspection facts and contributors, as a stored decision view holds them. */
+async function inspectionOf(
+  reader: { viewParts(input: ReturnType<typeof inputFor>): Promise<DecisionViewParts> },
+  input: ReturnType<typeof inputFor>,
+  configurationID: string,
+) {
+  const parts = await reader.viewParts(input)
+  const facts = parts.inspections.find(
+    (item) => item.configuration.configurationID === configurationID,
+  )
+  assert.ok(facts, `no inspection for ${configurationID}`)
+  const contributors =
+    parts.contributors.find((item) => item.configurationID === configurationID)?.contributors ?? []
+  return { ...facts, context: parts.overview.context, contributors }
+}
+
 test("production decision projection preserves exact route effort, adopted acceptance, retry history and global frontier before paging", async () => {
   const fixture = makeLedgerFixture()
   const alpha = { providerID: "openrouter", modelID: "a-model", variant: "medium" }
@@ -608,15 +625,7 @@ test("production decision projection preserves exact route effort, adopted accep
     expect(firstPage.nextCursor).toBeTruthy()
 
     const betaID = `configuration:${modelConfigurationID(beta.providerID, beta.modelID, beta.variant)}`
-    const inspected = await reader.inspect({
-      ...input,
-      snapshotID: overview.context.snapshotID,
-      configurationID: betaID,
-      selectedTaskID: null,
-      contributorLimit: 100,
-    })
-    expect(inspected.status).toBe("found")
-    if (inspected.status !== "found") return
+    const inspected = await inspectionOf(reader, input, betaID)
     expect(inspected.estimate).toMatchObject({
       status: "single-observation",
       observationCount: 1,
@@ -628,7 +637,7 @@ test("production decision projection preserves exact route effort, adopted accep
     })
     // First attempt start (100) to recorded acceptance (400), taken from the rows already read.
     expect(inspected.medianAcceptedDurationMs).toBe(300)
-    expect(inspected.contributorPage.contributors).toEqual(
+    expect(inspected.contributors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           taskReference: "LZ-1",
@@ -661,15 +670,6 @@ test("production decision projection preserves exact route effort, adopted accep
     expect(refreshed.context.snapshotID).not.toBe(overview.context.snapshotID)
     expect(refreshed.context.priceIndex.pins[0]?.snapshotID).not.toBe(originalPinID)
     expect(captures.count).toBe(2)
-    const oldSnapshotInspection = await reader.inspect({
-      ...input,
-      snapshotID: overview.context.snapshotID,
-      configurationID: betaID,
-      selectedTaskID: null,
-      contributorLimit: 100,
-    })
-    expect(oldSnapshotInspection.context.snapshotID).toBe(overview.context.snapshotID)
-    expect(oldSnapshotInspection.context.priceIndex.pins[0]?.snapshotID).toBe(originalPinID)
   } finally {
     reader.close()
     fixture.close()
@@ -974,22 +974,9 @@ test("unavailable and incomplete market totals stay unknown while a sourced comp
     })
     expect(overview.graph.points.some((point) => point.configurationID === routeID)).toBe(false)
     expect(overview.graph.frontierConfigurationIDs).not.toContain(routeID)
-    const configurations = await absentReader.configurations({ ...input, limit: 100 })
-    expect(
-      configurations.configurations.find(
-        (configuration) => configuration.configurationID === routeID,
-      )?.currentPrice.source,
-    ).toBeNull()
-    const inspected = await absentReader.inspect({
-      ...input,
-      snapshotID: overview.context.snapshotID,
-      configurationID: routeID,
-      selectedTaskID: null,
-      contributorLimit: 100,
-    })
-    expect(inspected.status).toBe("found")
-    if (inspected.status === "found")
-      expect(inspected.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
+    const inspected = await inspectionOf(absentReader, input, routeID)
+    expect(inspected.configuration.currentPrice.source).toBeNull()
+    expect(inspected.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
   } finally {
     absentReader.close()
     absentFixture.close()
@@ -1037,16 +1024,8 @@ test("unavailable and incomplete market totals stay unknown while a sourced comp
     })
     expect(overview.graph.points.some((point) => point.configurationID === routeID)).toBe(false)
     expect(overview.graph.frontierConfigurationIDs).not.toContain(routeID)
-    const inspected = await partialReader.inspect({
-      ...input,
-      snapshotID: overview.context.snapshotID,
-      configurationID: routeID,
-      selectedTaskID: null,
-      contributorLimit: 100,
-    })
-    expect(inspected.status).toBe("found")
-    if (inspected.status === "found")
-      expect(inspected.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
+    const inspected = await inspectionOf(partialReader, input, routeID)
+    expect(inspected.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
   } finally {
     partialReader.close()
     partialFixture.close()
@@ -1448,7 +1427,7 @@ test("first-page pins reject expired or mismatched contexts while retaining lega
       }),
     ).rejects.toThrow("scope or filters do not match")
     await expect(
-      reader.configurations({ ...input, snapshotID: "models-decision-v2:expired", limit: 1 }),
+      reader.rows({ ...input, snapshotID: "models-decision-v2:expired", limit: 1 }),
     ).rejects.toThrow("unavailable or expired")
 
     rewriteAttemptUsage(fixture.path, fixture.attempts.failed.id, 901)
@@ -1665,15 +1644,7 @@ test("an ordered-source quote refresh reprices market efficiency without changin
       route.modelID,
       route.variant,
     )}`
-    const beforeInspection = await reader.inspect({
-      ...input,
-      snapshotID: first.context.snapshotID,
-      configurationID,
-      selectedTaskID: fixture.tasks.retry!.id,
-      contributorLimit: 100,
-    })
-    expect(beforeInspection.status).toBe("found")
-    if (beforeInspection.status !== "found") return
+    const beforeInspection = await inspectionOf(reader, input, configurationID)
     const beforeRow = (await reader.rows({ ...input, limit: 100 })).rows.find(
       (candidate) => candidate.configuration.configurationID === configurationID,
     )
@@ -1687,15 +1658,7 @@ test("an ordered-source quote refresh reprices market efficiency without changin
       "0.000004",
     )
     const next = await reader.overview(input)
-    const afterInspection = await reader.inspect({
-      ...input,
-      snapshotID: next.context.snapshotID,
-      configurationID,
-      selectedTaskID: fixture.tasks.retry!.id,
-      contributorLimit: 100,
-    })
-    expect(afterInspection.status).toBe("found")
-    if (afterInspection.status !== "found") return
+    const afterInspection = await inspectionOf(reader, input, configurationID)
     const afterRow = (await reader.rows({ ...input, limit: 100 })).rows.find(
       (candidate) => candidate.configuration.configurationID === configurationID,
     )
@@ -1717,7 +1680,7 @@ test("an ordered-source quote refresh reprices market efficiency without changin
       maximum: beforeInspection.estimate.range.currentMarketUSD!.maximum * 2,
     })
     expect(
-      afterInspection.contributorPage.contributors.map((contributor) => ({
+      afterInspection.contributors.map((contributor) => ({
         taskID: contributor.taskID,
         route: contributor.route,
         contribution: contributor.contribution,
@@ -1725,7 +1688,7 @@ test("an ordered-source quote refresh reprices market efficiency without changin
         tokens: contributor.tokens,
       })),
     ).toEqual(
-      beforeInspection.contributorPage.contributors.map((contributor) => ({
+      beforeInspection.contributors.map((contributor) => ({
         taskID: contributor.taskID,
         route: contributor.route,
         contribution: contributor.contribution,
@@ -1788,21 +1751,12 @@ test("endpoint scenarios reuse one coherent capture, pin pages, and reprice with
   })
   try {
     const input = inputFor(fixture.projectDirectory)
-    const firstOverview = await reader.overview(input)
     const routeConfigurationID = `configuration:${modelConfigurationID(
       route.providerID,
       route.modelID,
       route.variant,
     )}`
-    const firstInspection = await reader.inspect({
-      ...input,
-      snapshotID: firstOverview.context.snapshotID,
-      configurationID: routeConfigurationID,
-      selectedTaskID: fixture.tasks.retry!.id,
-      contributorLimit: 1,
-    })
-    expect(firstInspection.status).toBe("found")
-    if (firstInspection.status !== "found") return
+    const firstInspection = await inspectionOf(reader, input, routeConfigurationID)
     const firstRow = (await reader.rows({ ...input, limit: 100 })).rows.find(
       (row) => row.configuration.configurationID === routeConfigurationID,
     )
@@ -1827,56 +1781,18 @@ test("endpoint scenarios reuse one coherent capture, pin pages, and reprice with
     })
     expect(firstMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(0.00001575, 12)
     expect(firstMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(0.00003125, 12)
-    expect(firstInspection.contributorPage.nextCursor).not.toBeNull()
+    expect(firstInspection.contributors.length).toBeGreaterThan(1)
     expect(firstMarket?.scenarios[0]?.provenance.snapshotGeneration).toBe(1)
     expect(firstRow.efficiency.tokensPerAcceptedTask).toBe(153)
     expect(captures).toBe(1)
 
     saveLunaEndpointSnapshot(endpointStore, fixture.projectDirectory, "0.0000002", "0.0000004")
-    const pinnedInspection = await reader.inspect({
-      ...input,
-      snapshotID: firstOverview.context.snapshotID,
-      configurationID: routeConfigurationID,
-      selectedTaskID: fixture.tasks.retry!.id,
-      contributorLimit: 1,
-      contributorCursor: firstInspection.contributorPage.nextCursor!,
-    })
-    expect(pinnedInspection).toMatchObject({
-      status: "found",
-      knownUsageMarket: {
-        scenarios: [
-          {
-            provenance: { snapshotGeneration: 1 },
-          },
-        ],
-      },
-    })
-    if (pinnedInspection.status === "found") {
-      expect(pinnedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
-        0.00001575,
-        12,
-      )
-      expect(pinnedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
-        0.00003125,
-        12,
-      )
-    }
-    expect(captures).toBe(1)
-
-    const refreshedOverview = await reader.overview(input)
-    const refreshedInspection = await reader.inspect({
-      ...input,
-      snapshotID: refreshedOverview.context.snapshotID,
-      configurationID: routeConfigurationID,
-      selectedTaskID: fixture.tasks.retry!.id,
-      contributorLimit: 1,
-    })
+    const refreshedInspection = await inspectionOf(reader, input, routeConfigurationID)
     const refreshedRow = (await reader.rows({ ...input, limit: 100 })).rows.find(
       (row) => row.configuration.configurationID === routeConfigurationID,
     )
     assert.ok(refreshedRow)
     expect(refreshedInspection).toMatchObject({
-      status: "found",
       knownUsageMarket: {
         scenarios: [
           {
@@ -1885,24 +1801,18 @@ test("endpoint scenarios reuse one coherent capture, pin pages, and reprice with
         ],
       },
     })
-    if (refreshedInspection.status === "found") {
-      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
-        0.00003075,
-        12,
-      )
-      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
-        0.00006125,
-        12,
-      )
-    }
+    expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+      0.00003075,
+      12,
+    )
+    expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+      0.00006125,
+      12,
+    )
     expect(refreshedRow.efficiency).toEqual(firstRow.efficiency)
     expect(refreshedRow.nativeReportedCost).toEqual(firstRow.nativeReportedCost)
-    expect(refreshedInspection.status).toBe("found")
-    if (refreshedInspection.status !== "found") return
     expect(refreshedInspection.estimate).toEqual(firstInspection.estimate)
-    expect(refreshedInspection.contributorPage.contributors).toEqual(
-      firstInspection.contributorPage.contributors,
-    )
+    expect(refreshedInspection.contributors).toEqual(firstInspection.contributors)
     expect(captures).toBe(2)
   } finally {
     reader.close()
@@ -2075,22 +1985,13 @@ test("F-S10-4 identical complete single-session cohorts have one exact price acr
   const source = cachedOpenRouterReader(fixture, { includeSources: true })
   try {
     const input = inputFor(fixture.projectDirectory)
-    const overview = await source.reader.overview(input)
     const row = (await source.reader.rows({ ...input, limit: 100 })).rows.find(
       (item) => item.configuration.route.modelID === route.modelID,
     )
     assert.ok(row)
     expect(row.cohort.acceptedTaskCount).toBe(1)
     expect(row.cohort.attemptCount).toBe(1)
-    const detail = await source.reader.inspect({
-      ...input,
-      snapshotID: overview.context.snapshotID,
-      configurationID: row.configuration.configurationID,
-      selectedTaskID: fixture.tasks.retry!.id,
-      contributorLimit: 100,
-    })
-    assert.equal(detail.status, "found")
-    if (detail.status !== "found") return
+    const detail = await inspectionOf(source.reader, input, row.configuration.configurationID)
     const scenario = detail.knownUsageMarket?.scenarios[0]
     assert.ok(scenario && row.referenceEstimate)
     expect(scenario.tierAttribution.status).toBe("not-required")

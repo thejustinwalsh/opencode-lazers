@@ -391,12 +391,7 @@ async function panelOf(
     limit: 50,
     snapshotID: overview.context.snapshotID,
   } as never)
-  const configurations = await reader.configurations({
-    ...base,
-    limit: 50,
-    snapshotID: overview.context.snapshotID,
-  } as never)
-  return stable({ overview, rows, configurations })
+  return stable({ overview, rows })
 }
 
 const panel = async (path: string, projectDirectory: string, options: PanelOptions = {}) => {

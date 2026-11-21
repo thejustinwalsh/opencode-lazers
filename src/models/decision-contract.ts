@@ -72,22 +72,9 @@ export const ModelDecisionRowsInputSchema = z.strictObject({
   cursor: Cursor.optional(),
   limit: z.int().min(1).max(100).default(50),
 })
-export const ModelDecisionConfigurationsInputSchema = ModelDecisionRowsInputSchema
-export const ModelDecisionInspectInputSchema = z.strictObject({
-  ...ReadShape,
-  snapshotID: OpaqueID,
-  configurationID: OpaqueID,
-  selectedTaskID: z.uuid().nullable().default(null),
-  contributorCursor: Cursor.optional(),
-  contributorLimit: z.int().min(1).max(100).default(50),
-})
 
 export type ModelDecisionReadInput = z.input<typeof ModelDecisionReadInputSchema>
 export type ModelDecisionRowsInput = z.input<typeof ModelDecisionRowsInputSchema>
-export type ModelDecisionConfigurationsInput = z.input<
-  typeof ModelDecisionConfigurationsInputSchema
->
-export type ModelDecisionInspectInput = z.input<typeof ModelDecisionInspectInputSchema>
 
 const RPCScope = { sessionID: z.string().min(1).max(200) }
 const ModelDecisionAccountingSchema = z.strictObject({
@@ -494,24 +481,6 @@ export const ModelDecisionRowsOutputSchema = z
   })
 export type ModelDecisionRows = z.infer<typeof ModelDecisionRowsOutputSchema>
 
-export const ModelDecisionConfigurationsOutputSchema = z
-  .strictObject({
-    context: ModelDecisionContextSchema,
-    configurations: z.array(ModelDecisionConfigurationSchema).max(100),
-    ...Page,
-  })
-  .superRefine((output, context) => {
-    output.configurations.forEach((configuration, index) =>
-      refineConfigurationPricePolicy(
-        configuration,
-        output.context.priceSourcePolicy,
-        ["configurations", index],
-        context,
-      ),
-    )
-  })
-export type ModelDecisionConfigurations = z.infer<typeof ModelDecisionConfigurationsOutputSchema>
-
 const EmpiricalRange = z.strictObject({
   tokens: NullableRange,
   currentMarketUSD: NullableRange,
@@ -699,14 +668,6 @@ export interface ModelDecisionReader {
     input: ModelDecisionRowsInput,
     options?: ModelDecisionReadOptions,
   ): Promise<ModelDecisionRows>
-  configurations(
-    input: ModelDecisionConfigurationsInput,
-    options?: ModelDecisionReadOptions,
-  ): Promise<ModelDecisionConfigurations>
-  inspect(
-    input: ModelDecisionInspectInput,
-    options?: ModelDecisionReadOptions,
-  ): Promise<ModelDecisionInspect>
 }
 
 /**

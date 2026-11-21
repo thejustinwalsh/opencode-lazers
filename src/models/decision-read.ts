@@ -1,13 +1,9 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import type {
   ModelDecisionConfiguration,
-  ModelDecisionConfigurations,
-  ModelDecisionConfigurationsInput,
   ModelDecisionContext,
   ModelDecisionContributor,
   ModelDecisionEstimate,
-  ModelDecisionInspect,
-  ModelDecisionInspectInput,
   ModelDecisionOverview,
   ModelDecisionReadInput,
   ModelDecisionReader,
@@ -20,10 +16,6 @@ import {
   MODELS_DECISION_ACCOUNTING_BASIS,
   MODELS_DECISION_TASK_KIND_CATALOG,
   MODELS_DECISION_TASK_KINDS,
-  ModelDecisionConfigurationsInputSchema,
-  ModelDecisionConfigurationsOutputSchema,
-  ModelDecisionInspectInputSchema,
-  ModelDecisionInspectOutputSchema,
   ModelDecisionOverviewOutputSchema,
   ModelDecisionReadInputSchema,
   ModelDecisionRowsInputSchema,
@@ -101,12 +93,10 @@ function readCurrentDecisionRevision(dependencies: ModelDecisionReaderDependenci
 
 type CursorPayload = {
   version: 1
-  kind: "rows" | "configurations" | "contributors"
+  kind: "rows"
   snapshotID: string
   offset: number
   limit: number
-  configurationID?: string
-  selectedTaskID?: string | null
   inputFingerprint: string
 }
 
@@ -919,7 +909,6 @@ function makeContributors(input: {
   acceptedTaskIDs: Set<string>
   tasks: readonly ObservationLedgerDecisionTask[]
   sessionsByTask: Map<string, SessionData[]>
-  selectedTaskID: string | null
 }) {
   const contributors: ModelDecisionContributor[] = []
   for (const task of input.tasks) {
@@ -969,8 +958,6 @@ function makeContributors(input: {
     .filter((contributor) => contributor.sessionID.length <= 200)
     .sort(
       (left, right) =>
-        Number(right.taskID === input.selectedTaskID) -
-          Number(left.taskID === input.selectedTaskID) ||
         left.taskReference.localeCompare(right.taskReference) ||
         (left.observedAt ?? "").localeCompare(right.observedAt ?? "") ||
         left.sessionID.localeCompare(right.sessionID),
@@ -1434,7 +1421,6 @@ function buildSnapshotData(
         acceptedTaskIDs: cohort.acceptedTaskIDs,
         tasks: selectedTasks,
         sessionsByTask,
-        selectedTaskID: null,
       }),
     )
   }
@@ -1589,7 +1575,7 @@ function readPageCursor(secret: Uint8Array, token: string): CursorPayload {
     typeof parsed !== "object" ||
     parsed === null ||
     (parsed as CursorPayload).version !== 1 ||
-    !["rows", "configurations", "contributors"].includes((parsed as CursorPayload).kind) ||
+    (parsed as CursorPayload).kind !== "rows" ||
     !Number.isSafeInteger((parsed as CursorPayload).offset) ||
     (parsed as CursorPayload).offset < 0 ||
     !Number.isSafeInteger((parsed as CursorPayload).limit) ||
@@ -1641,41 +1627,10 @@ function rowPage(
   })
 }
 
-function configurationPage(
-  snapshot: DecisionSnapshot,
-  offset: number,
-  limit: number,
-  secret: Uint8Array,
-): ModelDecisionConfigurations {
-  const nextOffset = offset + limit
-  const nextCursor =
-    nextOffset < snapshot.configurations.length
-      ? pageCursor(secret, {
-          version: 1,
-          kind: "configurations",
-          snapshotID: snapshot.context.snapshotID,
-          offset: nextOffset,
-          limit,
-          inputFingerprint: snapshot.inputFingerprint,
-        })
-      : null
-  return ModelDecisionConfigurationsOutputSchema.parse({
-    context: snapshot.context,
-    configurations: page(snapshot.configurations, offset, limit),
-    totalCount: snapshot.configurations.length,
-    nextCursor,
-  })
-}
-
-/** A configuration's contributors in the inspection's order: the selected task's first. */
-function contributorsInOrder(
-  snapshot: DecisionSnapshot,
-  configKey: string,
-  selectedTaskID: string | null,
-) {
+/** A configuration's contributors in the inspection's order. */
+function contributorsInOrder(snapshot: DecisionSnapshot, configKey: string) {
   return [...(snapshot.contributors.get(configKey) ?? [])].sort(
     (left, right) =>
-      Number(right.taskID === selectedTaskID) - Number(left.taskID === selectedTaskID) ||
       left.taskReference.localeCompare(right.taskReference) ||
       (left.observedAt ?? "").localeCompare(right.observedAt ?? "") ||
       left.sessionID.localeCompare(right.sessionID),
@@ -1726,50 +1681,6 @@ function inspectionFacts(snapshot: DecisionSnapshot, row: DecisionSnapshot["rows
 }
 
 export type DecisionInspectionFacts = ReturnType<typeof inspectionFacts>
-
-function inspection(
-  snapshot: DecisionSnapshot,
-  input: ReturnType<typeof ModelDecisionInspectInputSchema.parse>,
-  offset: number,
-  secret: Uint8Array,
-): ModelDecisionInspect {
-  const row = snapshot.rows.find(
-    (candidate) => candidate.configuration.configurationID === input.configurationID,
-  )
-  if (!row)
-    return ModelDecisionInspectOutputSchema.parse({
-      status: "not-found",
-      context: snapshot.context,
-      configurationID: input.configurationID,
-    })
-  const configKey = routeID(row.configuration.route)!
-  const contributors = contributorsInOrder(snapshot, configKey, input.selectedTaskID)
-  const nextOffset = offset + input.contributorLimit
-  const nextCursor =
-    nextOffset < contributors.length
-      ? pageCursor(secret, {
-          version: 1,
-          kind: "contributors",
-          snapshotID: snapshot.context.snapshotID,
-          offset: nextOffset,
-          limit: input.contributorLimit,
-          configurationID: input.configurationID,
-          selectedTaskID: input.selectedTaskID,
-          inputFingerprint: snapshot.inputFingerprint,
-        })
-      : null
-  return ModelDecisionInspectOutputSchema.parse({
-    status: "found",
-    context: snapshot.context,
-    selectedTaskID: input.selectedTaskID,
-    ...inspectionFacts(snapshot, row),
-    contributorPage: {
-      contributors: page(contributors, offset, input.contributorLimit),
-      totalCount: contributors.length,
-      nextCursor,
-    },
-  })
-}
 
 export type ModelDecisionWarmOutcome = "current" | "refreshed"
 
@@ -1965,10 +1876,10 @@ export function createModelDecisionReader(
         overview: snapshotOverview(snapshot),
         sourceRevision: snapshot.sourceRevision,
         priceIdentity: snapshot.priceIdentity,
-        // The objects an inspection with no selected task pages through, whole.
+        // Every configuration's contributors, whole.
         contributors: snapshot.rows.map((row) => ({
           configurationID: row.configuration.configurationID,
-          contributors: contributorsInOrder(snapshot, routeID(row.configuration.route)!, null),
+          contributors: contributorsInOrder(snapshot, routeID(row.configuration.route)!),
         })),
         inspections: snapshot.rows.map((row) => inspectionFacts(snapshot, row)),
       }
@@ -2001,52 +1912,6 @@ export function createModelDecisionReader(
           : await freshForInput(parsed, options?.signal)
       options?.signal?.throwIfAborted()
       return rowPage(snapshot, offset, parsed.limit, secret)
-    },
-    async configurations(input: ModelDecisionConfigurationsInput, options) {
-      const parsed = ModelDecisionConfigurationsInputSchema.parse(input)
-      if (parsed.scope.projectDirectory !== dependencies.projectDirectory)
-        throw new Error("Model decision scope is unavailable")
-      let snapshot: DecisionSnapshot
-      let offset = 0
-      if (parsed.cursor) {
-        const cursor = readPageCursor(secret, parsed.cursor)
-        if (cursor.kind !== "configurations" || cursor.limit !== parsed.limit)
-          throw new Error("Model decision configuration cursor page does not match")
-        if (parsed.snapshotID && parsed.snapshotID !== cursor.snapshotID)
-          throw new Error("Model decision configuration cursor and snapshot pin do not match")
-        snapshot = await fromCursor(cursor, parsed, options?.signal)
-        offset = cursor.offset
-      } else
-        snapshot = parsed.snapshotID
-          ? await fromSnapshot(parsed.snapshotID, parsed, options?.signal)
-          : await freshForInput(parsed, options?.signal)
-      options?.signal?.throwIfAborted()
-      return configurationPage(snapshot, offset, parsed.limit, secret)
-    },
-    async inspect(input: ModelDecisionInspectInput, options) {
-      const parsed = ModelDecisionInspectInputSchema.parse(input)
-      if (parsed.scope.projectDirectory !== dependencies.projectDirectory)
-        throw new Error("Model decision scope is unavailable")
-      const snapshot = snapshots.get(parsed.snapshotID)?.snapshot
-      if (!snapshot || !inputMatches(snapshot, parsed))
-        throw new Error("Model decision inspection snapshot is unavailable or mismatched")
-      touch(parsed.snapshotID)
-      let offset = 0
-      if (parsed.contributorCursor) {
-        const cursor = readPageCursor(secret, parsed.contributorCursor)
-        if (
-          cursor.kind !== "contributors" ||
-          cursor.limit !== parsed.contributorLimit ||
-          cursor.configurationID !== parsed.configurationID ||
-          cursor.selectedTaskID !== parsed.selectedTaskID ||
-          cursor.snapshotID !== parsed.snapshotID
-        )
-          throw new Error("Model decision contributor cursor does not match this inspection")
-        offset = cursor.offset
-        await fromCursor(cursor, parsed, options?.signal)
-      } else options?.signal?.throwIfAborted()
-      options?.signal?.throwIfAborted()
-      return inspection(snapshot, parsed, offset, secret)
     },
     close() {
       if (disposed) return

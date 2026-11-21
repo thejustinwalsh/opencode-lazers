@@ -1,5 +1,4 @@
 import type {
-  ModelDecisionConfigurations,
   ModelDecisionContext,
   ModelDecisionContributorPage,
   ModelDecisionEstimate,
@@ -223,23 +222,6 @@ export function decisionRows(): ModelDecisionRows {
     ],
     totalCount: 3,
     nextCursor: "rows:opaque-next",
-  }
-}
-
-export function decisionConfigurations(): ModelDecisionConfigurations {
-  return {
-    context: decisionContext(),
-    configurations: [
-      decisionRow({
-        status: "unknown",
-        tokensPerAcceptedTask: null,
-        currentMarketUSDPerAcceptedTask: null,
-        observationCount: 0,
-        reason: "No attributable cohort.",
-      }).configuration,
-    ],
-    totalCount: 3,
-    nextCursor: null,
   }
 }
 

@@ -130,18 +130,7 @@ async function everything(reader: ModelDecisionReader, projectDirectory: string)
   const overview = await reader.overview(input)
   const snapshotID = overview.context.snapshotID
   const rows = await reader.rows({ ...input, snapshotID, limit: 50 })
-  const configurations = await reader.configurations({ ...input, snapshotID, limit: 50 })
-  const first = configurations.configurations[0]
-  const inspect = first
-    ? await reader.inspect({
-        ...input,
-        snapshotID,
-        configurationID: first.configurationID,
-        selectedTaskID: null,
-        contributorLimit: 20,
-      } as never)
-    : null
-  return normalize({ overview, rows, configurations, inspect }, [snapshotID])
+  return normalize({ overview, rows }, [snapshotID])
 }
 
 test("worker reader returns the same decision data as the synchronous reader", async () => {
