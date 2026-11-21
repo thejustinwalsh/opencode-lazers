@@ -403,13 +403,7 @@ export default Plugin.define({
         ),
       )
       yield* sectionEffect("setup:TrajectoryTools", () =>
-        registerTrajectoryTools(
-          ctx,
-          runtime.store,
-          core.trajectoryHost,
-          projectID,
-          core.taskValuationProvider,
-        ),
+        registerTrajectoryTools(ctx, runtime.store),
       )
       yield* sectionEffect("setup:Observability", () =>
         registerObservability(ctx, core.reads, projectID).pipe(Effect.orDie),
