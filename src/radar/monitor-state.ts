@@ -78,7 +78,7 @@ function delay(signal: AbortSignal) {
  *
  * SEAM (Task 3): this class and its `liveRadar` read are what remains of the old monitor. They
  * carry the sessions (and the calls and flow derived from them), which move to
- * `radarRefs.sessions` (`src/streams/sources/radar-ref.ts`) over `host_session_state`; then this
+ * `radarRefs.sessions` (`radar.sessions` over `host_session_state`, Task 3, now built); then this
  * class, `kept.ts`, `monitor-transport.ts`, the `liveRadar` RPC and its 512 KB response cap are
  * deleted together.
  */

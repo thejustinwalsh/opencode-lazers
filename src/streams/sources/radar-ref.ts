@@ -1,5 +1,6 @@
 import type { Columns } from "../frame.ts"
 import { sourceRef, type SourceRef } from "../source.ts"
+import { RADAR_SESSIONS_SOURCE, radarSessionColumns } from "./host-sessions-ref.ts"
 
 /**
  * The Radar sources, the part a consumer without a database needs: names, columns and filters.
@@ -19,12 +20,6 @@ export const RADAR_SOURCES = {
   scheduler: "radar.scheduler",
   planEvents: "radar.planEvents",
   nodes: "radar.nodes",
-  /**
-   * SEAM (Task 3): no server source answers this name yet. It reads `host_session_state` once
-   * Task 3 lands; until then the monitor's sessions come from the `liveRadar` read
-   * (`src/radar/monitor-state.ts`), the one read of the old monitor that remains.
-   */
-  sessions: "radar.sessions",
 } as const
 
 /** The view the caller reads from: a session view reads only what that session may see. */
@@ -154,29 +149,6 @@ export const radarNodeColumns = {
   snapshot: "json",
 } as const satisfies Columns
 
-/** `host_session_state` as `.agents/plans/panel-streams.md` 1.2 specifies it (Task 3 owns the table). */
-const radarSessionColumns = {
-  id: "int",
-  session_id: "text",
-  role: "text",
-  attempt_id: "text",
-  task_id: "text",
-  parent_session_id: "text",
-  busy: "bool",
-  pending_input: "int",
-  pending_permissions: "int",
-  pending_forms: "int",
-  outcome: "text",
-  archived: "bool",
-  route_provider: "text",
-  route_model: "text",
-  route_variant: "text",
-  tokens_in: "int",
-  tokens_out: "int",
-  updated_at: "int",
-  host_updated_at: "int",
-} as const satisfies Columns
-
 export const radarRefs = {
   assignments: sourceRef({ name: RADAR_SOURCES.assignments, columns: assignmentColumns }),
   attempt: sourceRef({
@@ -195,5 +167,6 @@ export const radarRefs = {
     detail: radarPlanEventDetail,
   }),
   nodes: sourceRef({ name: RADAR_SOURCES.nodes, columns: radarNodeColumns }),
-  sessions: sourceRef({ name: RADAR_SOURCES.sessions, columns: radarSessionColumns }),
-} satisfies Record<keyof typeof RADAR_SOURCES, SourceRef<never, Columns>>
+  /** `radar.sessions` over `host_session_state` (`host-sessions.ts`, Task 3). */
+  sessions: sourceRef({ name: RADAR_SESSIONS_SOURCE, columns: radarSessionColumns }),
+} satisfies Record<keyof typeof RADAR_SOURCES | "sessions", SourceRef<never, Columns>>
