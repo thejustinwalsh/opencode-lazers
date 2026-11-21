@@ -19,6 +19,7 @@ import { CandidateBuilds } from "./candidate-builds.ts"
 import { createThreadedDecisionWorker } from "./decision-worker-client.ts"
 import { projectionStatus } from "../projections/lifecycle.ts"
 import { readModelComparison } from "./comparison-read.ts"
+import { nativeCatalogAccess } from "./price-state.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 
 const project = "/candidates-project"
@@ -351,4 +352,22 @@ test("models.candidates authorize: the comparison RPC's check, and the service's
       modelCandidatesSource.authorize!({ projectDirectory: project, sessionID: "ses" }, without),
     ),
   ).rejects.toThrow("Models scope is unavailable")
+})
+
+test("price sources: native catalog access from a stamp-only read equals the read of the body", () => {
+  const { writer, reader } = setup()
+  const before = reader.readComparisonSources(undefined, {
+    stampOnly: true,
+    sources: ["native-catalog"],
+  })
+  expect(nativeCatalogAccess(before[0])).toBe("unknown")
+  seedEvidenceCorpus(writer, project)
+  const stamp = reader.readComparisonSources(undefined, {
+    stampOnly: true,
+    sources: ["native-catalog"],
+  })
+  expect(stamp[0]!.snapshot).toBeNull()
+  const full = reader.readComparisonSources(undefined, { sources: ["native-catalog"] })
+  expect(nativeCatalogAccess(stamp[0])).toBe(nativeCatalogAccess(full[0]))
+  expect(nativeCatalogAccess(stamp[0])).toBe("configured")
 })

@@ -471,7 +471,11 @@ export function registerModelsServer(
             signal.throwIfAborted()
             const opencode = withEvidenceReadStore((store) => {
               signal.throwIfAborted()
-              const sources = store.readComparisonSources()
+              // The native snapshot's stamp decides access; its records are never read here.
+              const sources = store.readComparisonSources(undefined, {
+                stampOnly: true,
+                sources: ["native-catalog"],
+              })
               signal.throwIfAborted()
               return nativeCatalogAccess(
                 sources.find((source) => source.source === "native-catalog"),
