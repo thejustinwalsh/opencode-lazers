@@ -15,6 +15,7 @@ import {
 import type { TrajectorySession } from "./native.ts"
 import { inspectTaskEffort, type TaskEffort } from "./read.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
+import type { TaskRepository } from "../storage.ts"
 
 /**
  * What one effort refresh computes, off the main thread: the task's stored facts read on a
@@ -202,6 +203,25 @@ export type TaskEffortCompute = (
   signal: AbortSignal,
 ) => Promise<EffortRow | undefined>
 
+/**
+ * A project's stored session reader: `host_session_state` as the trajectory host's read returns a
+ * session, its context status the stored transcript's read state; null for a session not stored.
+ */
+export function storedSessionOf(repository: TaskRepository, project: string, projectID: string) {
+  const session = repository.read((db) =>
+    db.query<EffortSessionRow, [string, string]>(
+      `SELECT ${SESSION_COLUMNS} FROM host_session_state
+       WHERE project_directory=? AND session_id=?`,
+    ),
+  )
+  return (sessionID: string) => {
+    const row = repository.read(() => session.get(project, sessionID))
+    if (!row) return null
+    const transcript = repository.read((db) => storedTranscriptSession(db, project, sessionID))
+    return trajectorySessionOf(row, projectID, transcript?.state ?? "not-read")
+  }
+}
+
 /** The task's whole effort from stored facts on a read-only connection, valued by `provider`. */
 async function storedTaskEffort(
   path: string,
@@ -214,22 +234,11 @@ async function storedTaskEffort(
   const connection = openReadOnlyTrajectoryStore(path, project)
   try {
     const { repository } = connection.store
-    const session = repository.read((db) =>
-      db.query<EffortSessionRow, [string, string]>(
-        `SELECT ${SESSION_COLUMNS} FROM host_session_state
-         WHERE project_directory=? AND session_id=?`,
-      ),
-    )
     return await inspectTaskEffort(
       connection.store,
       projectID,
       taskID,
-      (sessionID) => {
-        const row = repository.read(() => session.get(project, sessionID))
-        if (!row) return null
-        const transcript = repository.read((db) => storedTranscriptSession(db, project, sessionID))
-        return trajectorySessionOf(row, projectID, transcript?.state ?? "not-read")
-      },
+      storedSessionOf(repository, project, projectID),
       {
         taskValuationProvider: provider,
         signal,

@@ -29,7 +29,7 @@ import {
 } from "./message-events.ts"
 import type { TranscriptRouteRow } from "../transcript-meta/schema.ts"
 
-type PlanSnapshot = {
+export type PlanSnapshot = {
   row: PlanRow
   node: NodeRow
   input: PlanInput | null
@@ -38,7 +38,7 @@ type PlanSnapshot = {
   transitions: TransitionRow[]
 }
 
-const ACTIVE_ATTEMPTS = new Set(["preparing", "running", "verifying"])
+export const ACTIVE_ATTEMPTS = new Set(["preparing", "running", "verifying"])
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
@@ -235,7 +235,11 @@ function rawPlanInput(row: PlanRow) {
   }
 }
 
-function snapshots(store: RunnerStore, task: TaskSpec): PlanSnapshot[] {
+/**
+ * The task's plans, its node in each and its attempts in each. `history` false leaves out the
+ * effects and transitions (the stored-summary read takes its checks from `task_events`).
+ */
+export function snapshots(store: RunnerStore, task: TaskSpec, history = true): PlanSnapshot[] {
   const directory = store.repository.projectDirectory
   // Filtered in SQL by task: only the plans that hold the task, and within them only its
   // node, attempts, effects and transitions. No pass over every plan's rows.
@@ -261,6 +265,10 @@ function snapshots(store: RunnerStore, task: TaskSpec): PlanSnapshot[] {
           "SELECT * FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY started_at,number",
         )
         .all(row.id, task.id)
+      if (!history) {
+        output.push({ row, node, input: rawPlanInput(row), attempts, effects: [], transitions: [] })
+        continue
+      }
       const effects = db
         .query<EffectRow, [string, string]>(
           `SELECT * FROM runner_effects WHERE plan_id=?
@@ -371,7 +379,7 @@ type EffortAttemptView = {
   legacyTokenCount: ReturnType<typeof legacyTokenCountView>
 }
 
-function attemptView(
+export function attemptView(
   attempt: AttemptRow,
   snapshot: PlanSnapshot,
   session: TrajectorySession | null,
@@ -639,9 +647,8 @@ function isAcceptedNode(snapshot: PlanSnapshot) {
   return snapshot.node.state === "accepted" || snapshot.node.state === "incorporated"
 }
 
-function focusedPlanViews(
-  store: RunnerStore,
-  task: TaskSpec,
+export function focusedPlanViews(
+  waitingOn: readonly string[],
   rawPlans: PlanSnapshot[],
   checksByPlan: Map<string, CheckView[]>,
   stats: PrivacyStats,
@@ -662,7 +669,7 @@ function focusedPlanViews(
     taskState: safeText(snapshot.node.state, stats, 80),
     accepted: isAcceptedNode(snapshot),
     taskResultCommit: snapshot.node.artifact ? safeText(snapshot.node.artifact, stats, 128) : null,
-    waitingOn: store.execution(task.id)?.waitingOn.map((id) => safeText(id, stats, 128)) ?? [],
+    waitingOn: waitingOn.map((id) => safeText(id, stats, 128)),
     acceptance: safeAcceptance(snapshot.input?.acceptance ?? [], stats),
     checks: checksByPlan.get(snapshot.row.id) ?? [],
   }))
@@ -879,7 +886,7 @@ function effortView(
   }
 }
 
-function taskView(
+export function taskView(
   store: RunnerStore,
   task: TaskSpec,
   rawPlans: PlanSnapshot[],
@@ -977,7 +984,7 @@ function coverageView(
   }
 }
 
-function privacyView(stats: PrivacyStats) {
+export function privacyView(stats: PrivacyStats) {
   return {
     redactedValues: stats.redacted,
     truncatedValues: stats.truncated,
@@ -1238,7 +1245,12 @@ export async function inspectTrajectory(
   const visibleEvents = input.attemptID
     ? rawEvents.filter((event) => event.attemptID === input.attemptID || event.attemptID === null)
     : rawEvents
-  const focusedTaskPlans = focusedPlanViews(store, task, rawPlans, checksByPlan, stats)
+  const focusedTaskPlans = focusedPlanViews(
+    store.execution(task.id)?.waitingOn ?? [],
+    rawPlans,
+    checksByPlan,
+    stats,
+  )
 
   // One read: the task's open concerns, shown on the attempt each was raised against.
   const concerns = new Map<string, { line: string; action?: string; because?: string }>()
