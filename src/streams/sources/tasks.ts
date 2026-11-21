@@ -474,10 +474,12 @@ const activityTable = `(SELECT e.id AS id, e.project_directory AS project_direct
 
 function activityFilter(input: TaskActivityFilter) {
   const scoped = taskInScope("task_activity.task_id", input)
+  // `+plan_id`: the task's own index (`task_events_task`) bounds the read to its rows; the plan
+  // index would read every event of the plan.
   const clauses = [
     "task_activity.project_directory = ?",
     "task_activity.task_id = ?",
-    "task_activity.plan_id = ?",
+    "+task_activity.plan_id = ?",
     scoped.clause,
   ]
   const params: (string | number | null)[] = [
@@ -590,8 +592,9 @@ defineSource({
   orders: { task: [{ column: "task_id", direction: "asc" }] },
   authorize: (input: TaskCurrentActivityFilter, context) => scopedTo(input, context),
   filter(input: TaskCurrentActivityFilter) {
+    // `+project_directory`: the rows come by task id (unique), never by a scan of the project.
     const clauses = [
-      "task_current.project_directory = ?",
+      "+task_current.project_directory = ?",
       `task_current.task_id IN (${placeholders(input.tasks)})`,
     ]
     const params: (string | number | null)[] = [input.project ?? null, ...input.tasks]
