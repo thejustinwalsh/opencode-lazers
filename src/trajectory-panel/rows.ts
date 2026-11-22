@@ -32,6 +32,17 @@ export function timelineEventID(row: Raw) {
   return String(row.ref)
 }
 
+/**
+ * A progress row's event kind as the old read named it. The display row stores the projected
+ * fact's kind (`worker-tool`, `commentary`, `user`, `synthetic`, ...); a row whose payload was
+ * gone stores the raw recorder kind (`tool`), which the projection prefixes (`projectProgressFact`).
+ */
+const PROJECTED_KINDS = new Set(["commentary", "user", "synthetic"])
+function progressKind(event: string | undefined) {
+  if (!event) return "worker-step"
+  return event.startsWith("worker-") || PROJECTED_KINDS.has(event) ? event : `worker-${event}`
+}
+
 /** A timeline row as the old event kinds the view knows. */
 export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
   const kind = String(row.kind)
@@ -66,10 +77,11 @@ export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
           ? { kind: "verification", checkID: event, status }
           : kind === "progress"
             ? {
-                kind: event === "commentary" ? "commentary" : `worker-${event ?? "step"}`,
+                kind: progressKind(event),
                 status,
                 tool,
                 text: text(row.title),
+                fileTargets: row.file_targets ?? undefined,
               }
             : kind === "assistant-step"
               ? { kind, status, model }

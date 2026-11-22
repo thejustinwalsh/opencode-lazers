@@ -83,33 +83,49 @@ const TOOL_STATUS = `CASE c.status WHEN 'succeeded' THEN 'completed' WHEN 'faile
     WHEN c.completed_at IS NOT NULL THEN 'completed' ELSE 'running' END
   ELSE 'running' END`
 
+/** A stored event's columns, read from `task_events` under `alias`. */
+const STORED_COLUMNS = [
+  "sort_at",
+  "sort_key",
+  "kind",
+  "at",
+  "plan_id",
+  "attempt_id",
+  "session_id",
+  "event",
+  "from_state",
+  "to_state",
+  "status",
+  "tool",
+  "title",
+  "route_provider",
+  "route_model",
+  "route_variant",
+  "started_at",
+  "ended_at",
+  "detail",
+  "project_directory",
+  "task_id",
+]
+const stored = (alias: string, extra: Record<string, string> = {}) => ({
+  ref: `${alias}.origin`,
+  ...Object.fromEntries(STORED_COLUMNS.map((name) => [name, `${alias}.${name}`])),
+  ...extra,
+})
+
 const EVENTS = `(${[
+  arm(stored("e"), "task_events e", "e.kind<>'progress'"),
+  // A progress row (`pg:<seq>`) with what `task_events` does not copy from its display row: the
+  // call and message it belongs to (a worker tool fact and its host call are one mark) and its
+  // recorded file targets (the Files lane). One primary-key read per row.
   arm(
-    {
-      ref: "origin",
-      sort_at: "sort_at",
-      sort_key: "sort_key",
-      kind: "kind",
-      at: "at",
-      plan_id: "plan_id",
-      attempt_id: "attempt_id",
-      session_id: "session_id",
-      event: "event",
-      from_state: "from_state",
-      to_state: "to_state",
-      status: "status",
-      tool: "tool",
-      title: "title",
-      route_provider: "route_provider",
-      route_model: "route_model",
-      route_variant: "route_variant",
-      started_at: "started_at",
-      ended_at: "ended_at",
-      detail: "detail",
-      project_directory: "project_directory",
-      task_id: "task_id",
-    },
-    "task_events",
+    stored("e", {
+      message_id: "d.message_id",
+      call_id: "d.call_id",
+      file_targets: "d.file_targets_json",
+    }),
+    "task_events e LEFT JOIN runner_progress_display d ON d.seq=CAST(substr(e.origin,4) AS INTEGER)",
+    "e.kind='progress'",
   ),
   arm(
     step("assistant-step", "step", "s.created_at", "assistant-step", {
@@ -197,7 +213,13 @@ export async function authorizeTask<F extends TrajectoryAttemptsFilter>(
 export const trajectoryEventsSource = defineSource({
   name: TRAJECTORY_SOURCES.events,
   table: EVENTS,
-  tables: ["task_events", "transcript_steps", "native_tool_call_display", "runner_attempts"],
+  tables: [
+    "task_events",
+    "runner_progress_display",
+    "transcript_steps",
+    "native_tool_call_display",
+    "runner_attempts",
+  ],
   key: ["ref"],
   orders: {
     timeline: [
@@ -244,7 +266,7 @@ const ATTEMPTS = `(SELECT a.id AS id, a.project_directory AS project_directory, 
 export const trajectoryAttemptsSource = defineSource({
   name: TRAJECTORY_SOURCES.attempts,
   table: ATTEMPTS,
-  tables: ["runner_attempts", "task_events"],
+  tables: ["runner_attempts", "task_events", "transcript_steps"],
   key: ["id"],
   orders: {
     number: [

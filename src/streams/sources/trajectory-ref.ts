@@ -84,6 +84,11 @@ export const trajectoryEventColumns = {
   /** Error name (never a message): a failed step, or a retry's error. */
   error_type: "text",
   retry_attempt: "int",
+  /**
+   * A progress row's recorded file targets (`{ coverage, operation, paths }`, workspace-relative
+   * and validated at record time); null otherwise.
+   */
+  file_targets: "json",
 } as const satisfies Columns
 
 /** At `window: 1`: the stored event's cold JSON (`{ event }` or `{ event, check }`); null otherwise. */
