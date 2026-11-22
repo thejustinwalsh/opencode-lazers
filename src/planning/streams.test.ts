@@ -102,7 +102,7 @@ function fixture() {
   })
   for (const [id, agent, attempt, state, reason] of [
     ["u1", "critic", 1, "reviewed", null],
-    ["u2", "grounding", 1, "stuck", "silent"],
+    ["u2", "grounding", 1, "failed", "silent"],
     ["u3", "grounding", 2, "failed", "gave up"],
   ] as const)
     store.createRun({
