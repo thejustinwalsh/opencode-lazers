@@ -3,6 +3,7 @@ import {
   LABEL_CHAR_PX,
   endPadding,
   labelRightEdge,
+  laneCountText,
   markRightEdge,
 } from "../../src/trajectory-panel/panel-layout.ts"
 
@@ -28,4 +29,12 @@ test("at fit zoom the last ruler label and the last mark end inside the panel", 
 test("the padding follows the widest label", () => {
   expect(endPadding(["0", "5m"])).toBeLessThan(endPadding(["0", "1h30m"]))
   expect(endPadding([])).toBe(8)
+})
+
+test("a lane drawn from a partial window says its count is what is loaded", () => {
+  expect(laneCountText(66, false)).toBe("66")
+  expect(laneCountText(66, true, 330)).toBe("66 of 330")
+  expect(laneCountText(4, true)).toBe("4 loaded")
+  // A recorded total below the loaded count is not a total to show.
+  expect(laneCountText(66, true, 10)).toBe("66 loaded")
 })

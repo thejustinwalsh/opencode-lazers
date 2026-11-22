@@ -91,3 +91,15 @@ export const labelRightEdge = (centerPercent: number, label: string, trackPx: nu
 /** Right edge, in px from the track's left, of a mark whose time is at `percent`. */
 export const markRightEdge = (percent: number, trackPx: number, widthPercent = 0) =>
   ((percent + widthPercent) / 100) * trackPx + MARK_HIT_PX / 2
+
+/**
+ * A lane's count. With every event loaded it is the number placed. While the timeline window holds
+ * only part of the task it is what is loaded, said so: against the recorded total when one exists
+ * ("66 of 330"), else "66 loaded". An unlabelled partial count reads as the whole.
+ */
+export function laneCountText(count: number, partial: boolean, total?: number | null) {
+  if (!partial) return count.toLocaleString()
+  return typeof total === "number" && total >= count
+    ? `${count.toLocaleString()} of ${total.toLocaleString()}`
+    : `${count.toLocaleString()} loaded`
+}
