@@ -1861,7 +1861,11 @@ function TaskPanel(
       <header class="lazers-tasks-header">
         <h2>Tasks</h2>
         <Show when={headerCount()}>
-          {(text) => <span class="lazers-tasks-count">{text()}</span>}
+          {(text) => (
+            <span class="lazers-tasks-count" title={text()}>
+              {text()}
+            </span>
+          )}
         </Show>
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">
