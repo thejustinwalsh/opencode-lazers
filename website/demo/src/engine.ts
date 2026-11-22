@@ -62,6 +62,11 @@ export interface EngineOptions<D> {
   applyData: (data: D) => void
   /** Reduced motion: no pointer, no travel, no typing delay; actions still run as real events. */
   reduced: boolean
+  /**
+   * The visitor's own input reaches the panel (`#interactive=1`): for checking the real panel by
+   * hand with a story's data. The site never sets it.
+   */
+  interactive?: boolean
 }
 
 export class Engine<D> {
@@ -83,17 +88,18 @@ export class Engine<D> {
     // The story owns every pointer, wheel, touch and key input: a visitor's own (trusted) events
     // are dropped before the panel sees them, so they can never move its scroll positions or focus.
     // The page also sets pointer-events: none on the iframe; this covers standalone use.
-    for (const type of ["wheel", "touchmove", "keydown", "mousedown", "click"])
-      opts.root.ownerDocument.addEventListener(
-        type,
-        (event) => {
-          if (event.isTrusted) {
-            event.stopImmediatePropagation()
-            event.preventDefault()
-          }
-        },
-        { capture: true, passive: false },
-      )
+    if (!opts.interactive)
+      for (const type of ["wheel", "touchmove", "keydown", "mousedown", "click"])
+        opts.root.ownerDocument.addEventListener(
+          type,
+          (event) => {
+            if (event.isTrusted) {
+              event.stopImmediatePropagation()
+              event.preventDefault()
+            }
+          },
+          { capture: true, passive: false },
+        )
   }
 
   private setData(data: D) {

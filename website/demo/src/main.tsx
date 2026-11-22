@@ -48,6 +48,7 @@ async function boot() {
     root: body,
     post,
     reduced,
+    interactive: params.get("interactive") === "1",
     applyData(data) {
       current = data
       host.mounted?.changed(data)
