@@ -11,6 +11,10 @@ import type {
 } from "../../../../src/models/decision-contract.ts"
 import type { ModelComparisonOutput } from "../../../../src/models/comparison-schema.ts"
 import type { ModelEvidenceOutput } from "../../../../src/models/source-schema.ts"
+import type {
+  ModelPriceSource,
+  ModelPriceSourcePolicy,
+} from "../../../../src/models/price-source-settings.ts"
 import {
   MODEL_EVIDENCE_QUERIES,
   MODEL_EVIDENCE_SOURCE_URLS,
@@ -755,10 +759,16 @@ export function rpc(
     settings?: (output: ModelSettingsOutput) => ModelSettingsOutput
     /** The overview the views are built from (reference estimates the demo does not carry). */
     overview?: (output: ModelDecisionOverview) => ModelDecisionOverview
+    /** Authoritative price policy for stream-frame tests. */
+    pricePolicy?: () => ModelPriceSourcePolicy
+    /** A test's response to the existing policy write RPC. */
+    configurePriceSources?: (input: Record<string, unknown>) => unknown
   } = {},
 ): Handlers {
   const mappings = new Mappings(data)
   const tasks = tasksRpc(() => tasksOf(data()))
+  let policy: ModelPriceSourcePolicy = { ...POLICY, sources: [...POLICY.sources] }
+  const currentPricePolicy = () => options.pricePolicy?.() ?? policy
   return {
     ...tasks,
     // One streams answer: the Models sources here, the Tasks sources (the task picker) there.
@@ -772,7 +782,8 @@ export function rpc(
           comparison: () => (options.comparison ?? ((output) => output))(comparison(data())),
           settings: (taskID) =>
             (options.settings ?? ((output) => output))(settings(mappings, data(), taskID)),
-          priceSources: POLICY.sources,
+          priceSources: currentPricePolicy().sources,
+          pricePolicy: currentPricePolicy(),
           pricesRetrievedAt: data().pricesRetrievedAt,
         }),
         data,
@@ -783,9 +794,27 @@ export function rpc(
       refreshSources: () => sourceStatus(data()),
       configure: (input: never) => mappings.write(input),
       priceSources: () => ({
-        policy: { ...POLICY, sources: [...POLICY.sources] },
+        policy: { ...currentPricePolicy(), sources: [...currentPricePolicy().sources] },
         access: { openrouter: "configured", opencode: "configured" },
       }),
+      configurePriceSources: (input: Record<string, unknown>) => {
+        if (options.configurePriceSources) return options.configurePriceSources(input)
+        const request = input as { expectedRevision: number; sources: ModelPriceSource[] }
+        const current = currentPricePolicy()
+        if (request.expectedRevision !== current.revision)
+          return {
+            status: "conflict",
+            expectedRevision: request.expectedRevision,
+            currentRevision: current.revision,
+            current,
+          }
+        policy = {
+          ...current,
+          revision: current.revision + 1,
+          sources: [...request.sources],
+        }
+        return { status: "updated", policy }
+      },
     },
   }
 }
@@ -797,11 +826,6 @@ export function reads(data: ModelsData): Read[] {
       label: "lazers.models.refreshSources",
       schema: Models.methods.refreshSources.output,
       value: sourceStatus(data),
-    },
-    {
-      label: "lazers.models.priceSources",
-      schema: Models.methods.priceSources.output,
-      value: { policy: POLICY, access: { openrouter: "configured", opencode: "configured" } },
     },
   ]
   const taskOut = tasksReads(tasksOf(data)).filter(

@@ -12,12 +12,14 @@ import {
   modelCatalogColumns,
   modelContributorColumns,
   modelPointColumns,
+  modelPricePolicyColumns,
   modelViewColumns,
   modelViewDetail,
 } from "../../../src/streams/sources/models-ref.ts"
 import type { ModelComparisonOutput } from "../../../src/models/comparison-schema.ts"
 import type { ModelSettingsOutput } from "../../../src/models/contract.ts"
 import type { ModelDecisionOverview } from "../../../src/models/decision-contract.ts"
+import type { ModelPriceSourcePolicy } from "../../../src/models/price-source-settings.ts"
 import { ModelDecisionReferenceEstimateSchema } from "../../../src/models/reference-estimate.ts"
 import { mountPanel } from "../../../website/demo/src/host.tsx"
 import type { PanelAdapter } from "../../../website/demo/src/adapter.ts"
@@ -48,6 +50,7 @@ const sourceColumns: Record<string, Columns> = {
   [MODELS_SOURCES.benchmark]: modelBenchmarkColumns,
   [MODELS_SOURCES.contributors]: modelContributorColumns,
   [MODELS_SOURCES.assignments]: modelAssignmentColumns,
+  [MODELS_SOURCES.pricePolicy]: modelPricePolicyColumns,
   [MODELS_SOURCES.candidates]: { ...modelCandidateColumns, ...modelCandidateDetail },
 }
 const viewBacked = new Set<string>([
@@ -223,8 +226,10 @@ export function harness(
     data?: ModelsData
     /** Hooks `lazers.models` `refreshSources`: throw to fail the call, return nothing for the demo's answer. */
     refreshSources?: (input: Record<string, unknown>) => unknown
-    /** The price source order `lazers.models` `priceSources` reads. */
-    priceSources?: () => unknown
+    /** The policy row served through `models.price-policy`. */
+    pricePolicy?: () => ModelPriceSourcePolicy
+    /** What `configurePriceSources` returns in a conflict/error regression case. */
+    configurePriceSources?: (input: Record<string, unknown>) => unknown
     /** What the panel's store held when it opened (a returning user's choices). */
     preferences?: Partial<ModelsPreference>
     /** Models whose reference estimate is partial: a priced subtotal range, total unknown. */
@@ -251,6 +256,10 @@ export function harness(
     overview: (output) => withReferences(output, options.partial),
     ...(options.comparison ? { comparison: options.comparison } : {}),
     ...(options.settings ? { settings: options.settings } : {}),
+    ...(options.pricePolicy ? { pricePolicy: options.pricePolicy } : {}),
+    ...(options.configurePriceSources
+      ? { configurePriceSources: options.configurePriceSources }
+      : {}),
   })
   const inner = table[Streams.id] as unknown as Record<
     string,
@@ -301,14 +310,18 @@ export function harness(
     }) as never,
     priceSources: ((input: Record<string, unknown>) => {
       sourceCalls.push({ method: "priceSources", input: structuredClone(input) })
-      return options.priceSources
-        ? options.priceSources()
-        : modelsMethods.priceSources!(input as never)
+      return modelsMethods.priceSources!(input as never)
     }) as never,
     configure: ((input: Record<string, unknown>) => {
       calls.push({ method: "configure", input: structuredClone(input) })
       const result = modelsMethods.configure!(input as never)
       // The revision feed: every open stream re-reads after a write.
+      queueMicrotask(pushChanged)
+      return result
+    }) as never,
+    configurePriceSources: ((input: Record<string, unknown>) => {
+      calls.push({ method: "configurePriceSources", input: structuredClone(input) })
+      const result = modelsMethods.configurePriceSources!(input as never)
       queueMicrotask(pushChanged)
       return result
     }) as never,

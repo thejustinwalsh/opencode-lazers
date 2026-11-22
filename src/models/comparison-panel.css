@@ -212,6 +212,92 @@
   color: var(--text-warning, var(--text-weak));
 }
 
+.lazers-models-price-order {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+
+.lazers-models-price-order h3 {
+  margin: 0;
+  color: var(--text-base);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lazers-models-price-order > p {
+  margin: 0;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-price-order-list {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.lazers-models-price-order-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-base);
+  font-size: 12px;
+}
+
+.lazers-models-price-order-row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-price-order-row strong {
+  color: var(--text-weak);
+  font-variant-numeric: tabular-nums;
+}
+
+.lazers-models-price-order-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lazers-models-price-order-row .lazers-models-price-order-actions {
+  flex: none;
+}
+
+.lazers-models-price-order-feedback,
+.lazers-models-price-order-error {
+  min-width: 0;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-price-order-feedback[data-status="conflict"],
+.lazers-models-price-order-feedback[data-status="failed"],
+.lazers-models-price-order-error {
+  color: var(--text-warning, var(--text-weak));
+}
+
+.lazers-models-price-order-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+
 .lazers-models-overview {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1150,6 +1236,21 @@ span.lazers-models-assignment-route {
   margin: 8px 0 0;
   color: var(--text-weak);
   font-size: 12px;
+}
+
+.lazers-models-assignment-inherited {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lazers-models-assignment-inherited p {
+  margin: 0;
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .lazers-models-free {

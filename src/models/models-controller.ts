@@ -16,6 +16,7 @@ import {
   modelCatalogRef,
   modelContributorsRef,
   modelPointsRef,
+  modelPricePolicyRef,
   modelViewRef,
 } from "../streams/sources/models-ref.ts"
 import { trajectoryEffortRef } from "../trajectory-panel/streams.ts"
@@ -57,10 +58,13 @@ import type {
   BenchmarkBaselinePoint,
   BenchmarkRoute,
 } from "./benchmark-baseline.ts"
-import { MODEL_PRICE_SOURCES } from "./price-source-settings.ts"
+import {
+  ModelPriceSourcePolicySchema,
+  type ModelPriceSourcePolicy,
+} from "./price-source-settings.ts"
+import { createPriceSourceOrderState } from "./price-source-order-state.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
 import { AA_BASIS } from "./public-score.ts"
-import type { ModelPriceSource } from "./price-source-settings.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import {
   ModelComparisonPanelState,
@@ -154,6 +158,9 @@ export function createModelsController(props: ModelsProps) {
     id: "",
     variant: "",
   })
+  const [pricePolicyStream, setPricePolicyStream] =
+    createSignal<GuiStream<typeof modelPricePolicyRef.columns>>()
+  const [pricePolicyRetry, setPricePolicyRetry] = createSignal(0)
   // A route carried from Compare into the Assignments editor draft for one persona.
   const [assignmentPrefill, setAssignmentPrefill] = createSignal<{
     persona: WorkerPersona
@@ -322,6 +329,12 @@ export function createModelsController(props: ModelsProps) {
         { location: { directory: value.directory } },
       )
       const scope = { projectDirectory: value.project, sessionID: value.session }
+      const pricePolicyStream = createStream(streams, modelPricePolicyRef, () => {
+        pricePolicyRetry()
+        return { filter: scope, order: "project", window: 1 }
+      })
+      setPricePolicyStream(pricePolicyStream)
+      onCleanup(() => setPricePolicyStream(undefined))
       const transport: ModelComparisonTransport = {
         refreshSources: (parent, force) =>
           withReadDeadline(
@@ -848,38 +861,47 @@ export function createModelsController(props: ModelsProps) {
   }
   // Public benchmark baseline. Units (Coding Index vs list price per 1M tokens) differ
   // from observed cost per task, so it is a separate chart mode, never a shared frontier.
-  const [priceSourceRevision, setPriceSourceRevision] = createSignal(0)
-  const priceSourceRequest = createMemo(
-    () => {
-      const value = current()
-      return value ? { value, revision: priceSourceRevision() } : undefined
-    },
-    undefined,
-    {
-      equals: (previous, next) =>
-        previous?.value === next?.value && previous?.revision === next?.revision,
-    },
-  )
-  const priceSourceSettings = createLatest(priceSourceRequest, async ({ value }, signal) => {
-    try {
-      const settings = await value.client
-        .rpc(Models)
-        .priceSources(
-          { sessionID: value.session },
-          { location: { directory: value.directory }, signal },
-        )
-      return { value, sources: settings.policy.sources, configured: true }
-    } catch {
-      return { value, sources: [...MODEL_PRICE_SOURCES], configured: false }
-    }
-  })
-  /** Configured price source order; the documented default until it is read. */
-  const priceSourceOrder = (): { sources: ModelPriceSource[]; configured: boolean } => {
-    const latest = priceSourceSettings.latest
-    return latest && latest.value === current()
-      ? latest
-      : { sources: [...MODEL_PRICE_SOURCES], configured: false }
+  const priceSourceError = () => pricePolicyStream()?.error()?.message
+  const pricePolicy = (): ModelPriceSourcePolicy | undefined => {
+    const row = pricePolicyStream()?.items()[0]
+    if (!row || typeof row.revision !== "number") return undefined
+    const parsed = ModelPriceSourcePolicySchema.safeParse({
+      schemaVersion: 1,
+      revision: row.revision,
+      sources: row.sources,
+      fallback: "whole-model",
+    })
+    return parsed.success ? parsed.data : undefined
   }
+  const retryPriceSourcePolicy = () => setPricePolicyRetry((attempt) => attempt + 1)
+  const priceSourceState = createPriceSourceOrderState({
+    read: () => ({ policy: pricePolicy(), error: priceSourceError() }),
+    projectKey: () => current()?.project,
+    refresh: retryPriceSourcePolicy,
+    configure: (expectedRevision, sources) => {
+      const value = current()
+      if (!value) throw new Error("The project is no longer available")
+      return value.client.rpc(Models).configurePriceSources(
+        { sessionID: value.session, expectedRevision, sources },
+        {
+          location: { directory: value.directory },
+          signal: AbortSignal.timeout(READ_DEADLINE_MS),
+        },
+      )
+    },
+  })
+  const {
+    priceSourceOrder,
+    priceSourceDraft,
+    priceSourceDirty,
+    priceSourceCanSave,
+    priceSourceBusy,
+    priceSourceError: readPriceSourceError,
+    priceSourceFeedback,
+    movePriceSource,
+    revertPriceSourceOrder,
+    savePriceSourceOrder,
+  } = priceSourceState
   const comparisonSource = (source: ModelEvidenceSource) =>
     visible()?.comparison?.sources.find((entry) => entry.source === source)
   const observedRouteKeys = createMemo(
@@ -968,7 +990,7 @@ export function createModelsController(props: ModelsProps) {
     )
   const disconnected = () => !props.session.server.connected
   const refreshAll = () => {
-    setPriceSourceRevision((revision) => revision + 1)
+    retryPriceSourcePolicy()
     void state.refresh()
   }
   /**
@@ -1211,6 +1233,43 @@ export function createModelsController(props: ModelsProps) {
       : scope === "project"
         ? "Project override"
         : "Task override"
+  const assignmentInheritedRoute = () => {
+    const settings = assignmentSettings()
+    const scopes =
+      assignmentScope() === "task"
+        ? (["project", "shared"] as const)
+        : assignmentScope() === "project"
+          ? (["shared"] as const)
+          : []
+    for (const scope of scopes) {
+      const route = settings?.layers[scope]?.route
+      if (route) return { scope, route }
+    }
+    return undefined
+  }
+  const assignmentPinIntent = () => {
+    const inherited = assignmentInheritedRoute()?.route
+    const route = assignmentRoute()
+    return Boolean(
+      !assignmentLayer()?.route &&
+      inherited &&
+      route.providerID === inherited.providerID &&
+      route.id === inherited.id &&
+      (route.variant || "") === (inherited.variant ?? ""),
+    )
+  }
+  const useInheritedAssignmentRoute = () => {
+    const inherited = assignmentInheritedRoute()
+    if (!inherited || assignmentLayer()?.route || assignmentBlocked()) return
+    assignmentPickerRequest++
+    clearConfirmedAssignmentWrite()
+    setAssignmentPrefill(undefined)
+    setAssignmentRoute({
+      providerID: inherited.route.providerID,
+      id: inherited.route.id,
+      variant: inherited.route.variant ?? "",
+    })
+  }
   const clearConfirmedAssignmentWrite = () => state.clearConfirmedAssignmentWrite()
   const selectAssignmentPersona = (persona: WorkerPersona) => {
     assignmentPickerRequest++
@@ -1221,6 +1280,7 @@ export function createModelsController(props: ModelsProps) {
   const selectAssignmentScope = (scope: ModelMappingTargetInput["scope"]) => {
     assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
+    setAssignmentPrefill(undefined)
     setAssignmentScope(scope)
   }
   const updateAssignmentRoute = (change: Partial<ReturnType<typeof assignmentRoute>>) => {
@@ -1246,6 +1306,7 @@ export function createModelsController(props: ModelsProps) {
       !(assignmentScope() === "task" && !visible()?.selectedTaskID) &&
       route.providerID.trim() &&
       route.id.trim() &&
+      assignmentDirty() &&
       !assignmentBlocked(),
     )
   }
@@ -1463,6 +1524,7 @@ export function createModelsController(props: ModelsProps) {
     !visible()?.settings || Boolean(visible()?.settingsLoading) || assignmentBlocked()
   const selectTask = (taskID: string) => {
     assignmentPickerRequest++
+    setAssignmentPrefill(undefined)
     save({ taskFilter: true })
     state.selectTask(taskID)
   }
@@ -1527,9 +1589,11 @@ export function createModelsController(props: ModelsProps) {
     assignmentBusy,
     assignmentCanSave,
     assignmentEditorTitleID,
+    assignmentInheritedRoute,
     assignmentLayer,
     assignmentLayerLabel,
     assignmentPersona,
+    assignmentPinIntent,
     assignmentPrefill,
     assignmentRoute,
     assignmentScope,
@@ -1610,7 +1674,16 @@ export function createModelsController(props: ModelsProps) {
     agentRoutes,
     prefs,
     priceSourceOrder,
-    priceSourceRevision,
+    priceSourceDraft,
+    priceSourceDirty,
+    priceSourceCanSave,
+    priceSourceBusy,
+    priceSourceError: readPriceSourceError,
+    priceSourceFeedback,
+    movePriceSource,
+    retryPriceSourcePolicy,
+    revertPriceSourceOrder,
+    savePriceSourceOrder,
     projectLabel,
     providerChoices,
     refs,
@@ -1619,6 +1692,7 @@ export function createModelsController(props: ModelsProps) {
     saveAssignmentRoute,
     assignmentDirty,
     revertAssignmentRoute,
+    useInheritedAssignmentRoute,
     selectedFacts,
     selectedFactsSummary,
     selectAssignmentPersona,
@@ -1637,7 +1711,6 @@ export function createModelsController(props: ModelsProps) {
     setAssignmentPrefill,
     setAssignmentRoute,
     setAssignmentScope,
-    setPriceSourceRevision,
     showObservedFor,
     sourceWarning,
     state,

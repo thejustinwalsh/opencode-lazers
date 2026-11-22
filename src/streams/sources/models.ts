@@ -13,6 +13,7 @@ import {
   modelBenchmarkColumns,
   modelContributorColumns,
   modelPointColumns,
+  modelPricePolicyColumns,
   modelViewColumns,
   modelViewDetail,
   type ModelAssignmentsFilter,
@@ -20,9 +21,11 @@ import {
   type ModelCandidatesFilter,
   type ModelCatalogFilter,
   type ModelContributorsFilter,
+  type ModelPricePolicyFilter,
   type ModelPointsFilter,
   type ModelViewFilter,
 } from "./models-ref.ts"
+import { refreshModelPriceSourcePolicyFor } from "../../models/price-source-projection.ts"
 
 /**
  * The Models sources, over stored rows only (`.agents/plans/panel-streams.md`, Panel 3).
@@ -255,4 +258,27 @@ export const modelAssignmentsSource = defineSource({
     }
   },
   columns: modelAssignmentColumns,
+})
+
+/** The configured ordered price sources, served only from the producer's stored stream row. */
+export const modelPricePolicySource = defineSource({
+  name: MODELS_SOURCES.pricePolicy,
+  table: "model_price_source_policy",
+  key: ["project_directory"],
+  orders: {
+    project: [{ column: "project_directory", direction: "asc" }],
+  },
+  count: { exact: "scan" },
+  async authorize(input: ModelPricePolicyFilter, context) {
+    const checked = await scoped(input, context, "lz-get-model-settings")
+    await refreshModelPriceSourcePolicyFor(checked.projectDirectory)
+    return checked
+  },
+  filter(input: ModelPricePolicyFilter) {
+    return {
+      where: "model_price_source_policy.project_directory = ?",
+      params: [input.projectDirectory],
+    }
+  },
+  columns: modelPricePolicyColumns,
 })
