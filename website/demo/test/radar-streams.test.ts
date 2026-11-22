@@ -2,10 +2,12 @@ import { expect, test } from "bun:test"
 import { readFrame, type Columns } from "../../../src/streams/frame.ts"
 import { liveHistoryColumns } from "../../../src/streams/sources/live-history-ref.ts"
 import {
+  RADAR_SOURCES,
   radarAssignmentColumns,
   radarAttemptDetail,
   radarGroupColumns,
   radarNativeCallColumns,
+  radarNodeColumns,
   radarWorkloadColumns,
 } from "../../../src/streams/sources/radar-ref.ts"
 import { radarSessionColumns } from "../../../src/streams/sources/host-sessions-ref.ts"
@@ -111,6 +113,38 @@ test("the demo answers a Map group and the workload; the workload is indexed, ne
   expect(queued.rows.map((row) => row.reference)).toEqual(["LZ-12", "LZ-11"])
   const workload = decode(open("radar.workload", {}, 1, "key"), radarWorkloadColumns)
   expect(workload.rows[0]).toMatchObject({ ready: true, queued: 2, needs_you: 1, failed: 0 })
+})
+
+test("the demo lifecycle node frames carry distinct task references for running workers", () => {
+  const firstWorker = data.workers[0]!
+  const withTwoRunningWorkers: RadarData = {
+    ...data,
+    workers: [firstWorker, { ...firstWorker, n: 205, title: "Keep the demo node labels distinct" }],
+  }
+  const server = radarStreams(() => withTwoRunningWorkers, {
+    project: "/demo",
+    architect: "ses-demo",
+    taskID: (n) => uid(1, n),
+    attemptID: (n) => uid(2, n),
+    ref: (n) => `LZ-${n}`,
+    workerSession: (n) => `ses-worker-${n}`,
+    abs: (at) => 1_000_000 + at,
+  })
+  const nodes = decode(
+    server.open({
+      stream: crypto.randomUUID(),
+      source: RADAR_SOURCES.nodes,
+      filter: { planID: "00000003-0000-4000-8000-000000000001" },
+      order: "plan",
+      window: 10,
+    }),
+    radarNodeColumns,
+  )
+
+  expect(nodes.rows.map((row) => [row.state, row.reference])).toEqual([
+    ["running", "LZ-204"],
+    ["running", "LZ-205"],
+  ])
 })
 
 test("the demo answers the Monitor's sessions, calls and model steps; Flow draws them", () => {
