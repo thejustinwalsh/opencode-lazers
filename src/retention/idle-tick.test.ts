@@ -11,7 +11,9 @@ import { setAutoDays, startRun } from "./store.ts"
  */
 
 const fixtures: Array<ReturnType<typeof makeFixture>> = []
-afterEach(() => {
+const services: RetentionService[] = []
+afterEach(async () => {
+  for (const service of services.splice(0)) await service.close()
   for (const fixture of fixtures.splice(0)) fixture.close()
 })
 
@@ -29,6 +31,7 @@ function setup() {
     },
   ) as never
   const service = new RetentionService({ repository: fixture.repository, host, now: () => NOW })
+  services.push(service)
   return { fixture, service, hostCalls }
 }
 

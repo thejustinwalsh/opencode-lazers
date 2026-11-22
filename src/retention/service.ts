@@ -1,19 +1,15 @@
+import { Database } from "bun:sqlite"
 import { dirname } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { RETENTION_PRESET_DAYS } from "./contract.ts"
+import { RetentionReader } from "./reader.ts"
 import {
   advanceIdentityKeys,
   identityKeysFinished,
   type IdentityKeysProgress,
 } from "../runner/identity-migration.ts"
 import { compactionDiskBytes, incrementalVacuum, spaceState, type AutoVacuum } from "./vacuum.ts"
-import {
-  classifyPlans,
-  previewRetention,
-  retireSlice,
-  type RetentionPreview,
-  type SliceResult,
-} from "./retention.ts"
+import { classifyPlans, retireSlice, type RetentionPreview, type SliceResult } from "./retention.ts"
 import {
   addToRun,
   autoDays,
@@ -36,6 +32,7 @@ import {
   type WorktreeSkip,
   type WorktreeHost,
   type WorktreeProbe,
+  type WorktreeCandidates,
 } from "./worktrees.ts"
 
 /** Time spent per slice and rows per batch: the scheduler and panels are never starved. */
@@ -90,6 +87,8 @@ const AS_OF_WINDOW_MS = 24 * 3_600_000
 
 export class RetentionService {
   private running: Promise<RetentionSlice> | undefined
+  private reads: RetentionReader | undefined
+  private closed = false
   /** Set once every history table is keyed and indexed: an idle tick then reads nothing for it. */
   private keysComplete = false
 
@@ -101,6 +100,11 @@ export class RetentionService {
     return this.deps.now?.() ?? Date.now()
   }
 
+  private reader() {
+    if (this.closed) throw new Error("Retention service is closed")
+    return (this.reads ??= new RetentionReader(this.deps.repository.path))
+  }
+
   /** A caller-pinned instant keeps a preview and its purge on the same set, within a day. */
   private asOf(requested: number | undefined) {
     const now = this.now()
@@ -110,7 +114,11 @@ export class RetentionService {
   }
 
   private sizes() {
-    return this.deps.repository.read((db) => {
+    // A retained service reader can outlive an explicit VACUUM. SQLite connections keep the
+    // auto_vacuum header value they saw when opened, so read these file-level PRAGMAs from a fresh
+    // lightweight connection rather than the repository connection or its worker's old snapshot.
+    const db = new Database(this.deps.repository.path, { readonly: true, strict: true })
+    try {
       const state = spaceState(db)
       return {
         fileBytes: state.pageCount * state.pageSize,
@@ -118,33 +126,23 @@ export class RetentionService {
         autoVacuum: state.autoVacuum,
         compactionDiskBytes: compactionDiskBytes(state),
       }
-    })
+    } finally {
+      db.close()
+    }
   }
 
   async status(): Promise<RetentionStatus> {
     const now = this.now()
     const read = <T>(run: (db: import("bun:sqlite").Database) => T) =>
       this.deps.repository.read(run)
-    const db = this.deps.repository.read((handle) => handle)
-    const presets: RetentionStatus["presets"] = []
-    for (const days of RETENTION_PRESET_DAYS) {
-      const preview = await previewRetention(db, {
-        now,
-        days,
-        ageIndependent: false,
-        dataDirectory: dirname(this.deps.repository.path),
-      })
-      presets.push({ days, rows: preview.rows, bytes: preview.bytes })
-    }
-    const superseded = await previewRetention(db, {
+    const estimates = await this.reader().status({
       now,
-      days: RETENTION_PRESET_DAYS[0],
-      ageDependent: false,
+      dataDirectory: dirname(this.deps.repository.path),
     })
     return {
       ...this.sizes(),
-      presets,
-      superseded: { rows: superseded.rows, bytes: superseded.bytes },
+      presets: estimates.presets,
+      superseded: estimates.superseded,
       autoDays: read(autoDays),
       lastRun: read((handle) => lastRuns(handle, 1))[0] ?? null,
     }
@@ -153,16 +151,15 @@ export class RetentionService {
   /** The dry run: what a purge at this age removes and what it leaves, with worktrees. */
   async preview(input: { days: number; asOf?: number }): Promise<RetentionPreviewWithTrees> {
     const asOf = this.asOf(input.asOf)
-    const db = this.deps.repository.read((handle) => handle)
-    const preview = await previewRetention(db, {
+    const estimate = await this.reader().preview({
       now: asOf,
       days: input.days,
       dataDirectory: dirname(this.deps.repository.path),
+      projectDirectory: this.deps.repository.projectDirectory,
     })
-    const { retired } = classifyPlans(db, asOf, input.days)
-    const worktrees = await this.inspect(retired)
+    const worktrees = await this.inspect(estimate.worktrees)
     return {
-      ...preview,
+      ...estimate.preview,
       asOf,
       worktrees,
       worktreeBytes: worktrees
@@ -171,18 +168,14 @@ export class RetentionService {
     }
   }
 
-  private inspect(retired: ReturnType<typeof classifyPlans>["retired"]) {
+  private inspect(candidates: WorktreeCandidates) {
     const { repository, host, probe } = this.deps
-    return inspectWorktrees(
-      repository.read((db) => db),
-      {
-        project: repository.projectDirectory,
-        dataDirectory: dirname(repository.path),
-        retired,
-        host,
-        ...(probe ? { probe } : {}),
-      },
-    )
+    return inspectWorktrees(candidates, {
+      project: repository.projectDirectory,
+      dataDirectory: dirname(repository.path),
+      host,
+      ...(probe ? { probe } : {}),
+    })
   }
 
   /**
@@ -306,12 +299,14 @@ export class RetentionService {
     skipped: WorktreeSkip[],
   ) {
     const { host, probe, repository } = this.deps
-    const { retired } = classifyPlans(
-      repository.read((db) => db),
-      asOf,
+    const candidates = await this.reader().worktrees({
+      now: asOf,
       days,
+      projectDirectory: repository.projectDirectory,
+    })
+    const findings = (await this.inspect(candidates)).filter(
+      (finding) => finding.action === "remove",
     )
-    const findings = (await this.inspect(retired)).filter((finding) => finding.action === "remove")
     for (const finding of findings) {
       if (Date.now() - started >= SLICE_MS * 4) return false
       try {
@@ -340,6 +335,14 @@ export class RetentionService {
 
   settings() {
     return { autoDays: this.deps.repository.read(autoDays) }
+  }
+
+  /** Release the service-owned read worker before its repository owner closes. */
+  async close() {
+    if (this.closed) return
+    this.closed = true
+    await this.reads?.close()
+    this.reads = undefined
   }
 
   setAuto(days: number | null) {

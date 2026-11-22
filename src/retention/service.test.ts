@@ -8,7 +8,9 @@ import { AUDIT_RECEIPTS_KEPT } from "./retention.ts"
 import type { WorktreeProbe } from "./worktrees.ts"
 
 const fixtures: Array<ReturnType<typeof makeFixture>> = []
-afterEach(() => {
+const services: RetentionService[] = []
+afterEach(async () => {
+  for (const service of services.splice(0)) await service.close()
   for (const fixture of fixtures.splice(0)) fixture.close()
 })
 
@@ -72,6 +74,7 @@ function setup() {
     probe,
     now: () => now,
   })
+  services.push(service)
   return {
     fixture,
     service,

@@ -16,7 +16,9 @@ import {
 
 const directories: string[] = []
 const fixtures: Array<ReturnType<typeof makeFixture>> = []
-afterEach(() => {
+const services: RetentionService[] = []
+afterEach(async () => {
+  for (const service of services.splice(0)) await service.close()
   for (const fixture of fixtures.splice(0)) fixture.close()
   for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
@@ -105,6 +107,7 @@ test("the retention service reports the mode and reclaims space once the databas
     host: { session: async () => null, worktrees: async () => [], removeWorktree: async () => {} },
     now: () => Date.UTC(2026, 10, 19),
   })
+  services.push(service)
   const bulk = () =>
     fixture.store.atomic((db) => {
       db.exec("CREATE TABLE IF NOT EXISTS scratch_bulk (body TEXT)")

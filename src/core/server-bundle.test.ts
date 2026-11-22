@@ -39,6 +39,7 @@ test("build emits one server file plus its workers, and the bundle exports the s
       "fallow-worker.js",
       "fallow-thread.js",
       "reader-worker.js",
+      "retention-reader-worker.js",
     ]),
   )
   const built = (await import(`${dist}server.js`)) as { default: typeof sourcePlugin }

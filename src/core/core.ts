@@ -405,6 +405,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     await registration.dispose()
     await schedulerStatus.stop()
     await runtime.stop()
+    await retention.close()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.
     try {
       runnerStore.releaseLease(runtime.owner)

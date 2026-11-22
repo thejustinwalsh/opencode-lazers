@@ -105,21 +105,41 @@ function rowBytes(db: Database, ids: string[]): { rows: number; bytes: number } 
   }
 }
 
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve))
+const MEASURE_PAGE = 500
+
 /** Rows and bytes (rows plus files) a purge would remove. Reads only. */
-export function measureAuditRuns(
+export async function measureAuditRuns(
   db: Database,
-  input: { retired: string[]; dataDirectory: string },
-): { rows: number; bytes: number } {
+  input: { retired: string[]; dataDirectory: string; signal?: AbortSignal },
+): Promise<{ rows: number; bytes: number }> {
   if (!present(db)) return { rows: 0, bytes: 0 }
-  const ids = retirableRuns(db, input.retired, Number.MAX_SAFE_INTEGER)
   const totals = { rows: 0, bytes: 0 }
-  for (let start = 0; start < ids.length; start += 500) {
-    const sized = rowBytes(db, ids.slice(start, start + 500))
+  let after = 0
+  const retired = JSON.stringify(input.retired)
+  for (;;) {
+    input.signal?.throwIfAborted()
+    const page = db
+      .query<{ rowid: number; id: string }, [number, string, string, number]>(
+        `SELECT rowid,id FROM audit_runs
+          WHERE rowid>? AND json_extract(payload,'$.state') != 'collecting'
+            AND (task_id IN (SELECT task_id FROM runner_nodes WHERE plan_id IN ${inList})
+                 OR attempt_id IN (SELECT id FROM runner_attempts WHERE plan_id IN ${inList}))
+          ORDER BY rowid LIMIT ?`,
+      )
+      .all(after, retired, retired, MEASURE_PAGE)
+    if (!page.length) break
+    const ids = page.map((row) => row.id)
+    const sized = rowBytes(db, ids)
     totals.rows += sized.rows
     totals.bytes += sized.bytes
+    for (const id of ids) totals.bytes += runFileBytes(input.dataDirectory, id)
+    after = page.at(-1)!.rowid
+    await turn()
   }
   const orphans = orphanFolders(db, input.dataDirectory)
-  for (const id of [...ids, ...orphans]) totals.bytes += runFileBytes(input.dataDirectory, id)
+  input.signal?.throwIfAborted()
+  for (const id of orphans) totals.bytes += runFileBytes(input.dataDirectory, id)
   totals.rows += orphans.length
   return totals
 }
