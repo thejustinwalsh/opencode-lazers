@@ -10,6 +10,7 @@ class DirectAnalysisTestExpiredError extends Error {
 class DirectAnalysisTestLifetime {
   private expired = false
   private resolveExpired!: () => void
+  private readonly pendingOperations = new Set<Promise<unknown>>()
   private readonly expiredSignal = new Promise<void>((resolve) => {
     this.resolveExpired = resolve
   })
@@ -26,6 +27,19 @@ class DirectAnalysisTestLifetime {
 
   waitForBodyCompletion(completion: Promise<unknown>): Promise<unknown> {
     return Promise.race([completion, this.expiredSignal.then(() => undefined)])
+  }
+
+  track<T>(operation: Promise<T>): Promise<T> {
+    this.pendingOperations.add(operation)
+    void operation.then(
+      () => this.pendingOperations.delete(operation),
+      () => this.pendingOperations.delete(operation),
+    )
+    return operation
+  }
+
+  async drain(): Promise<void> {
+    while (this.pendingOperations.size > 0) await Promise.allSettled([...this.pendingOperations])
   }
 
   async waitFor<T>(operation: Promise<T>): Promise<T> {

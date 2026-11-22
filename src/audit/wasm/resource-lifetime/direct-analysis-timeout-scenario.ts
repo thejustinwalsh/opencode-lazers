@@ -1,14 +1,14 @@
 import { afterAll, afterEach, beforeAll, expect, test as bunTest } from "bun:test"
 import { MAX_FALLOW_THREADS, ThreadPool } from "../../fallow-wasi.ts"
+import { runDirectFallowModule } from "./direct-analysis.ts"
 import {
   closeOutstandingDirectAnalysisTestLifetimes,
   createDirectAnalysisTestRegistrar,
 } from "./direct-analysis-test-lifetime.ts"
 import { directAnalysisScopeFor } from "./direct-analysis-scope.ts"
-import { disposeFixture, makeFixture, runOp } from "../test-support.ts"
+import { disposeFixture, makeFixture, runOp, wasmModule } from "../test-support.ts"
 
 const test = createDirectAnalysisTestRegistrar(bunTest)
-afterEach(closeOutstandingDirectAnalysisTestLifetimes)
 
 const scenario = process.env.DIRECT_ANALYSIS_TIMEOUT_SCENARIO
 if (scenario !== "queued" && scenario !== "active")
@@ -20,6 +20,9 @@ process.on("unhandledRejection", recordUnhandled)
 
 const result = {
   lateAssertion: false,
+  secondAttempted: false,
+  directAttempted: false,
+  directExpired: false,
   analysesStarted: 0,
   pool: undefined as ThreadPool | undefined,
   fixture: "",
@@ -67,6 +70,7 @@ beforeAll(() => {
 })
 
 test(`${scenario} direct analysis body times out at its runOp boundary`, async () => {
+  let completion: Promise<unknown>
   if (scenario === "queued") {
     const blockerScope = directAnalysisScopeFor(result.blocker)
     blockerOperation = blockerScope.run(async () => {
@@ -76,7 +80,7 @@ test(`${scenario} direct analysis body times out at its runOp boundary`, async (
       })
     })
     await blockStarted
-    await runOp(
+    completion = runOp(
       "health",
       result.fixture,
       {},
@@ -85,7 +89,7 @@ test(`${scenario} direct analysis body times out at its runOp boundary`, async (
       },
     )
   } else {
-    const completion = runOp(
+    completion = runOp(
       "deadCode",
       result.fixture,
       {},
@@ -97,7 +101,32 @@ test(`${scenario} direct analysis body times out at its runOp boundary`, async (
       "threads",
     )
     await terminationEntered
+  }
+
+  try {
     await completion
+  } catch {
+    // The owning test lifetime expires at the Bun timeout while analysis is pending.
+  }
+  result.secondAttempted = true
+  try {
+    await runOp("health", result.fixture, {}, { onInstance: () => result.analysesStarted++ })
+  } catch {
+    // A late body continuation must be rejected before it can enqueue more work.
+  }
+  result.directAttempted = true
+  try {
+    await runDirectFallowModule(
+      wasmModule,
+      { op: "health", root: result.fixture },
+      {
+        onInstance: () => result.analysesStarted++,
+      },
+    )
+  } catch (error) {
+    result.directExpired = error instanceof Error && error.name === "DirectAnalysisTestExpiredError"
+    if (!result.directExpired) throw error
+    return
   }
 
   result.lateAssertion = true
@@ -105,21 +134,24 @@ test(`${scenario} direct analysis body times out at its runOp boundary`, async (
 }, 300)
 
 afterEach(async () => {
-  closeOutstandingDirectAnalysisTestLifetimes()
+  const lifetimeDrain = closeOutstandingDirectAnalysisTestLifetimes()
   if (scenario === "queued") {
-    const fixtureDisposal = disposeFixture(result.fixture)
     releaseGate()
-    await Promise.all([fixtureDisposal, blockerOperation])
+    await lifetimeDrain
+    await Promise.all([disposeFixture(result.fixture), blockerOperation])
     await disposeFixture(result.blocker)
   } else {
-    const fixtureDisposal = disposeFixture(result.fixture)
     releaseTermination()
-    await fixtureDisposal
+    await lifetimeDrain
+    await disposeFixture(result.fixture)
   }
 })
 
 afterAll(async () => {
   expect(result.lateAssertion).toBe(false)
+  expect(result.secondAttempted).toBe(true)
+  expect(result.directAttempted).toBe(true)
+  expect(result.directExpired).toBe(true)
   expect(result.analysesStarted).toBe(scenario === "queued" ? 0 : 1)
   expect(result.pool?.liveCount ?? 0).toBe(0)
   expect(directAnalysisScopeFor(result.fixture).metrics.pendingHelpers).toBe(0)

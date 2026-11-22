@@ -19,7 +19,7 @@ export function runDirectFallowModule(
 ): Promise<WasiOutcome> {
   const scope = directAnalysisScopeFor(request.root)
   const testLifetime = currentDirectAnalysisTestLifetime()
-  return scope.run(async () => {
+  const completion = scope.run(async () => {
     testLifetime?.assertActive()
     const pool = options.threadPool ?? new ThreadPool(undefined, false)
     try {
@@ -47,4 +47,5 @@ export function runDirectFallowModule(
       }
     }
   })
+  return testLifetime ? testLifetime.track(completion) : completion
 }

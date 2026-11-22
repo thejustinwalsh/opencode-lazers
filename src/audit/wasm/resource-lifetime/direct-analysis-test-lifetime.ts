@@ -3,7 +3,10 @@ import {
   runWithDirectAnalysisTestLifetime,
 } from "./direct-analysis-test-context.ts"
 
-const activeTestLifetimes = new Set<ReturnType<typeof createDirectAnalysisTestLifetime>>()
+const activeTestLifetimes = new Map<
+  ReturnType<typeof createDirectAnalysisTestLifetime>,
+  Promise<unknown>
+>()
 
 type TestOptions = {
   timeout?: number
@@ -17,9 +20,10 @@ type TestRegistrar = (
   options?: number | TestOptions,
 ) => void
 
-export function closeOutstandingDirectAnalysisTestLifetimes(): void {
-  for (const lifetime of activeTestLifetimes) lifetime.close()
-  activeTestLifetimes.clear()
+export async function closeOutstandingDirectAnalysisTestLifetimes(): Promise<void> {
+  const outstanding = [...activeTestLifetimes]
+  for (const [lifetime] of outstanding) lifetime.close()
+  await Promise.allSettled(outstanding.map(([, completion]) => completion))
 }
 
 export function createDirectAnalysisTestRegistrar(register: TestRegistrar): TestRegistrar {
@@ -28,7 +32,6 @@ export function createDirectAnalysisTestRegistrar(register: TestRegistrar): Test
       label,
       () => {
         const lifetime = createDirectAnalysisTestLifetime()
-        activeTestLifetimes.add(lifetime)
 
         let completion: Promise<unknown>
         try {
@@ -37,12 +40,19 @@ export function createDirectAnalysisTestRegistrar(register: TestRegistrar): Test
           completion = Promise.reject(error)
         }
 
-        const observedCompletion = completion.finally(() => {
+        const observedCompletion = completion.finally(async () => {
           lifetime.close()
-          activeTestLifetimes.delete(lifetime)
+          await lifetime.drain()
         })
-        // Bun may stop awaiting a timed-out callback while its async body is still unwinding.
         void observedCompletion.catch(() => {})
+        activeTestLifetimes.set(lifetime, observedCompletion)
+        void observedCompletion.then(
+          () => activeTestLifetimes.delete(lifetime),
+          () => activeTestLifetimes.delete(lifetime),
+        )
+        // Bun stops awaiting a timed-out test callback before its async work unwinds. Resolve its
+        // registered callback when teardown expires the lifetime; keep the real completion
+        // observed and drained separately so late callback errors cannot escape between tests.
         return lifetime.waitForBodyCompletion(observedCompletion)
       },
       options,
