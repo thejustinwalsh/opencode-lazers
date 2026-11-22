@@ -2,11 +2,42 @@ import { expect, test } from "bun:test"
 import { makeFixture, firstAttemptID, taskID } from "../../test/trajectory/fixture.ts"
 import { observationRevisionStamp } from "../core/stamp-gate.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
+import { cleanupRevisionStamp } from "./cleanup-revision.ts"
 import { ensureObservationRevision } from "./source-revision.ts"
 
 /** The project's observation revision, the stamp the decision worker's keep-warm gate reads. */
 const revisionOf = (fixture: ReturnType<typeof makeFixture>) =>
   fixture.repository.read((db) => observationRevisionStamp(db, fixture.directory))
+const cleanupRevisionOf = (fixture: ReturnType<typeof makeFixture>) =>
+  fixture.repository.read((db) =>
+    cleanupRevisionStamp(db, fixture.directory, fixture.receipt.planID),
+  )
+
+function unrelatedPlan(fixture: ReturnType<typeof makeFixture>) {
+  const task = fixture.repository.insert({
+    ...fixture.task,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  })
+  const body = JSON.parse(fixture.store.plan(fixture.receipt.planID)!.body) as Record<
+    string,
+    unknown
+  >
+  const receipt = fixture.store.submit(
+    {
+      ...body,
+      requestID: crypto.randomUUID(),
+      nodes: [{ taskID: task.id, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [task.id],
+    },
+    "ses-owner",
+  )
+  fixture.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(receipt.planID),
+  )
+  return { task, planID: receipt.planID }
+}
 
 test("observation invalidation is transactional, project scoped, and ignores unchanged writes", () => {
   const fixture = makeFixture()
@@ -156,6 +187,7 @@ test("adoption and adoption-check changes move the observation revision", () => 
   const fixture = makeFixture()
   try {
     let revision = revisionOf(fixture)
+    let cleanupRevision = cleanupRevisionOf(fixture)
     fixture.store.atomic((db) =>
       db
         .query(
@@ -177,7 +209,9 @@ test("adoption and adoption-check changes move the observation revision", () => 
         ),
     )
     expect(revisionOf(fixture)).not.toBe(revision)
+    expect(cleanupRevisionOf(fixture)).not.toBe(cleanupRevision)
     revision = revisionOf(fixture)
+    cleanupRevision = cleanupRevisionOf(fixture)
     fixture.store.atomic((db) =>
       db
         .query(
@@ -190,7 +224,9 @@ test("adoption and adoption-check changes move the observation revision", () => 
         .run("revision-adoption"),
     )
     expect(revisionOf(fixture)).not.toBe(revision)
+    expect(cleanupRevisionOf(fixture)).not.toBe(cleanupRevision)
     revision = revisionOf(fixture)
+    cleanupRevision = cleanupRevisionOf(fixture)
     fixture.store.atomic((db) =>
       db
         .query(
@@ -199,6 +235,94 @@ test("adoption and adoption-check changes move the observation revision", () => 
         .run('{"exitCode":1}', "revision-adoption"),
     )
     expect(revisionOf(fixture)).not.toBe(revision)
+    expect(cleanupRevisionOf(fixture)).not.toBe(cleanupRevision)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("cleanup revisions ignore unrelated plan churn but track shared-workspace owners", () => {
+  const fixture = makeFixture()
+  try {
+    const original = cleanupRevisionOf(fixture)
+    const unrelated = unrelatedPlan(fixture)
+    const unrelatedRevision = cleanupRevisionOf(fixture)
+    expect(unrelatedRevision).toBe(original)
+
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_nodes SET reason='node progress' WHERE plan_id=?").run(
+        unrelated.planID,
+      )
+      db.query(
+        `INSERT INTO runner_progress(
+          project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+          sources_json,kind,event_ids_json,dedupe_key,payload
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        fixture.directory,
+        "project",
+        unrelated.planID,
+        unrelated.task.id,
+        "unrelated-attempt",
+        "unrelated-session",
+        1,
+        "test",
+        "[]",
+        "step",
+        "[]",
+        "unrelated-progress",
+        "{}",
+      )
+      db.query(
+        `INSERT INTO runner_effects(
+          id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence
+        ) VALUES(?,?,?,NULL,'unrelated-effect','intended','{}','{}',1)`,
+      ).run("unrelated-effect", unrelated.planID, unrelated.task.id)
+    })
+    expect(cleanupRevisionOf(fixture)).toBe(unrelatedRevision)
+
+    const sharedWorkspace = `${fixture.directory}/shared-worktree`
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_effects(
+            id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence
+          ) VALUES(?,?,?,NULL,'worktree','completed','{}',?,1)`,
+        )
+        .run(
+          "shared-cleanup-worktree",
+          fixture.receipt.planID,
+          taskID,
+          JSON.stringify({ workspace: sharedWorkspace }),
+        ),
+    )
+    const withWorkspaceFact = cleanupRevisionOf(fixture)
+    expect(withWorkspaceFact).not.toBe(unrelatedRevision)
+
+    fixture.store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_attempts(
+          id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,
+          base_commit,artifact,policy,state,started_at,token_count,tool_count,retry_count,cost
+        ) VALUES(?,?,?,?,1,?,?,?,'base',NULL,'{}','running',10,0,0,0,NULL)`,
+      ).run(
+        "shared-workspace-owner",
+        unrelated.planID,
+        fixture.directory,
+        unrelated.task.id,
+        "shared-owner-session",
+        "shared-owner-message",
+        sharedWorkspace,
+      )
+    })
+    const withActiveOwner = cleanupRevisionOf(fixture)
+    expect(withActiveOwner).not.toBe(withWorkspaceFact)
+    fixture.store.atomic((db) =>
+      db
+        .query("UPDATE runner_attempts SET state='accepted' WHERE id=?")
+        .run("shared-workspace-owner"),
+    )
+    expect(cleanupRevisionOf(fixture)).not.toBe(withActiveOwner)
   } finally {
     fixture.close()
   }

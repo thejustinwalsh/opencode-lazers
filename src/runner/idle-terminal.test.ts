@@ -149,7 +149,11 @@ test("a cancelled plan that preserved unmerged commits costs a stamp check per t
   expectStampOnly(few, many)
 }, 120_000)
 
-async function cleanupHistoryCost(historySize: number, gitCalls: () => number) {
+async function cleanupHistoryCost(
+  historySize: number,
+  gitCalls: () => number,
+  unrelatedChurn = false,
+) {
   const clock = { offset: 0 }
   const { f, plan, attempt, integrate } = await acceptedMergedFixture({ clock })
   const dirtyFile = join(attempt.workspace, "uncommitted.txt")
@@ -245,23 +249,113 @@ async function cleanupHistoryCost(historySize: number, gitCalls: () => number) {
       return (value as (...items: unknown[]) => unknown).apply(host, args)
     }
   }
-  const gitBefore = gitCalls()
   const planVersion = f.store.plan(plan.id)!.version
   const removalReceipt = f.store
     .effects(plan.id)
     .find((effect) => effect.kind === "worktree-remove")!.receipt
+  let churn:
+    | {
+        planID: string
+        taskID: string
+      }
+    | undefined
+  if (unrelatedChurn) {
+    const task = f.createTask(`cleanup-unrelated-${historySize}`)
+    const unrelatedPlan = f.store.submit(
+      f.inputFor([task], { requestID: `cleanup-unrelated-${historySize}` }),
+      "owner",
+    )
+    await f.runtime.command(
+      {
+        requestID: `cleanup-unrelated-run-${historySize}`,
+        planID: unrelatedPlan.planID,
+        action: "run",
+      },
+      "owner",
+    )
+    expect(f.store.plan(unrelatedPlan.planID)?.state).toBe("running")
+    churn = { planID: unrelatedPlan.planID, taskID: task.id }
+    const cleanup = (
+      f.runtime as unknown as {
+        worktreeCleanup: { cleanupFacts(planID: string): unknown }
+      }
+    ).worktreeCleanup
+    cleanup.cleanupFacts(plan.id)
+  }
+  hostCalls.length = 0
+  const gitBefore = gitCalls()
   const sql = meterRepository(f.repository)
-  for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
+  const parse = JSON.parse
+  let sourceReceiptDecodes = 0
+  JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+    const value = args[0]
+    if (typeof value === "string" && value.includes(`"workspace":"${attempt.workspace}"`))
+      sourceReceiptDecodes++
+    return parse(...args)
+  }) as typeof JSON.parse
+  try {
+    if (churn) {
+      const cleanup = (
+        f.runtime as unknown as {
+          worktreeCleanup: { cleanupFacts(planID: string): unknown }
+        }
+      ).worktreeCleanup
+      for (let tick = 0; tick < 3; tick++) {
+        f.repository.atomic((db) => {
+          db.query("UPDATE runner_nodes SET reason=? WHERE plan_id=?").run(
+            `unrelated node write ${tick}`,
+            churn!.planID,
+          )
+          db.query(
+            `INSERT INTO runner_progress(
+              project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+              sources_json,kind,event_ids_json,dedupe_key,payload
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          ).run(
+            f.root,
+            "project",
+            churn!.planID,
+            churn!.taskID,
+            "unrelated-attempt",
+            "unrelated-session",
+            tick,
+            "test",
+            "[]",
+            "step",
+            "[]",
+            `unrelated-progress-${tick}`,
+            JSON.stringify({ tick }),
+          )
+          db.query(
+            `INSERT INTO runner_effects(
+              id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence
+            ) VALUES(?,?,?,NULL,'unrelated-effect','intended',?,NULL,1)
+            ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`,
+          ).run("unrelated-cleanup-effect", churn!.planID, churn!.taskID, JSON.stringify({ tick }))
+        })
+        cleanup.cleanupFacts(plan.id)
+      }
+    } else {
+      for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
+    }
+  } finally {
+    JSON.parse = parse
+    sql.stop()
+  }
   const cost = {
     rows: sql.rows,
     statements: [...sql.statements],
     cleanupHistoryRows: sql.of(/FROM runner_(?:effects|attempts|adoptions|adoption_checks)\b/i)
       .rows,
+    cleanupHistoryBytes: sql.of(/FROM runner_(?:effects|attempts|adoptions|adoption_checks)\b/i)
+      .bytes,
+    bodyRows: sql.of(/SELECT[^;]*\bbody\b[^;]*\bFROM (?:runner_plans|tasks|runner_attempts)\b/i)
+      .rows,
+    sourceReceiptDecodes,
     fullPlanRows: sql.of(/SELECT \* FROM runner_plans\b/i).rows,
     hostCalls,
     gitCalls: gitCalls() - gitBefore,
   }
-  sql.stop()
   for (const [name, value] of originals) host[name] = value
   expect(f.store.plan(plan.id)?.version).toBe(planVersion)
   expect(
@@ -270,12 +364,18 @@ async function cleanupHistoryCost(historySize: number, gitCalls: () => number) {
   return cost
 }
 
-test("unchanged cleanup facts read no histories or plan bodies at small and large scale", async () => {
+test("unrelated active-plan churn does not reread cleanup history at small and large scale", async () => {
   const gitCalls = gitShim()
-  const small = await cleanupHistoryCost(5, gitCalls)
-  const large = await cleanupHistoryCost(500, gitCalls)
+  const small = await cleanupHistoryCost(5, gitCalls, true)
+  const large = await cleanupHistoryCost(500, gitCalls, true)
   expect(small.cleanupHistoryRows).toBe(0)
   expect(large.cleanupHistoryRows).toBe(0)
+  expect(small.cleanupHistoryBytes).toBe(0)
+  expect(large.cleanupHistoryBytes).toBe(0)
+  expect(small.bodyRows).toBe(0)
+  expect(large.bodyRows).toBe(0)
+  expect(small.sourceReceiptDecodes).toBe(0)
+  expect(large.sourceReceiptDecodes).toBe(0)
   expect(small.fullPlanRows).toBe(0)
   expect(large.fullPlanRows).toBe(0)
   expect(small.hostCalls).toEqual([])

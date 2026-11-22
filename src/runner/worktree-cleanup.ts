@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
-import { observationRevisionStamp } from "../core/stamp-gate.ts"
+import { cleanupRevisionStamp } from "../observability/cleanup-revision.ts"
 import { gitAsync, registeredWorktreePaths } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { WorktreeLocationRetirement } from "./host.ts"
@@ -468,7 +468,7 @@ export class WorktreeCleanup {
     let checkedState: string | undefined
     const cleanupCurrent = () =>
       this.runtime.store.read((db) => {
-        const revision = observationRevisionStamp(db, this.runtime.directory)
+        const revision = cleanupRevisionStamp(db, this.runtime.directory, plan.id)
         if (revision !== checkedRevision) {
           checkedRevision = revision
           checkedState = db

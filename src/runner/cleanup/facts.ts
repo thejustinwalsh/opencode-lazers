@@ -1,19 +1,16 @@
 import type { Database } from "bun:sqlite"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import { observationRevisionStamp, StampGate } from "../../core/stamp-gate.ts"
+import { StampGate } from "../../core/stamp-gate.ts"
 import { fingerprint } from "../../identity.ts"
+import { cleanupRevisionStamp } from "../../observability/cleanup-revision.ts"
 import { sameProject } from "../../project-key.ts"
 import { TaskSpecSchema } from "../../task.ts"
 import type { AttemptRow, EffectRow } from "../store.ts"
+import { WORKTREE_CREATION_KINDS } from "./worktree-kinds.ts"
 
-export const WORKTREE_CREATION_KINDS: readonly string[] = [
-  "worktree",
-  "worktree-recovery",
-  "graph-worktree",
-  "adoption-task-worktree",
-  "adoption-combined-worktree",
-]
+export { WORKTREE_CREATION_KINDS } from "./worktree-kinds.ts"
+
 const creationKinds = new Set<string>(WORKTREE_CREATION_KINDS)
 
 type CleanupPlanFacts = {
@@ -73,7 +70,7 @@ export class CleanupFactsCache {
   ) {}
 
   read(db: Database, planID: string): CleanupFacts {
-    const stamp = observationRevisionStamp(db, this.directory)
+    const stamp = cleanupRevisionStamp(db, this.directory, planID)
     return this.gate.runSync(planID, stamp, () =>
       readCleanupFacts(db, this.directory, this.projectID, planID),
     )
