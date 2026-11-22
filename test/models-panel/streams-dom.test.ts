@@ -191,6 +191,18 @@ test("first open: a view being built shows the building line, then the chart and
   expect(rows).toHaveLength(5)
 })
 
+test("first open: the chart never says empty while its points are still on the way", async () => {
+  const { host, root } = mount({ lateSources: ["models.points"] })
+  await until(() => host.lastOpen("models.points") !== undefined, "the points stream opened")
+  await settle()
+  // The view row has landed; the points have not. That is loading, not "no accepted tasks".
+  expect(text(root)).not.toContain("No accepted tasks match")
+  expect(pointIDs(root)).toEqual([])
+  host.answer()
+  await until(() => pointIDs(root).length === 4, "the four plotted models")
+  expect(text(root)).not.toContain("No accepted tasks match")
+})
+
 test("switching the persona or the task keeps the last ready view until the new one lands", async () => {
   const { host, root } = mount({ preferences: { taskFilter: true } })
   await until(() => pointIDs(root).length === 4, "the first view")
