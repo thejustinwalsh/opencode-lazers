@@ -13,4 +13,4 @@ export const reloadObservationDependencies: ReloadObservationDependencies = {
   observeVerifications: observeVerificationProcesses,
 }
 
-export { observeOpenCodeSessions, observeVerificationProcesses }
+export { observeVerificationProcesses }

@@ -8,6 +8,7 @@
     "src/audit/fallow-thread.ts",
     "src/audit/wasm/*-probe.ts",
     "src/streams/reader-worker.ts",
+    "src/retention/retention-reader-worker.ts",
     "src/trajectory/effort-worker.ts",
     "src/streams/test-flipper.ts",
     // Command-line tools run by hand with `bun scripts/<name>.ts`, and the website's own.
