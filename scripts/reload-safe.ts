@@ -56,6 +56,7 @@ export async function runReloadSafe(
           result.line,
           ...(result.uncertainLine ? [result.uncertainLine] : []),
           ...(result.staleLine ? [result.staleLine] : []),
+          ...(result.staleVerificationLine ? [result.staleVerificationLine] : []),
         ].join("\n") + "\n",
       exitCode: result.safe ? 0 : 1,
     }

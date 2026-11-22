@@ -165,10 +165,23 @@ export function inspectCheckReceipt(input: {
   databaseReceipt: string | null
   receiptPath: string | undefined
   expected: ExpectedCheck
+  fallbackToDatabaseOnFileFailure?: boolean
 }): CheckReceiptIdentity {
+  let fileIdentity: CheckReceiptIdentity | undefined
+  let fileFailure: unknown
   if (input.receiptPath) {
-    const file = readReceiptFile(input.receiptPath)
-    if (file.kind === "read") return receiptIdentity(file.value, input.expected)
+    try {
+      const file = readReceiptFile(input.receiptPath)
+      if (file.kind === "read") {
+        fileIdentity = receiptIdentity(file.value, input.expected)
+        if (fileIdentity.state !== "invalid" || !input.fallbackToDatabaseOnFileFailure)
+          return fileIdentity
+        fileFailure = new Error(fileIdentity.reason ?? "verification receipt identity is invalid")
+      }
+    } catch (error) {
+      if (!input.fallbackToDatabaseOnFileFailure) throw error
+      fileFailure = error
+    }
   }
   if (input.databaseReceipt) {
     try {
@@ -180,6 +193,15 @@ export function inspectCheckReceipt(input: {
         settled: false,
         reason: errorText(error),
       }
+    }
+  }
+  if (fileIdentity) return fileIdentity
+  if (fileFailure) {
+    return {
+      state: "invalid",
+      rootPIDs: [],
+      settled: false,
+      reason: errorText(fileFailure),
     }
   }
   return { state: "missing", rootPIDs: [], settled: false }
