@@ -40,11 +40,23 @@ export function createDirectAnalysisTestRegistrar(register: TestRegistrar): Test
           completion = Promise.reject(error)
         }
 
+        // Attach the test callback to the lifetime race before cleanup closes the lifetime. If
+        // cleanup closes it first, the expiration signal can win the race and hide a real failure.
+        const bodyCompletion = lifetime.waitForBodyCompletion(completion)
         const observedCompletion = completion.finally(async () => {
           lifetime.close()
           await lifetime.drain()
         })
         void observedCompletion.catch(() => {})
+        const callbackCompletion = bodyCompletion.then(async (outcome) => {
+          if (outcome.kind === "expired") return
+          await observedCompletion
+          if (outcome.kind === "failed") throw outcome.error
+          return outcome.value
+        })
+        // Bun may stop awaiting this callback at its timeout. The actual completion remains
+        // observed and drained by `observedCompletion`, including failures after that timeout.
+        void callbackCompletion.catch(() => {})
         activeTestLifetimes.set(lifetime, observedCompletion)
         void observedCompletion.then(
           () => activeTestLifetimes.delete(lifetime),
@@ -53,7 +65,7 @@ export function createDirectAnalysisTestRegistrar(register: TestRegistrar): Test
         // Bun stops awaiting a timed-out test callback before its async work unwinds. Resolve its
         // registered callback when teardown expires the lifetime; keep the real completion
         // observed and drained separately so late callback errors cannot escape between tests.
-        return lifetime.waitForBodyCompletion(observedCompletion)
+        return callbackCompletion
       },
       options,
     )

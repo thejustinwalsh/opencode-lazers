@@ -25,8 +25,18 @@ class DirectAnalysisTestLifetime {
     if (this.expired) throw new DirectAnalysisTestExpiredError()
   }
 
-  waitForBodyCompletion(completion: Promise<unknown>): Promise<unknown> {
-    return Promise.race([completion, this.expiredSignal.then(() => undefined)])
+  waitForBodyCompletion<T>(
+    completion: Promise<T>,
+  ): Promise<
+    { kind: "completed"; value: T } | { kind: "failed"; error: unknown } | { kind: "expired" }
+  > {
+    return Promise.race([
+      completion.then(
+        (value) => ({ kind: "completed" as const, value }),
+        (error: unknown) => ({ kind: "failed" as const, error }),
+      ),
+      this.expiredSignal.then(() => ({ kind: "expired" as const })),
+    ])
   }
 
   track<T>(operation: Promise<T>): Promise<T> {
