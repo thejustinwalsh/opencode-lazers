@@ -1,14 +1,14 @@
-import { Database } from "bun:sqlite"
 import { dirname } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { RETENTION_PRESET_DAYS } from "./contract.ts"
 import { RetentionReader } from "./reader.ts"
+import { retentionDatabaseSizes } from "./database-size.ts"
 import {
   advanceIdentityKeys,
   identityKeysFinished,
   type IdentityKeysProgress,
 } from "../runner/identity-migration.ts"
-import { compactionDiskBytes, incrementalVacuum, spaceState, type AutoVacuum } from "./vacuum.ts"
+import { incrementalVacuum, type AutoVacuum } from "./vacuum.ts"
 import { classifyPlans, retireSlice, type RetentionPreview, type SliceResult } from "./retention.ts"
 import {
   addToRun,
@@ -117,18 +117,7 @@ export class RetentionService {
     // A retained service reader can outlive an explicit VACUUM. SQLite connections keep the
     // auto_vacuum header value they saw when opened, so read these file-level PRAGMAs from a fresh
     // lightweight connection rather than the repository connection or its worker's old snapshot.
-    const db = new Database(this.deps.repository.path, { readonly: true, strict: true })
-    try {
-      const state = spaceState(db)
-      return {
-        fileBytes: state.pageCount * state.pageSize,
-        freeBytes: state.freelistPages * state.pageSize,
-        autoVacuum: state.autoVacuum,
-        compactionDiskBytes: compactionDiskBytes(state),
-      }
-    } finally {
-      db.close()
-    }
+    return retentionDatabaseSizes(this.deps.repository.path)
   }
 
   async status(): Promise<RetentionStatus> {

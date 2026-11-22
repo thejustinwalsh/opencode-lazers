@@ -9,21 +9,39 @@ import type { RetentionPreview } from "./retention.ts"
 import type { WorktreeCandidates } from "./worktrees.ts"
 
 type Pending = {
+  worker: RetentionReaderWorker
   resolve(value: unknown): void
   reject(error: Error): void
 }
+
+export type RetentionReaderWorker = {
+  on(event: "message", listener: (message: RetentionReadResult) => void): unknown
+  on(event: "error", listener: (error: Error) => void): unknown
+  on(event: "exit", listener: (code: number) => void): unknown
+  once(event: "exit", listener: (code: number) => void): unknown
+  postMessage(message: RetentionReadRequest): void
+  unref(): unknown
+  terminate(): Promise<number>
+}
+
+type RetentionReaderWorkerFactory = (
+  url: URL,
+  options: { workerData: { path: string } },
+) => RetentionReaderWorker
 
 type RetentionReadCall =
   | Omit<Extract<RetentionReadRequest, { type: "status" }>, "id">
   | Omit<Extract<RetentionReadRequest, { type: "preview" }>, "id">
   | Omit<Extract<RetentionReadRequest, { type: "worktrees" }>, "id">
 
+const CLOSE_GRACE_MS = 1_000
+
 /**
  * One lazy reader for a RetentionService owner. It serializes estimates on one worker connection;
  * failures reject the current read and the next request can replace the failed worker.
  */
 export class RetentionReader {
-  private worker: Worker | undefined
+  private worker: RetentionReaderWorker | undefined
   private sequence = 0
   private closed = false
   private queue: Promise<unknown> = Promise.resolve()
@@ -32,6 +50,8 @@ export class RetentionReader {
   constructor(
     private readonly path: string,
     private readonly url = workerURL("./retention-reader-worker", import.meta.url),
+    private readonly createWorker: RetentionReaderWorkerFactory = (url, options) =>
+      new Worker(url, options),
   ) {}
 
   status(input: { now: number; dataDirectory: string }): Promise<RetentionEstimateStatus> {
@@ -67,16 +87,16 @@ export class RetentionReader {
     return result
   }
 
-  private acquire() {
+  private acquire(): RetentionReaderWorker {
     if (this.closed) throw new Error("Retention reader is closed")
     if (this.worker) return this.worker
-    const created = new Worker(this.url, { workerData: { path: this.path } })
+    const created = this.createWorker(this.url, { workerData: { path: this.path } })
     created.unref()
     this.worker = created
     created.on("message", (message: RetentionReadResult) => {
       if (message.type === "closed") return
       const entry = this.pending.get(message.id)
-      if (!entry) return
+      if (!entry || entry.worker !== created) return
       this.pending.delete(message.id)
       if (message.type === "error") entry.reject(new Error(message.message))
       else if (message.type === "preview")
@@ -87,6 +107,7 @@ export class RetentionReader {
     const dead = (error: Error) => {
       if (this.worker === created) this.worker = undefined
       for (const [id, entry] of this.pending) {
+        if (entry.worker !== created) continue
         this.pending.delete(id)
         entry.reject(error)
       }
@@ -101,7 +122,7 @@ export class RetentionReader {
 
   private call(request: RetentionReadCall): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error("Retention reader is closed"))
-    let worker: Worker
+    let worker: RetentionReaderWorker
     try {
       worker = this.acquire()
     } catch (error) {
@@ -109,7 +130,7 @@ export class RetentionReader {
     }
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      this.pending.set(id, { worker, resolve, reject })
       try {
         worker.postMessage({ ...request, id } as RetentionReadRequest)
       } catch (error) {
@@ -129,19 +150,28 @@ export class RetentionReader {
       entry.reject(new Error("Retention reader closed"))
     }
     if (!worker) return
-    await new Promise<void>((resolve) => {
-      let settled = false
-      const finish = () => {
-        if (settled) return
-        settled = true
-        resolve()
-      }
-      worker.on("message", (message: RetentionReadResult) => {
-        if (message.type === "closed") finish()
+    try {
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(finish, CLOSE_GRACE_MS)
+        worker.on("message", (message: RetentionReadResult) => {
+          if (message.type === "closed") finish()
+        })
+        worker.once("exit", finish)
+        try {
+          worker.postMessage({ type: "close" } satisfies RetentionReadRequest)
+        } catch {
+          finish()
+        }
       })
-      worker.once("exit", finish)
-      worker.postMessage({ type: "close" } satisfies RetentionReadRequest)
-    })
-    await worker.terminate()
+    } finally {
+      await worker.terminate()
+    }
   }
 }

@@ -1,16 +1,19 @@
 import { Database } from "bun:sqlite"
 import { afterEach, expect, test } from "bun:test"
 import { Effect } from "effect"
+import { EventEmitter } from "node:events"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Retention } from "./contract.ts"
 import { registerRetention } from "./rpc.ts"
-import { RetentionReader } from "./reader.ts"
+import { RetentionReader, type RetentionReaderWorker } from "./reader.ts"
+import type { RetentionReadRequest, RetentionReadResult } from "./reader-protocol.ts"
 import { RetentionService } from "./service.ts"
 import type { WorktreeProbe } from "./worktrees.ts"
+import { retentionDatabaseSizes } from "./database-size.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
-import { meterRepository } from "../runner/read-meter.fixture.ts"
+import { meterDatabase, meterRepository, type ReadMeter } from "../runner/read-meter.fixture.ts"
 import { makeFixture, taskID } from "../../test/trajectory/fixture.ts"
 
 const NOW = Date.UTC(2026, 10, 19)
@@ -103,6 +106,40 @@ async function measured<T>(
   }
 }
 
+class FakeReaderWorker extends EventEmitter implements RetentionReaderWorker {
+  readonly requests: RetentionReadRequest[] = []
+  terminated = false
+  private readonly waiters: Array<(request: RetentionReadRequest) => void> = []
+
+  constructor(private readonly acknowledgeClose = true) {
+    super()
+  }
+
+  postMessage(message: unknown) {
+    const request = message as RetentionReadRequest
+    this.requests.push(request)
+    for (const resolve of this.waiters.splice(0)) resolve(request)
+    if (request.type === "close" && this.acknowledgeClose)
+      this.emit("message", { type: "closed" } satisfies RetentionReadResult)
+  }
+
+  unref() {
+    return this
+  }
+
+  terminate() {
+    this.terminated = true
+    return Promise.resolve(0)
+  }
+
+  nextRequest() {
+    const request = this.requests[0]
+    return request
+      ? Promise.resolve(request)
+      : new Promise<RetentionReadRequest>((resolve) => this.waiters.push(resolve))
+  }
+}
+
 test("Settings status and preview read bounded main-thread rows for cold, warm, small and large histories", async () => {
   const mainRows: number[] = []
   const previews: number[] = []
@@ -127,7 +164,11 @@ test("Settings status and preview read bounded main-thread rows for cold, warm, 
     mainRows.push(preview.rows)
     previews.push(preview.value.rows)
     expect(preview.value.protected.find((item) => item.noun === "tasks")?.count).toBeGreaterThan(0)
+    expect(preview.value.protected.find((item) => item.noun === "attempts")?.count).toBe(
+      fixture.attempts.length,
+    )
     expect(preview.value.worktrees).toMatchObject([{ path: tree, action: "remove", bytes: 1024 }])
+    expect(preview.value.worktreeBytes).toBe(1024)
 
     const warm = await measured(fixture, () =>
       call<Awaited<ReturnType<RetentionService["status"]>>>("status", {}),
@@ -137,6 +178,26 @@ test("Settings status and preview read bounded main-thread rows for cold, warm, 
   }
   expect(Math.max(...mainRows)).toBeLessThanOrEqual(8)
   expect(previews[1]).toBeGreaterThan(previews[0]!)
+})
+
+test("the fresh file-size connection reads PRAGMA metadata only", () => {
+  const { fixture } = seedHistory(25)
+  let meter: ReadMeter | undefined
+  const sizes = retentionDatabaseSizes(fixture.repository.path, (path, options) => {
+    const measured = meterDatabase(new Database(path, options))
+    meter = measured.meter
+    return measured.db
+  })
+  expect(sizes.fileBytes).toBeGreaterThan(0)
+  expect(meter?.rows).toBe(4)
+  expect(meter?.statements).toEqual([
+    "PRAGMA auto_vacuum",
+    "PRAGMA page_size",
+    "PRAGMA page_count",
+    "PRAGMA freelist_count",
+  ])
+  expect(meter?.statements.some((sql) => forbiddenHistorySQL.test(sql))).toBe(false)
+  meter?.stop()
 })
 
 test("preview refreshes for asOf, writes and retirement instead of caching an old estimate", async () => {
@@ -222,4 +283,52 @@ test("a reader query failure is surfaced rather than returned as an exact zero",
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("a dead reader generation cannot reject a replacement worker's result", async () => {
+  const first = new FakeReaderWorker()
+  const second = new FakeReaderWorker()
+  let creations = 0
+  let resolveSecondStarted!: () => void
+  const secondStarted = new Promise<void>((resolve) => {
+    resolveSecondStarted = resolve
+  })
+  const reader = new RetentionReader("unused", new URL("file:///retention-reader-test.js"), () => {
+    creations += 1
+    if (creations === 2) resolveSecondStarted()
+    return creations === 1 ? first : second
+  })
+  const input = { now: NOW, dataDirectory: "." }
+  const failed = reader.status(input)
+  const retry = reader.status(input)
+  await first.nextRequest()
+  const failure = new Error("reader worker crashed")
+  first.emit("error", failure)
+  await secondStarted
+  first.emit("exit", 1)
+
+  const request = await second.nextRequest()
+  if (request.type === "close") throw new Error("expected a status request")
+  const value = { presets: [], superseded: { rows: 0, bytes: 0 } }
+  second.emit("message", { type: "result", id: request.id, value } satisfies RetentionReadResult)
+
+  await expect(failed).rejects.toBe(failure)
+  await expect(retry).resolves.toEqual(value)
+  await reader.close()
+  expect(second.terminated).toBe(true)
+})
+
+test("closing terminates a reader worker that does not acknowledge shutdown", async () => {
+  const worker = new FakeReaderWorker(false)
+  const reader = new RetentionReader(
+    "unused",
+    new URL("file:///retention-reader-test.js"),
+    () => worker,
+  )
+  const read = reader.status({ now: NOW, dataDirectory: "." })
+  const readRejected = expect(read).rejects.toThrow("Retention reader closed")
+  await worker.nextRequest()
+  await reader.close()
+  await readRejected
+  expect(worker.terminated).toBe(true)
 })
