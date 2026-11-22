@@ -2,7 +2,7 @@ import { z } from "zod"
 import { fingerprint } from "../identity.ts"
 import { PlanSubmissionInput, WorkerPersona } from "../runner/schema.ts"
 import { TaskProposalSchema } from "../task.ts"
-import type { TargetField } from "./contract.ts"
+import type { Hashes } from "./view-assembly.ts"
 
 export const DraftID = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)
 
@@ -141,8 +141,6 @@ export const DEFERRED_TO_TASKING = [
   "model-route preflight",
 ] as const
 
-type Hashes = Record<string, Record<string, string>>
-
 const hash = (value: unknown) =>
   fingerprint(value === undefined ? null : JSON.parse(JSON.stringify(value)))
 
@@ -184,36 +182,6 @@ export function fieldHashes(body: PlanningBody): Hashes {
   })
   out["@plan"] = plan
   return out
-}
-
-/** The stored keys a finding field depends on. `*` is the whole unit. */
-export const FIELD_KEYS: Record<TargetField, readonly string[]> = {
-  objective: ["objective"],
-  acceptance: ["acceptance"],
-  verification: ["verification"],
-  "write-scope": ["writeScope", "createScope", "protectedScope"],
-  dependencies: ["dependsOn"],
-  exclusions: ["exclusions"],
-  assumption: ["assumptions"],
-  "design-decision": ["*"],
-  other: ["*"],
-}
-
-/**
- * A finding is stale when its draft's field changed (or the draft was added or removed) since
- * the revision it was raised on. A plan-level finding has no draft and reads `@plan`.
- */
-export function isStale(
-  finding: { draftID: string | null; field: TargetField; revision: number },
-  hashesAt: (revision: number) => Hashes,
-  current: number,
-): boolean {
-  if (finding.revision === current) return false
-  const unit = finding.draftID ?? "@plan"
-  const then = hashesAt(finding.revision)[unit]
-  const now = hashesAt(current)[unit]
-  if (!then || !now) return then !== now
-  return FIELD_KEYS[finding.field].some((key) => then[key] !== now[key])
 }
 
 /** Per draftID (and `@plan`): the keys whose value changed, or `added` / `removed`. */
