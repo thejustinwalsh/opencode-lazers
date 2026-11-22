@@ -4877,25 +4877,44 @@ export class RunnerStore {
           "SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?",
         )
         .get(input.adoptionID, input.phase, input.checkID)
-      if (existing) return existing
       const now = Date.now()
-      db.query(
-        `INSERT INTO runner_adoption_checks(
+      // The caller begins a check only when no receipt covers the current inputs: an earlier
+      // row is an interrupted, uncertain or outdated run, and the check runs again.
+      if (existing)
+        db.query(
+          `UPDATE runner_adoption_checks SET state=lz_runner_transition('check',state,'intended'),
+           receipt=NULL,check_json=?,workspace=?,artifact=?,input_fingerprint=?,environment_identity=?,
+           receipt_path=?,created_at=? WHERE adoption_id=? AND phase=? AND check_id=?`,
+        ).run(
+          JSON.stringify(input.check),
+          input.workspace,
+          input.artifact,
+          input.inputFingerprint,
+          input.environmentIdentity,
+          input.receiptPath,
+          now,
+          input.adoptionID,
+          input.phase,
+          input.checkID,
+        )
+      else
+        db.query(
+          `INSERT INTO runner_adoption_checks(
           adoption_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,
           environment_identity,receipt_path,state,receipt,created_at
         ) VALUES(?,?,?,?,?,?,?,?,?,'intended',NULL,?)`,
-      ).run(
-        input.adoptionID,
-        input.phase,
-        input.checkID,
-        JSON.stringify(input.check),
-        input.workspace,
-        input.artifact,
-        input.inputFingerprint,
-        input.environmentIdentity,
-        input.receiptPath,
-        now,
-      )
+        ).run(
+          input.adoptionID,
+          input.phase,
+          input.checkID,
+          JSON.stringify(input.check),
+          input.workspace,
+          input.artifact,
+          input.inputFingerprint,
+          input.environmentIdentity,
+          input.receiptPath,
+          now,
+        )
       this.repository.changed()
       return db
         .query<AdoptionCheckRow, [string, string, string]>(

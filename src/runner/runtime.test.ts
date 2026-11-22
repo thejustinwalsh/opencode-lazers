@@ -349,9 +349,11 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   const reopened = reopenRuntime(f)
   await reopened.runtime.tick()
   const recovered = reopened.store.effects(f.receipt.planID).find((item) => item.id === effect.id)!
-  // F-S5-1: shutdown is an interruption, never a failed product check or worker repair.
-  expect(recovered.state).toBe("uncertain")
-  expect(reopened.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  // F-S5-1: shutdown is an interruption, never a failed product check or worker repair: the
+  // interrupted run is superseded and the check runs again, with no hold.
+  expect(recovered.state).toBe("failed")
+  expect(JSON.parse(recovered.receipt!).superseded).toBe(true)
+  expect(reopened.store.plan(f.receipt.planID)?.state).toBe("running")
   expect(reopened.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(reopened.store.attempts(f.receipt.planID)[0]?.state).toBe("verifying")
   writeFileSync(join(f.root, "check-release"), "release\n")

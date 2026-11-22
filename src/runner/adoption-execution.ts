@@ -543,31 +543,28 @@ export class AdoptionExecution {
           artifact: row.artifact,
           receiptPath: row.receipt_path,
         }
-        if (
-          row.workspace !== workspace ||
-          row.artifact !== artifact ||
-          !this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, artifact) ||
-          row.receipt_path !== receiptPath
-        ) {
-          this.holdAdoption(
-            plan,
-            adoption.id,
-            `Adoption check ${phase}:${check.id} no longer matches its recorded command or workspace`,
-            "held",
-            fence,
-          )
-          return undefined
-        }
+        // A check whose inputs changed runs again on the current ones.
+        const current =
+          row.workspace === workspace &&
+          row.artifact === artifact &&
+          this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, artifact) &&
+          row.receipt_path === receiptPath
         let previous: RunnerCheckReceipt | undefined
         try {
-          if (row.state === "completed" && row.receipt)
+          if (!current) previous = undefined
+          else if (row.state === "completed" && row.receipt)
             previous = JSON.parse(row.receipt) as RunnerCheckReceipt
           else if (existsSync(row.receipt_path))
             previous = JSON.parse(readFileSync(row.receipt_path, "utf8")) as RunnerCheckReceipt
         } catch {
           previous = undefined
         }
-        if (previous && this.adoptionCheckReceiptMatches(previous, row, effectiveCheck)) {
+        // A receipt whose subprocess tree did not settle is not used: the check runs again.
+        if (
+          previous &&
+          checkResourcesSettled(previous) &&
+          this.adoptionCheckReceiptMatches(previous, row, effectiveCheck)
+        ) {
           if (row.state !== "completed") {
             this.runtime.store.completeAdoptionCheck(adoption.id, phase, check.id, previous, {
               owner: this.runtime.owner,
@@ -579,43 +576,16 @@ export class AdoptionExecution {
             fingerprint(activityIdentity),
           )
           receipts.push(previous)
-          if (!checkResourcesSettled(previous)) {
-            this.holdAdoption(
-              plan,
-              adoption.id,
-              `Adoption verification ${phase}:${check.id} completed with exit ${previous.exitCode ?? "unknown"} and timedOut=${previous.timedOut}, but subprocess cleanup is uncertain: ${previous.processCleanup?.detail ?? "termination was not confirmed"}`,
-              "held",
-              fence,
-            )
-            return undefined
-          }
           if (!this.adoptionIsLive(adoption.id)) return undefined
           continue
         }
         const activity = this.runtime.checkActivity(activityID, activityIdentity)
         if (activity?.state === "running") return undefined
-        if (row.state !== "completed")
-          this.runtime.store.markAdoptionCheckUncertain(
-            adoption.id,
-            phase,
-            check.id,
-            activity?.state === "failed"
-              ? `Verification subprocess did not settle conclusively: ${errorText(activity.error)}`
-              : "No conclusive operation-bound check receipt; check was not repeated",
-            { owner: this.runtime.owner, value: fence },
-          )
-        this.holdAdoption(
-          plan,
-          adoption.id,
-          `Uncertain adoption check ${phase}:${check.id}; evidence was not replayed`,
-          "pending",
-          fence,
-        )
+        // An interrupted or uncertain check is simply run again.
         forgetVerificationActivity(
           verificationActivityKey(this.runtime.store.repository.path, activityID),
           fingerprint(activityIdentity),
         )
-        return undefined
       }
       const candidateClean =
         existsSync(workspace) &&

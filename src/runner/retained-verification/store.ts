@@ -443,26 +443,8 @@ export function beginRetainedVerificationCheck(
     createdAt: number
   },
 ): RetainedVerificationCheck {
+  // The caller begins a check only when the operation has no row for it.
   ensureRetainedVerificationTables(db)
-  const current = db
-    .query<RetainedVerificationCheck, [string, string, string]>(
-      `SELECT operation_id AS operationID,phase,check_id AS checkID,check_json AS checkJSON,workspace,artifact,
-       input_fingerprint AS inputFingerprint,environment_identity AS environmentIdentity,receipt_path AS receiptPath,
-       state,receipt,context_path AS contextPath,cleanup_state AS cleanupState,created_at AS createdAt
-       FROM runner_retained_verification_checks WHERE operation_id=? AND phase=? AND check_id=?`,
-    )
-    .get(input.operationID, input.phase, input.checkID)
-  if (current) {
-    if (
-      current.workspace !== input.workspace ||
-      current.artifact !== input.artifact ||
-      fingerprint(JSON.parse(current.checkJSON)) !== fingerprint(input.check) ||
-      current.receiptPath !== input.receiptPath ||
-      current.contextPath !== input.contextPath
-    )
-      throw new Error("Retained verification inputs changed for an existing check")
-    return current
-  }
   db.query(
     `INSERT INTO runner_retained_verification_checks
      (operation_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,environment_identity,

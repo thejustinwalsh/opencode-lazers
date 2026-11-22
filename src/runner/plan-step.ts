@@ -375,31 +375,6 @@ export class PlanStep {
     const pending = unresolved[0]
     if (pending) {
       await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-      const attempt = pending.attempt_id
-        ? this.store.attempts(plan.id).find((item) => item.id === pending.attempt_id)
-        : undefined
-      if (
-        plan.state === "blocked" &&
-        plan.reason?.startsWith(`Recovery uncertain for ${pending.kind} ${pending.id}:`) &&
-        attempt?.state === "verifying" &&
-        unresolved.length === 1 &&
-        actualCheckResultFromEffect(pending)?.processCleanup &&
-        this.interruptedChecksFor(plan, attempt).some((effect) => effect.id === pending.id)
-      ) {
-        await this.command(
-          {
-            requestID: `resume-settled-check:${pending.id}:${plan.version}`,
-            planID: plan.id,
-            action: "resume",
-            taskID: attempt.task_id,
-            attemptID: attempt.id,
-            reason: "Resume the interrupted check after confirming subprocess cleanup",
-          },
-          plan.owner,
-        )
-        this.requestRetick()
-        return
-      }
       await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
       // A settled effect of a running plan unblocks the rest of its step: continue now, not at
       // the next periodic pass. An unsettled effect waits for new facts instead of spinning, and

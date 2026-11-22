@@ -61,20 +61,11 @@ test("a task verify check journals its evidence before the receipt", () => {
   expect(calls).toEqual(["evidence", "receipt:true", "tick:true", "forget"])
 })
 
-test("an aborted check is uncertain and forgotten without evidence or a receipt", () => {
-  for (const kind of ["mechanical-fix", "verify:test", "graph-verify:lint"]) {
-    const { calls, settle } = harness()
-    settle(effect(kind), aborted)
-    expect(calls).toEqual(["uncertain:Verification was interrupted before completion", "forget"])
-  }
-})
-
-test("unsettled subprocess cleanup is uncertain; only verification forgets the activity", () => {
-  const mechanical = harness()
-  mechanical.settle(effect("mechanical-fix"), unsettled)
-  expect(mechanical.calls).toEqual(["uncertain:error"])
-
-  const verify = harness()
-  verify.settle(effect("verify:test"), unsettled)
-  expect(verify.calls).toEqual(["evidence", "uncertain:error", "forget"])
+test("an aborted or unsettled run is not a receipt: nothing is recorded, so the check runs again", () => {
+  for (const kind of ["mechanical-fix", "verify:test", "graph-verify:lint"])
+    for (const check of [aborted, unsettled]) {
+      const { calls, settle } = harness()
+      expect(settle(effect(kind), check)).toBe(false)
+      expect(calls).toEqual([])
+    }
 })

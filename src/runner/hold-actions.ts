@@ -66,7 +66,7 @@ export const HOLD_FAMILIES: readonly HoldFamily[] = [
   },
   {
     name: "uncertain-effect",
-    match: /uncertain|not replayed|was not repeated|Recovery uncertain|unresolved/i,
+    match: /uncertain|was not repeated|Recovery uncertain|unresolved/i,
     actions: ["reconcile", "cancel"],
   },
   {

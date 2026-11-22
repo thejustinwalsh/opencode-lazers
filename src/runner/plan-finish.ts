@@ -1,6 +1,5 @@
 import {
   sameVerificationCheckIdentity,
-  actualCheckResultFromEffect,
   errorText,
   effectSuperseded,
   fallowAcceptance,
@@ -11,7 +10,6 @@ import { join } from "node:path"
 import { effectiveVerificationCheck, verificationReceiptDeadline } from "./verification-timeout.ts"
 import {
   artifactUnchanged,
-  checkResourcesSettled,
   canonicalCombinedArtifact,
   combineArtifacts,
   gitAsync,
@@ -33,6 +31,7 @@ export type PlanFinishDeps = {
   outcome: RuntimeJournal["outcome"]
   receipt: RuntimeJournal["receipt"]
   uncertain: RuntimeJournal["uncertain"]
+  supersedeEffect: RuntimeJournal["supersedeEffect"]
   checkActivity: CheckActivities["checkActivity"]
   startCheckActivity: CheckActivities["startCheckActivity"]
   runVerificationCheck: CheckActivities["runVerificationCheck"]
@@ -53,6 +52,7 @@ export class PlanFinish {
   private readonly hold: PlanFinishDeps["hold"]
   private readonly outcome: PlanFinishDeps["outcome"]
   private readonly receipt: PlanFinishDeps["receipt"]
+  private readonly supersedeEffect: PlanFinishDeps["supersedeEffect"]
   private readonly uncertain: PlanFinishDeps["uncertain"]
   private readonly checkActivity: PlanFinishDeps["checkActivity"]
   private readonly startCheckActivity: PlanFinishDeps["startCheckActivity"]
@@ -78,6 +78,7 @@ export class PlanFinish {
     this.runVerificationCheck = (...args) => deps.runVerificationCheck(...args)
     this.startCheckActivity = (...args) => deps.startCheckActivity(...args)
     this.uncertain = (...args) => deps.uncertain(...args)
+    this.supersedeEffect = (...args) => deps.supersedeEffect(...args)
     this.verificationDeadline = (...args) => deps.verificationDeadline(...args)
     this.verificationTarget = (...args) => deps.verificationTarget(...args)
   }
@@ -205,9 +206,7 @@ export class PlanFinish {
         }
       }
     }
-    // Explicit reconciliation may follow a conclusive verifier/environment
-    // failure. Keep prior effects and give the requested check run its own ID;
-    // never replay uncertain effects or silently retry on ordinary ticks.
+    // Prior effects are kept; an interrupted or uncertain run is superseded and run again.
     const receipts: RunnerCheckReceipt[] = []
     for (const check of input.verification) {
       const deadline = this.verificationDeadline(
@@ -243,26 +242,27 @@ export class PlanFinish {
         }
       })
       if (existing && existing.state !== "completed") {
-        const activityIdentity = { effectID: existing.id, payload: existing.payload }
-        const activity = this.checkActivity(existing.id, activityIdentity)
+        const activity = this.checkActivity(existing.id, {
+          effectID: existing.id,
+          payload: existing.payload,
+        })
         if (activity?.state === "running" || activity?.state === "completed") return
-        const actual = actualCheckResultFromEffect(existing)
-        const reason =
-          actual && !checkResourcesSettled(actual)
-            ? `Combined verification ${check.id} completed with exit ${actual.exitCode ?? "unknown"} and timedOut=${actual.timedOut}; subprocess cleanup remains uncertain: ${actual.processCleanup?.detail ?? "termination was not confirmed"}`
-            : `Combined verification ${check.id} has an uncertain receipt and was not replayed`
-        this.hold(plan, reason, ["reconcile", "resume", "audit", "cancel"])
-        return
+        // A check reads the candidate: an interrupted or uncertain run is simply run again.
+        this.supersedeEffect(existing, `Combined verification ${check.id} runs again`, fence)
       }
       if (existing?.state === "completed") {
         receipts.push(JSON.parse(existing.receipt!).check)
         continue
       }
+      // A run again never overwrites the receipt an earlier run left.
+      const earlierRuns = this.store
+        .effects(plan.id)
+        .filter((e) => e.kind === `graph-verify:${check.id}`).length
       const receiptPath = join(
         this.dataDirectory,
         "receipts",
         plan.id,
-        `${check.id}-${artifact}${sourceGeneration ? `-${sourceGeneration}` : ""}${verificationEpoch ? `-${verificationEpoch}` : ""}.json`,
+        `${check.id}-${artifact}${sourceGeneration ? `-${sourceGeneration}` : ""}${verificationEpoch ? `-${verificationEpoch}` : ""}${earlierRuns ? `-run${earlierRuns}` : ""}.json`,
       )
       const effect = this.effect(
         plan.id,

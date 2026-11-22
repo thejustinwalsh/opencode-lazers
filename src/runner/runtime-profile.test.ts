@@ -340,6 +340,108 @@ test("a later revision with another fix command never changes a running preparat
   expect(f.store.plan(f.receipt.planID)?.reason ?? "").not.toContain("inputs changed")
 })
 
+// Plan 9e1d18b1 (LZ-261): the profile fix completed, a check was running, and the Architect
+// widened the write scope by one path. The next tick held the plan on "preparation inputs
+// changed". The fix's result is the candidate as it is, so verification simply continues.
+test("an Architect scope amendment during verification does not stop the prepared candidate", async () => {
+  fakeCargoHome()
+  const bin = fixers()
+  const f = fixFixture({ writes: [] })
+  await confirm(f, fixProfile([{ command: join(bin, "fixer.sh"), files: ["**/*.rs"] }]), [
+    proof("fix:0"),
+  ])
+  const gate = deferred<void>()
+  const runtime = Reflect.get(f.runtime, "checkActivities") as {
+    startCheckActivity: (input: {
+      id: string
+      run(signal: AbortSignal): Promise<unknown>
+    }) => unknown
+  }
+  const original = runtime.startCheckActivity.bind(runtime)
+  let verifying = false
+  runtime.startCheckActivity = (input) => {
+    if (
+      verifying ||
+      !f.store
+        .effects(f.receipt.planID)
+        .some((e) => e.id === input.id && e.kind.startsWith("verify:"))
+    )
+      return original(input)
+    verifying = true
+    return original({
+      ...input,
+      run: async (signal: AbortSignal) => {
+        await gate.promise
+        return input.run(signal)
+      },
+    })
+  }
+  await runPlan(f)
+  for (let n = 0; n < 100 && !verifying; n++) {
+    await f.runtime.tick()
+    await Bun.sleep(20)
+  }
+  expect(verifying).toBe(true)
+  const [prepared] = preparation(f)
+  expect(prepared!.state).toBe("completed")
+  const taskID = f.store.attempts(f.receipt.planID)[0]!.task_id
+  await f.runtime.command(
+    {
+      requestID: "widen-scope",
+      planID: f.receipt.planID,
+      action: "amend-scope",
+      taskID,
+      scopeAdditions: ["scripts/allowlist"],
+      reason: "Reviewed one-line removal from the read-boundary allowlist",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.reason ?? "").not.toContain("inputs changed")
+  gate.resolve()
+  await drive(f.runtime, 14)
+  // The task is accepted; the fixture's combined check then rejects the fixed text on its own terms.
+  expect(f.store.plan(f.receipt.planID)?.reason).toBe("Combined artifact verification failed")
+  expect(f.store.nodes(f.receipt.planID).every((node) => node.state === "accepted")).toBe(true)
+  // The fix is not run twice on a candidate it already produced.
+  expect(preparation(f)).toHaveLength(1)
+})
+
+test("an interrupted fix runs again on the current candidate instead of holding the plan", async () => {
+  fakeCargoHome()
+  const bin = fixers()
+  const f = fixFixture({ writes: [] })
+  await confirm(f, fixProfile([{ command: join(bin, "fixer.sh"), files: ["**/*.rs"] }]), [
+    proof("fix:0"),
+  ])
+  const runtime = Reflect.get(f.runtime, "checkActivities") as {
+    startCheckActivity: (input: { id: string }) => unknown
+  }
+  const original = runtime.startCheckActivity.bind(runtime)
+  let dropped = false
+  runtime.startCheckActivity = (input) => {
+    const effect = f.store.effects(f.receipt.planID).find((e) => e.id === input.id)
+    // The first fix never reports: its process died with the service.
+    if (!dropped && effect?.kind === "mechanical-fix") {
+      dropped = true
+      return undefined
+    }
+    return original(input as never)
+  }
+  await runPlan(f)
+  await drive(f.runtime, 16)
+  expect(dropped).toBe(true)
+  expect(f.store.plan(f.receipt.planID)?.reason ?? "").not.toContain("not replayed")
+  expect(f.store.nodes(f.receipt.planID).every((node) => node.state === "accepted")).toBe(true)
+  const runs = preparation(f)
+  expect(runs).toHaveLength(2)
+  expect(runs[0]!.state).toBe("failed")
+  expect(runs[1]!.state).toBe("completed")
+  expect(JSON.parse(runs[1]!.payload).previousEffectID).toBe(runs[0]!.id)
+})
+
 test.skipIf(!requireToolchain("cargo", "profile fix chain formats with rustfmt"))(
   "a real cargo toolchain's formatter fixes the changed file",
   async () => {

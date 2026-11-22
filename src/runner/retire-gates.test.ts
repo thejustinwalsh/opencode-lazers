@@ -157,6 +157,16 @@ test("plans held by retired reasons move through the plan machine; real failures
       "Worker execution was interrupted; explicit reconciliation or cancellation is required",
     scope:
       "Mechanical candidate preparation is blocked by an active scope reservation; no files were changed",
+    // Plan 9e1d18b1 (LZ-261..264) on 2026-11-22.
+    preparationInputs:
+      "Mechanical candidate preparation inputs changed; the original activity was not replayed",
+    preparationUncertain: "Mechanical candidate preparation is uncertain and was not replayed",
+    preparationReceipt:
+      "Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted",
+    taskCheck: "Verification content has an uncertain receipt and was not replayed",
+    combinedCheck:
+      "Combined verification combined completed with exit 0 and timedOut=false; subprocess cleanup remains uncertain: termination was not confirmed",
+    recoveryFix: "Recovery uncertain for mechanical-fix 0123abcd: check runner unavailable",
     recovery:
       "Recovery uncertain for verify:content 0123abcd: No conclusive host/artifact receipt; effect was not repeated",
   }
