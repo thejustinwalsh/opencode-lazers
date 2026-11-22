@@ -28,8 +28,6 @@ suites will saturate the machine.
   by paging and the retention purge.
 - Automatic back-off from CPU or memory pressure. Limits are counts tuned by hand.
 - Pre-empting running work to rebalance. Fairness applies when a slot frees.
-- Any reload-safety feature across projects (owner decision: reloads are a
-  dogfooding activity).
 - Scheduled (timed) tasks. The global scheduler is where they would later live.
 
 ## What exists today

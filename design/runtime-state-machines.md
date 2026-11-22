@@ -539,7 +539,7 @@ abandoned: …" (family `takeover-abandoned`, actions `takeover-submit` and `can
 other exits are acceptance and plan cancellation (the absent synthetic session settles it
 `cancelled`). Every other consumer of absent sessions (auto-resume, interrupted and missing-worker
 handling, `HOST_ACTIVE_STALE` usage reads) runs only through worker observation, which takeover
-attempts never enter; the detector skips them and reload safety names them separately.
+attempts never enter; the detector skips them.
 
 ## Project and global dispatch pause
 
