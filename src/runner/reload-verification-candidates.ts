@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite"
 import { realpathSync } from "node:fs"
 import { resolve } from "node:path"
+import { checkRunProfile, type ProfileCommands } from "../projects/profile-runtime.ts"
+import { profileRevisionByID } from "../projects/profile-store.ts"
+import type { TaskRepository } from "../storage.ts"
 import { withTestHangGuard } from "./test-hang-guard.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
 import { inspectCheckReceipt, type CheckReceiptIdentity } from "./reload-check-receipt.ts"
@@ -35,6 +38,8 @@ type CandidateReceipt = {
   databaseReceipt: string | null
   receiptPath?: string
 }
+
+type ProfileReader = Pick<TaskRepository, "read">
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -108,12 +113,36 @@ function hardTimeoutMs(check: CheckMetadata, deadline: unknown): number {
   return result
 }
 
+function profileReader(db: Database): ProfileReader {
+  return {
+    read: <T>(run: (connection: Database) => T) => db.transaction(() => run(db)).deferred(),
+  }
+}
+
+function pinnedProfileCommands(
+  db: Database,
+  revisionID: unknown,
+  cache: Map<number, ProfileCommands>,
+): ProfileCommands | undefined {
+  if (revisionID === undefined) return undefined
+  if (typeof revisionID !== "number" || !Number.isSafeInteger(revisionID) || revisionID < 1)
+    throw new Error("Verification has an invalid pinned profile revision")
+  const cached = cache.get(revisionID)
+  if (cached) return cached
+  const profile = profileRevisionByID(profileReader(db), revisionID)
+  if (!profile) throw new Error(`Pinned verification profile revision ${revisionID} is unavailable`)
+  const commands = checkRunProfile(profile).commands
+  cache.set(revisionID, commands)
+  return commands
+}
+
 function makeCandidate(input: {
   key: string
   checkValue: unknown
   workspace: unknown
   startTime: unknown
   deadline?: unknown
+  profileCommands?: ProfileCommands
   receipt: CandidateReceipt
 }): VerificationProcessCandidate {
   const check = parseCheck(input.checkValue, input.key)
@@ -121,7 +150,7 @@ function makeCandidate(input: {
     throw new Error(`Verification ${input.key} is missing workspace evidence`)
   const workspace = canonicalPath(input.workspace)
   const command = check.command as string
-  const phases = recognizedVerificationPhases(command)
+  const phases = recognizedVerificationPhases(command, input.profileCommands)
   const synthetic = command === SYNTHETIC_FALLOW_COMMAND
   const processCommands = synthetic
     ? []
@@ -196,6 +225,7 @@ function effectCandidates(db: Database): VerificationProcessCandidate[] {
     throw new Error("Verification effect start-time evidence is unavailable")
 
   const starts = intentTimeMap(db)
+  const profiles = new Map<number, ProfileCommands>()
   return rows.map((row) => {
     const payload = parseEffectPayload(row.payload, row.id)
     const receiptPath = typeof payload.receiptPath === "string" ? payload.receiptPath : undefined
@@ -205,6 +235,7 @@ function effectCandidates(db: Database): VerificationProcessCandidate[] {
       workspace: payload.workspace,
       startTime: starts.get(row.id),
       deadline: payload.verificationDeadline,
+      profileCommands: pinnedProfileCommands(db, payload.profileRevisionID, profiles),
       receipt: { databaseReceipt: row.receipt, receiptPath },
     })
   })
