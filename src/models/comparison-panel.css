@@ -1025,8 +1025,16 @@ span.lazers-models-assignment-route {
   text-underline-offset: 2px;
 }
 
-.lazers-models-all-models tr[data-frontier] td:nth-child(3) {
+/* The catalog's best trade-off is decided on the projected cost: that cell carries the accent. */
+.lazers-models-all-models tr[data-frontier] .lazers-models-cost[data-basis="projected"] {
   color: var(--text-interactive-base, var(--text-base));
+}
+
+/* Scores right-aligned in equal-width digits; an absent score is an empty cell in the column. */
+.lazers-models-all-models .lazers-models-score-cell {
+  min-width: 3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* The Projected ranking: a fixed axis over rows that scroll inside the chart area. */

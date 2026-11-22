@@ -76,7 +76,9 @@ export function AllModelsTable(props: {
               </th>
               <th scope="col">Tokens</th>
               <th scope="col">Accepted</th>
-              <th scope="col">Score</th>
+              <th scope="col" class="lazers-models-score-cell">
+                Score
+              </th>
               <th scope="col">Prices</th>
             </tr>
           </thead>
