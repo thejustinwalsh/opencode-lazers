@@ -12,7 +12,12 @@
 }
 .lazers-trajectory {
   --trajectory-inset: 16px;
-  --trajectory-label: 88px;
+  --trajectory-label-min: 88px;
+  /* Name and count widths measured by the panel, plus the cell's inset, gap and right padding. */
+  --trajectory-label: max(
+    var(--trajectory-label-min),
+    calc(var(--trajectory-label-fit, 0px) + var(--trajectory-inset) + 16px)
+  );
   --trajectory-row: 30px;
   --trajectory-ruler: 24px;
   --trajectory-mono: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
@@ -868,7 +873,7 @@
 @container lazers-trajectory (max-width: 380px) {
   .lazers-trajectory {
     --trajectory-inset: 12px;
-    --trajectory-label: 80px;
+    --trajectory-label-min: 80px;
   }
   .lazers-trajectory-label-cell {
     gap: 4px;
@@ -878,7 +883,7 @@
 @container lazers-trajectory (min-width: 560px) {
   .lazers-trajectory {
     --trajectory-inset: 16px;
-    --trajectory-label: 96px;
+    --trajectory-label-min: 96px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
