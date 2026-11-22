@@ -47,7 +47,7 @@ const TABLES_SQL = `
     ord INTEGER NOT NULL, reference_ord INTEGER, configuration_id TEXT NOT NULL, label TEXT,
     x REAL, y REAL, frontier INTEGER NOT NULL, point TEXT, reference TEXT,
     group_id TEXT NOT NULL, display_label TEXT NOT NULL, chart TEXT, chart_reference TEXT,
-    inspection TEXT NOT NULL,
+    cost TEXT, inspection TEXT NOT NULL,
     digest TEXT NOT NULL,
     UNIQUE(view_id, configuration_id)
   );
@@ -251,6 +251,7 @@ export function writeDecisionView(
       point.displayLabel,
       json(point.chart),
       json(point.chartReference),
+      json(point.cost),
       JSON.stringify(point.inspection),
     ],
   }))
@@ -298,6 +299,7 @@ export function writeDecisionView(
     "display_label",
     "chart",
     "chart_reference",
+    "cost",
     "inspection",
   ]
   for (const [index, page] of pages(entries).entries())

@@ -186,7 +186,7 @@ test("Benchmark plot, Projected ranking and scatter, details and tooltips all sh
   const entry = entries[0]!
   expect(entry.price).toMatchObject({ source: "openrouter", input: 10, output: 50 })
   // Ranking row and scatter point come from the entry, so they carry the same price.
-  expect(entry.projection!.usd).toBeCloseTo(
+  expect(entry.projected.low!).toBeCloseTo(
     (profile.uncachedInput * 10 + profile.output * 50) / 1e6,
     9,
   )
@@ -262,7 +262,7 @@ test("GLM-5.3, Qwen3.8 Max, Muse and Inkling are scored and priced, so each plot
   expect(source("qwen3.8-max")).toBe("openrouter")
   expect(source("muse-spark-1.3-contributor")).toBe("models-dev")
   const { entries } = catalogOf(scored)
-  const scatter = entries.filter((e) => e.projection && e.score !== null)
+  const scatter = entries.filter((e) => e.projected.kind !== "none" && e.score !== null)
   expect(scatter.map((e) => e.route.modelID).sort()).toEqual(
     baseline.points.map((p) => p.route.modelID).sort(),
   )

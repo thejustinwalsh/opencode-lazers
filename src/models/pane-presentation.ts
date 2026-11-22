@@ -1,4 +1,6 @@
 import type { ModelDecisionInspect } from "./decision-contract.ts"
+import { COST_BASIS_LABEL, costText } from "./configuration-cost.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import type { ModelDecisionContributor } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import type { BenchmarkPrice, BenchmarkScores, BenchmarkRoute } from "./benchmark-baseline.ts"
@@ -160,7 +162,8 @@ export type SourceRow = { name: string; detail?: string; time?: string }
 export type IdentifierItem = { label: string; value?: string | null }
 
 export type SelectedFacts = {
-  priceRange?: { minimum: number; maximum: number }
+  /** The configuration's stored cost; the headline writes it as every view does. */
+  cost?: ConfigurationCost
   accepted?: number
   terminal?: number
   tokens?: string
@@ -174,10 +177,10 @@ function isSmallSample(terminal: number | undefined) {
 }
 
 export function runsHeadline(facts: SelectedFacts | undefined): Headline | undefined {
-  if (!facts?.priceRange) return undefined
+  if (!facts?.cost || facts.cost.kind === "none") return undefined
   return {
-    value: headlineRange(facts.priceRange),
-    unit: "per accepted task",
+    value: costText(facts.cost),
+    unit: `per accepted task · ${COST_BASIS_LABEL[facts.cost.basis]}`,
     smallSample: isSmallSample(facts.terminal),
   }
 }

@@ -561,11 +561,11 @@ export function compactDuration(milliseconds: number) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`
 }
 
+import type { ConfigurationCost } from "./configuration-cost.ts"
+
 export type SelectedModelFacts = {
-  /** Rounded price range per accepted task; absent when no complete price exists. */
-  price?: string
-  /** The same range unrounded, for the pane's two-decimal headline. */
-  priceRange?: { minimum: number; maximum: number }
+  /** The configuration's stored cost (observed basis); absent when no source prices it. */
+  cost?: ConfigurationCost
   accepted?: number
   terminal?: number
   tokens?: string
@@ -576,33 +576,16 @@ export type SelectedModelFacts = {
 
 /** The facts the first view of a selected model shows; a missing fact is absent, never labelled. */
 export function selectedModelFacts(input: {
-  estimate: ModelDecisionEstimate
-  referenceEstimate?: ModelDecisionReferenceEstimate
+  /** The configuration's stored cost: the one every view of it shows. */
+  cost: ConfigurationCost | null
   efficiency: ModelDecisionEfficiency
   cohort: ModelDecisionCohortCounts
   medianDurationMs?: number
 }): SelectedModelFacts {
-  const { estimate, referenceEstimate, efficiency, cohort } = input
+  const { cost, efficiency, cohort } = input
   const facts: SelectedModelFacts = {}
   if (cohort.acceptedTaskCount < 1) return facts
-
-  let range: { minimum: number; maximum: number } | undefined
-  if (estimate.status === "available" || estimate.status === "single-observation")
-    range = estimate.range.currentMarketUSD
-  else if (
-    referenceEstimate?.status === "exact" &&
-    referenceEstimate.valueUSDPerAcceptedTask !== null
-  )
-    range = {
-      minimum: referenceEstimate.valueUSDPerAcceptedTask,
-      maximum: referenceEstimate.valueUSDPerAcceptedTask,
-    }
-  else if (referenceEstimate?.status === "conditional" && referenceEstimate.rangeUSDPerAcceptedTask)
-    range = referenceEstimate.rangeUSDPerAcceptedTask
-  if (range) {
-    facts.price = formatPriceRange(range)
-    facts.priceRange = range
-  }
+  if (cost && cost.kind !== "none") facts.cost = cost
 
   facts.accepted = cohort.acceptedTaskCount
   facts.terminal = cohort.terminalTaskCount

@@ -204,7 +204,8 @@ export const schemaModules = {
     tables: ["model_candidates", "model_candidate_sets", "model_candidates_dirty"],
   },
   "model-decision-views": {
-    generation: 1,
+    // 2: a configuration's stored cost (`model_decision_points.cost`, `configurationCost`).
+    generation: 2,
     source: "src/models/decision-store.ts",
     tables: [
       "model_decision_views",

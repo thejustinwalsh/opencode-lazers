@@ -6,7 +6,14 @@ import type {
   BenchmarkRoute,
   BenchmarkSourceDates,
 } from "./benchmark-baseline.ts"
-import { catalogFor, chartPoints, chartReferences, modelDisplayLabeler } from "./catalog-inputs.ts"
+import {
+  catalogFor,
+  chartPoints,
+  chartReferences,
+  modelDisplayLabeler,
+  observedCosts,
+} from "./catalog-inputs.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import { entryCost } from "./catalog-projection.ts"
 import type { CatalogEntry, CatalogSummary } from "./catalog-projection.ts"
@@ -91,6 +98,8 @@ export type DecisionViewPointRow = {
   displayLabel: string
   chart: ComparisonChartPoint | null
   chartReference: ComparisonChartReference | null
+  /** The configuration's one displayed cost (`configurationCost`, observed basis). */
+  cost: ConfigurationCost | null
   inspection: DecisionInspectionFacts
 }
 
@@ -167,7 +176,17 @@ export function buildDecisionView(input: {
   const { overview } = input.parts
   const candidates = input.set?.candidates ?? []
   const external = input.set?.external ?? []
+  // Each configuration's cost, computed once: the point rows store it and the catalog's observed
+  // facts carry the same object, so every view reads one number per configuration.
+  const routes = new Map(
+    input.parts.inspections.map((item) => [
+      item.configuration.configurationID,
+      item.configuration.route,
+    ]),
+  )
+  const costs = observedCosts(overview, (configurationID) => routes.get(configurationID))
   const catalog = catalogFor({
+    costs,
     candidates,
     // The native catalog's names are the candidates' own: the same `model.list` records.
     catalog: [],
@@ -241,6 +260,7 @@ export function buildDecisionView(input: {
       displayLabel: displayLabel(inspection.configuration.route),
       chart: chartByID.get(configurationID) ?? null,
       chartReference: chartRefByID.get(configurationID) ?? null,
+      cost: costs.get(configurationID) ?? null,
       inspection,
     })
   }
@@ -262,8 +282,25 @@ export function buildDecisionView(input: {
     external,
     label: (route) => label({ ...route, variant: null }),
   })
+  // A Benchmark point carries its model's stored costs, the catalog entry's own objects.
+  const entryOf = new Map<string, CatalogEntry>()
+  for (const entry of catalog.entries) {
+    entryOf.set(entry.id, entry)
+    entryOf.set(routeKey(entry.route), entry)
+  }
   const benchmarkRows: DecisionViewBenchmarkRow[] = [
-    ...baseline.points.map((point) => ({ kind: "point" as const, detail: point })),
+    ...baseline.points.map((point) => {
+      const entry = entryOf.get(point.id) ?? entryOf.get(routeKey(point.route))
+      return {
+        kind: "point" as const,
+        detail: entry
+          ? {
+              ...point,
+              costs: { observed: entry.observed?.cost ?? null, projected: entry.projected },
+            }
+          : point,
+      }
+    }),
     ...baseline.gaps.map((gap) => ({ kind: "gap" as const, detail: gap })),
   ].map(({ kind, detail }, ord) => ({
     ord,

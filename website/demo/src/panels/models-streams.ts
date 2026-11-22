@@ -147,6 +147,7 @@ function viewSourceRows(view: DecisionViewRows, open: Open): DemoRow[] {
           reference: point.reference,
           chart: point.chart,
           chart_reference: point.chartReference,
+          cost: point.cost,
           inspection: point.inspection,
         })),
       )

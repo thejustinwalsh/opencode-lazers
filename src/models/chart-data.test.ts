@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { observedCostFixture, projectedCostFixture } from "./cost.fixture.ts"
 import { chooseScoreBasis, scoreOn, scoreOptions } from "./public-score.ts"
 import { SMALL_SAMPLE_TERMINAL_TASKS, layoutChart } from "./chart-layout.ts"
 import {
@@ -10,6 +11,25 @@ import {
 } from "./chart-data.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import type { CatalogEntry } from "./catalog-projection.ts"
+import type { ComparisonChartData } from "./chart-data.ts"
+import { configurationCost } from "./configuration-cost.ts"
+
+/** Each configuration's stored cost, as the decision worker computes it. */
+const costsOf = (data: ComparisonChartData) => {
+  const references = new Map((data.references ?? []).map((item) => [item.configurationID, item]))
+  const points = new Map(data.points.map((item) => [item.configurationID, item]))
+  return (id: string) =>
+    configurationCost({
+      basis: "observed",
+      route: { providerID: "p", modelID: id, variant: null },
+      point: points.get(id) ?? null,
+      reference: references.get(id)?.estimate ?? null,
+      tokensPerAcceptedTask: references.get(id)?.tokensPerAcceptedTask ?? null,
+      market: { source: "openrouter", retrievedAt: null },
+    })
+}
+const drawObserved = (data: ComparisonChartData, source: string) =>
+  observedChartPoints(data, source, costsOf(data))
 
 const point = (
   id: string,
@@ -48,7 +68,8 @@ const reference = (
       rangeUSDPerAcceptedTask: null,
       knownSubtotalUSDPerAcceptedTask: null,
       knownSubtotalRangeUSDPerAcceptedTask: null,
-      provenance: { freshness: "current" },
+      provenance: { freshness: "current", source: "openrouter-models", retrievedAt: null },
+      coverage: { categories: {} },
       ...estimate,
     },
   }) as never
@@ -82,7 +103,7 @@ test("a small sample still counts toward the frontier and is flagged, not exclud
   expect(marks.map((mark) => mark.configurationID)).toEqual(["thin", "steady"])
   // One accepted task is enough to be eligible: the frontier is drawn even for a tiny install.
   expect(ids(marks)).toEqual(["thin"])
-  const [thin, steady] = observedChartPoints(data, "OpenRouter")
+  const [thin, steady] = drawObserved(data, "OpenRouter")
   expect(thin!.tooltip).toContain("small sample · 1 of 1")
   expect(steady!.tooltip.join(" ")).not.toContain("small sample")
   expect(thin!.frontier).toBe(true)
@@ -169,7 +190,7 @@ test("live Bug repair: the two plotted points are catalog references with no obs
     ["luna", true],
     ["sol", true],
   ])
-  const drawn = observedChartPoints(
+  const drawn = drawObserved(
     { points: [], references: [luna, sol], frontierConfigurationIDs: [] },
     "OpenRouter",
   )
@@ -177,7 +198,7 @@ test("live Bug repair: the two plotted points are catalog references with no obs
 })
 
 test("an observed point's tooltip names model, cost, tokens, accepted n of m and source", () => {
-  const [chartPoint] = observedChartPoints(
+  const [chartPoint] = drawObserved(
     {
       points: [point("luna", 6.2e6, 0.5, 9, 11, { label: "GPT-6 Luna" })],
       references: [
@@ -192,13 +213,19 @@ test("an observed point's tooltip names model, cost, tokens, accepted n of m and
   )
   expect(chartPoint!.tooltip).toEqual([
     "GPT-6 Luna",
-    "$0.35–$0.67 per accepted task",
+    "Observed in your runs: $0.35–$0.67 per accepted task",
     "6.2M tokens per accepted task",
     "9 of 11 accepted",
     "OpenRouter prices",
   ])
-  expect(chartPoint).toMatchObject({ x: 6.2e6, y: 0.5, frontier: true })
-  expect(chartPoint!.description).toContain("exact route p / luna")
+  // A range is a whisker from low to high with the mark at its midpoint, never at the low end.
+  expect(chartPoint).toMatchObject({
+    x: 6.2e6,
+    y: 0.51,
+    range: { axis: "y", low: 0.35, high: 0.67 },
+    frontier: true,
+  })
+  expect(chartPoint!.description).toContain("Observed in your runs: $0.35–$0.67")
 })
 
 const entry = (id: string, extra: Partial<CatalogEntry> = {}): CatalogEntry => ({
@@ -216,7 +243,7 @@ const entry = (id: string, extra: Partial<CatalogEntry> = {}): CatalogEntry => (
     appliesBelowTokens: null,
     retrievedAt: "2026-11-17T12:00:00.000Z",
   },
-  projection: { usd: 0.8, cacheAtInputRate: false },
+  projected: projectedCostFixture(0.8),
   score: 61,
   contextTokens: null,
   observed: null,
@@ -224,18 +251,28 @@ const entry = (id: string, extra: Partial<CatalogEntry> = {}): CatalogEntry => (
   ...extra,
 })
 
-test("projected points need a projection and a score; observed models carry a ring", () => {
+test("projected points need a projection and a score; an observed cost is its own ring", () => {
   const points = projectedChartPoints([
     entry("scored"),
     entry("no-score", { score: null }),
-    entry("no-price", { projection: null, price: null }),
+    entry("no-price", { projected: projectedCostFixture(null), price: null }),
     entry("backed", {
       tags: ["observed", "catalog"],
-      observed: { configurationID: "c", usd: 0.9, tokens: 6e6, accepted: 9, terminal: 11 },
+      observed: {
+        configurationID: "c",
+        cost: observedCostFixture(0.9),
+        tokens: 6e6,
+        accepted: 9,
+        terminal: 11,
+      },
     }),
   ])
   expect(points.map((chartPoint) => chartPoint.id)).toEqual(["scored", "backed"])
-  expect(points.map((chartPoint) => chartPoint.backed)).toEqual([false, true])
+  // The ring sits at the observed cost, never at the projected one.
+  expect(points.map((chartPoint) => chartPoint.observed)).toEqual([
+    undefined,
+    { value: 0.9, low: 0.9, high: 0.9 },
+  ])
   expect(points[0]).toMatchObject({ x: 0.8, y: 61 })
   expect(points[0]!.tooltip).toContain("Coding index 61")
   expect(points[1]!.tooltip.join(" ")).toContain("9 of 11 accepted")
@@ -276,20 +313,27 @@ test("benchmark points mark the price and score frontier", () => {
 
 test("the projected ranking lists every priced model cheapest first, scored or not", () => {
   const rows = projectedRankRows([
-    entry("dear", { projection: { usd: 14.4, cacheAtInputRate: false }, score: null }),
-    entry("unpriced", { projection: null, price: null }),
-    entry("cheap", { projection: { usd: 0.4, cacheAtInputRate: false }, score: 42 }),
+    entry("dear", { projected: projectedCostFixture(14.4), score: null }),
+    entry("unpriced", { projected: projectedCostFixture(null), price: null }),
+    entry("cheap", { projected: projectedCostFixture(0.4), score: 42 }),
     entry("backed", {
-      projection: { usd: 2, cacheAtInputRate: false },
+      projected: projectedCostFixture(2),
       score: null,
       tags: ["observed"],
-      observed: { configurationID: "c", usd: 2.1, tokens: 1e6, accepted: 2, terminal: 2 },
+      observed: {
+        configurationID: "c",
+        cost: observedCostFixture(2.1),
+        tokens: 1e6,
+        accepted: 2,
+        terminal: 2,
+      },
     }),
   ])
   // No score is needed to appear: the ranking exists whenever any source prices anything.
   expect(rows.map((row) => row.id)).toEqual(["cheap", "backed", "dear"])
-  expect(rows.map((row) => row.backed)).toEqual([false, true, false])
-  expect(rows[0]!.tooltip).toContain("Projected ≈$0.4 per accepted task")
+  expect(rows.map((row) => row.observed?.value)).toEqual([undefined, 2.1, undefined])
+  expect(rows[0]!.tooltip).toContain("Projected from list prices × your median tokens: $0.4")
+  expect(rows[1]!.tooltip.join(" ")).toContain("Observed in your runs: $2.1")
   expect(projectedRankRows([])).toEqual([])
 })
 
@@ -304,7 +348,7 @@ test("live Bug repair points: partial cohorts with no terminal count are both on
     frontierConfigurationIDs: [],
   })
   expect(ids(marks)).toEqual(["gpt-6.1-sol default", "gpt-6-luna max"])
-  const drawn = observedChartPoints(
+  const drawn = drawObserved(
     {
       points: [
         point("gpt-6.1-sol default", 19e6, 4.05, 1, undefined, { partial: true }),
@@ -328,10 +372,10 @@ test("live Bug repair points: partial cohorts with no terminal count are both on
 
 test("the cost-vs-score scatter puts cost on x and the score on y, best at the upper left", () => {
   const entries = [
-    entry("cheap-weak", { score: 40, projection: { usd: 0.5, cacheAtInputRate: false } }),
-    entry("mid", { score: 60, projection: { usd: 1.5, cacheAtInputRate: false } }),
-    entry("dear-strong", { score: 80, projection: { usd: 4, cacheAtInputRate: false } }),
-    entry("dominated", { score: 50, projection: { usd: 3, cacheAtInputRate: false } }),
+    entry("cheap-weak", { score: 40, projected: projectedCostFixture(0.5) }),
+    entry("mid", { score: 60, projected: projectedCostFixture(1.5) }),
+    entry("dear-strong", { score: 80, projected: projectedCostFixture(4) }),
+    entry("dominated", { score: 50, projected: projectedCostFixture(3) }),
   ]
   // The frontier is cost down, score up: `dominated` costs more than `mid` and scores less.
   const withFrontier = entries.map((item) => ({

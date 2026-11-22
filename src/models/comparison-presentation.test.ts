@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test"
+import { configurationCost, costText } from "./configuration-cost.ts"
+import { observedCostFixture } from "./cost.fixture.ts"
 import { inspectTrajectory } from "../trajectory/read.ts"
 import { InspectTrajectoryInput } from "../trajectory/schema.ts"
 import { makeFixture, cursorSecret, taskID } from "../../test/trajectory/fixture.ts"
@@ -465,18 +467,10 @@ test("market summaries never name an unknown age or retrieval date", () => {
   )
 })
 
-test("the selected-model facts are a rounded price range, counts and per-task averages", () => {
+test("the selected-model facts are the stored cost, counts and per-task averages", () => {
+  const cost = observedCostFixture(0.35, 0.67)
   const facts = selectedModelFacts({
-    estimate: {
-      status: "available",
-      basis: "empirical-observed-spread",
-      observationCount: 9,
-      range: {
-        tokens: { minimum: 5_000_000, maximum: 7_000_000 },
-        currentMarketUSD: { minimum: 0.35, maximum: 0.67 },
-      },
-      confidenceInterval: null,
-    } as unknown as ModelDecisionEstimate,
+    cost,
     efficiency: {
       status: "available",
       tokensPerAcceptedTask: 6_200_000,
@@ -493,8 +487,7 @@ test("the selected-model facts are a rounded price range, counts and per-task av
     medianDurationMs: 14 * 60_000,
   })
   expect(facts).toEqual({
-    price: "$0.35 – 0.67",
-    priceRange: { minimum: 0.35, maximum: 0.67 },
+    cost,
     accepted: 9,
     terminal: 11,
     tokens: "6.2M",
@@ -509,13 +502,19 @@ test("the selected-model facts are a rounded price range, counts and per-task av
   expect(compactCount(930)).toBe("930")
 })
 
-test("a partial price is omitted from the facts rather than shown as a price", () => {
+test("a partial price is a lower bound; an unpriced configuration has no price at all", () => {
   const facts = selectedModelFacts({
-    estimate: marketEstimate("partial", { minimum: 0.1, maximum: 0.2 }),
-    referenceEstimate: referenceEstimate({
-      status: "partial",
-      valueUSDPerAcceptedTask: null,
-      knownSubtotalUSDPerAcceptedTask: 0.00000005,
+    cost: configurationCost({
+      basis: "observed",
+      route: { providerID: "p", modelID: "m", variant: null },
+      point: null,
+      reference: referenceEstimate({
+        status: "partial",
+        valueUSDPerAcceptedTask: null,
+        knownSubtotalUSDPerAcceptedTask: 0.05,
+      }),
+      tokensPerAcceptedTask: null,
+      market: { source: "openrouter", retrievedAt: null },
     }),
     efficiency: {
       status: "partial",
@@ -530,13 +529,27 @@ test("a partial price is omitted from the facts rather than shown as a price", (
       retryAttemptCount: 4,
     } as never,
   })
-  expect(facts.price).toBeUndefined()
+  expect(costText(facts.cost)).toBe("≥$0.05")
+  expect(
+    selectedModelFacts({
+      cost: configurationCost({
+        basis: "observed",
+        route: { providerID: "p", modelID: "m", variant: null },
+        point: null,
+        reference: null,
+        tokensPerAcceptedTask: null,
+        market: { source: null, retrievedAt: null },
+      }),
+      efficiency: {} as never,
+      cohort: { acceptedTaskCount: 1, terminalTaskCount: 1, attemptCount: 1 } as never,
+    }).cost,
+  ).toBeUndefined()
   expect(facts.time).toBeUndefined()
   expect(facts.tokens).toBeUndefined()
   expect(facts.accepted).toBe(1)
   expect(
     selectedModelFacts({
-      estimate: marketEstimate("zero-accepted", null),
+      cost: null,
       efficiency: {} as never,
       cohort: { acceptedTaskCount: 0, terminalTaskCount: 3, attemptCount: 3 } as never,
     }),

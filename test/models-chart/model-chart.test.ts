@@ -101,14 +101,34 @@ test("a wide spread of token counts switches x to a log scale and says so in the
   expect(linear).not.toContain(" · log")
 })
 
-test("catalog projections show a ring for models backed by the user's own runs", () => {
-  const html = render([point("a", 61, 0.8, { backed: true }), point("b", 50, 0.5)], null, {
-    xScale: "linear",
-    backedLegend: "From your runs",
-  })
-  expect(html).toContain("lazers-chart-ring")
-  expect(html).toContain("From your runs")
+test("a projection's observed cost is its own ring and whisker, named by its basis", () => {
+  const html = render(
+    [
+      point("a", 61, 0.8, { observed: { value: 0.83, low: 0.57, high: 1.09 } }),
+      point("b", 50, 0.5),
+    ],
+    null,
+    { xScale: "linear", observedLegend: "Observed in your runs" },
+  )
   expect(html.match(/lazers-chart-ring/g)).toHaveLength(1)
+  expect(html).toContain("data-observed")
+  expect(html.match(/lazers-chart-whisker/g)).toHaveLength(1)
+  expect(html).toContain("Observed in your runs")
+})
+
+test("a cost range is drawn as a whisker with the mark inside it, never at the low end", () => {
+  const html = render(
+    [point("a", 5e6, 0.83, { range: { axis: "y", low: 0.57, high: 1.09 } })],
+    null,
+  )
+  expect(html).toContain("data-range")
+  const whisker = html.match(/data-range x1="([\d.]+)" y1="([\d.]+)" x2="[\d.]+" y2="([\d.]+)"/)
+  const mark = html.match(/class="lazers-chart-mark" cx="[\d.]+" cy="([\d.]+)"/)
+  expect(whisker && mark).toBeTruthy()
+  const [low, high] = [Number(whisker![2]), Number(whisker![3])]
+  const at = Number(mark![1])
+  expect(at).toBeLessThan(low)
+  expect(at).toBeGreaterThan(high)
 })
 
 test("an empty plot says what is missing and offers the next step", () => {
@@ -127,9 +147,15 @@ test("the ranking draws one focusable row per model, with rings, a halo and a sc
     "/src/models/model-chart.tsx",
   )) as typeof import("../../src/models/model-chart.tsx")
   const rows = [
-    { id: "a", label: "Cheap", value: 0.4, score: 42, backed: false },
-    { id: "b", label: "Backed", value: 2, score: 61, backed: true },
-    { id: "c", label: "Dear", value: 14.4, score: null, backed: false },
+    { id: "a", label: "Cheap", value: 0.4, score: 42 },
+    {
+      id: "b",
+      label: "Backed",
+      value: 2,
+      score: 61,
+      observed: { value: 2.1, low: 2.1, high: 2.1 },
+    },
+    { id: "c", label: "Dear", value: 14.4, score: null },
   ].map((row) => ({
     ...row,
     tooltip: [row.label],
@@ -143,7 +169,7 @@ test("the ranking draws one focusable row per model, with rings, a halo and a sc
       formatValue: (value: number) => `$${value}`,
       label: "Projected cost ranking",
       title: "Projected cost per accepted task",
-      backedLegend: "From your runs",
+      observedLegend: "Observed in your runs",
       showScore: true,
       caption: "List prices × your median tokens",
     }),
@@ -159,6 +185,6 @@ test("the ranking draws one focusable row per model, with rings, a halo and a sc
   // A fixed `$` axis, rows that scroll, and the legend naming the ring.
   expect(html).toContain("lazers-rank-axis")
   expect(html).toContain("max-height:264px")
-  expect(html).toContain("From your runs")
+  expect(html).toContain("Observed in your runs")
   expect(html).toContain("Projected cost per accepted task")
 })

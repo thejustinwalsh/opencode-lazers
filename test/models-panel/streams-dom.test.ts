@@ -305,10 +305,12 @@ test("prices: an unpriced model shows no price, a priced one its source and date
     day: "numeric",
   })
   const rows = rowsOf(root)
-  const opus = rows.find((row) => row.label === "Claude Opus 5.5")!
-  // The price cell is empty: never "unknown", never a zero. Its measured cost still shows.
+  const opus = rows.find((row) => row.label.startsWith("Claude Opus 5.5"))!
+  // The price cell and the projected cost are empty: never "unknown", never a zero. Its
+  // observed cost still shows.
   expect(opus.cells.at(-1)).toBe("")
-  expect(opus.cells[1]).toMatch(/^≈\$1\.\d+$/)
+  expect(opus.cells[1]).toMatch(/^\$1\.\d+$/)
+  expect(opus.cells[2]).toBe("")
   for (const row of rows.filter((entry) => entry !== opus))
     expect(row.cells.at(-1)).toBe(`OpenRouter \u00b7 ${retrieved}`)
   expect(text(root.querySelector("table")!)).not.toMatch(/unknown|\$0(?![.\d])/i)
@@ -337,6 +339,62 @@ test("prices: an unpriced model shows no price, a priced one its source and date
   expect(pane).toContain("Routeopenai/gpt-6.2-sol")
   expect(pane).toContain("OpenRouter price snapshotopenrouter-models:337")
   expect(text(root.querySelector(".lazers-models-pane-body")!)).toContain("Tokens / task1.1M")
+})
+
+test("one cost per configuration: table, Your runs, Projected and the pane say the same", async () => {
+  // DeepSeek's reference is partial: a priced subtotal range, shown as a range everywhere.
+  const { root } = mount({
+    comparison: unpriced(["claude-opus-5-5"]),
+    partial: ["deepseek-v4-pro"],
+    preferences: { open: true },
+  })
+  await until(() => rowsOf(root).length === 5, "the table")
+  const row = (name: string) =>
+    [...root.querySelectorAll("table tbody tr")].find((tr) =>
+      tr.querySelector("th")?.textContent?.startsWith(name),
+    )!
+  const cost = (tr: Element, basis: string) =>
+    tr.querySelector<HTMLElement>(`.lazers-models-cost[data-basis=${basis}]`)
+  const deepseek = cost(row("DeepSeek V4 Pro"), "observed")!
+  const range = deepseek.textContent!
+  expect(range).toMatch(/^\$0\.\d+–\$0\.\d+$/)
+  expect(deepseek.dataset.kind).toBe("range")
+  const projected = cost(row("DeepSeek V4 Pro"), "projected")!.textContent!
+  expect(projected).toMatch(/^\$0\.\d+$/)
+  // The row label names the exact effort its observed facts came from.
+  expect(row("Claude Opus 5.5").querySelector("th")!.textContent).toBe("Claude Opus 5.5 · high")
+  expect(row("Claude Opus 5.5").querySelector("button")!.getAttribute("title")).toBe(
+    "Claude Opus 5.5 · high",
+  )
+  // An unpriced model has no projected price element at all.
+  expect(cost(row("Claude Opus 5.5"), "projected")).toBeNull()
+
+  // Your runs: the point is a whisker from low to high, its accessible text the same range.
+  await until(() => pointIDs(root).length === 4, "the observed plot")
+  const point = root.querySelector('[data-point-id*="deepseek-v4-pro"]')!
+  expect(point.querySelector("[data-range]")).not.toBeNull()
+  expect(point.getAttribute("aria-label")).toContain(`Observed in your runs: ${range}`)
+
+  // The pane's headline is the same stored cost, labelled by its basis.
+  click(point)
+  await until(() => root.querySelector("h2[title*='deepseek-v4-pro']") !== null, "the pane")
+  await settle()
+  const body = text(root.querySelector(".lazers-models-pane-body")!)
+  expect(body).toContain(range)
+  expect(body).toContain("Observed in your runs")
+
+  // Projected: the bar is the projection; the observed range sits beside it with its own label.
+  click(root.querySelector("[data-segment=projected]")!)
+  await until(() => root.querySelector(".lazers-rank") !== null, "the projected ranking")
+  const rank = [...root.querySelectorAll(".lazers-rank-row")].find((g) =>
+    g.getAttribute("aria-label")?.startsWith("DeepSeek V4 Pro"),
+  )!
+  const label = rank.getAttribute("aria-label")!
+  expect(label).toContain(`Projected from list prices × your median tokens: ${projected}`)
+  expect(label).toContain(`Observed in your runs: ${range}`)
+  expect(rank.querySelector(".lazers-chart-ring[data-observed]")).not.toBeNull()
+  expect(rank.querySelector(".lazers-chart-whisker[data-observed]")).not.toBeNull()
+  expect(text(root.querySelector(".lazers-rank")!)).not.toContain("From your runs")
 })
 
 /** What each demo model scores: the Coding Index, and SWE-bench Verified (a fraction) for some. */
@@ -438,7 +496,7 @@ test("score basis: the picker lists the view's options and a pick reopens the vi
     )
   await until(() => picker().value === "swe-bench-verified", "the picker shows the new basis")
   // The ranking's score column now reads the SWE-bench scores (a percent).
-  await until(() => rowsOf(root).some((row) => row.cells[4] === "82"), "scores on the new basis")
+  await until(() => rowsOf(root).some((row) => row.cells[5] === "82"), "scores on the new basis")
 })
 
 test("assignments: sources read from the stream, a saved route is confirmed by the readback", async () => {
