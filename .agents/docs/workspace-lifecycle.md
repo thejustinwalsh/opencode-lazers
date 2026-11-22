@@ -142,10 +142,10 @@ separately authorizes a reviewed cleanup.
 
 ## Verification timing
 
-Checks default to 15 minutes without real stdout/stderr progress and a 60-minute
-total hard backstop, shared across recognized command phases. Project options
-`verificationInactivityTimeoutMs` and `verificationHardTimeoutMs`, or per-check
-`inactivityTimeoutMs` and `hardTimeoutMs`, override the defaults. Legacy
+Checks have no deadline by default; they run until they exit or are cancelled.
+Project options `verificationInactivityTimeoutMs` and `verificationHardTimeoutMs`,
+or per-check `inactivityTimeoutMs` (reset by real stdout/stderr progress) and
+`hardTimeoutMs` (shared across recognized command phases), set one. Legacy
 `timeoutMs` remains readable as authored history but never controls current
 execution. Receipts and inspection distinguish authored timing, resolved limits,
 amendment provenance and the actual timeout cause without exposing check output.

@@ -37,8 +37,8 @@ const TAKEOVER_SESSION_PREFIX = "lazers-takeover:"
  * How long the worker has to commit and write its handoff, from the request. A handoff is a
  * commit plus one tool call; a steered notice is read at the worker's next step boundary, and a
  * step can be a long command. Time, not turns: a worker mid-turn has no countable turns, and its
- * tool count does not bound wall time. Five minutes covers two ordinary steps and stays well
- * below the 15-minute check inactivity allowance the Architect would otherwise wait on.
+ * tool count does not bound wall time. Five minutes covers two ordinary steps. The Architect's
+ * takeover request is the authorization to stop the worker; the window only delays that stop.
  */
 const TAKEOVER_HANDOFF_WINDOW_MS = 5 * 60_000
 /** After the window, a busy worker is interrupted and given this long to go quiet. */

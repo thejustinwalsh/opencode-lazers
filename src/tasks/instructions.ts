@@ -105,9 +105,7 @@ export function taskInstructions(detail: TaskDetail, profile?: ActiveProfile): s
       "Verification",
       proposal.verification.map((check) => {
         const timing = (value: number | undefined) =>
-          value === undefined
-            ? "project default (resolved by runtime at execution)"
-            : `${value}ms (authored)`
+          value === undefined ? "none unless the project sets one" : `${value}ms (authored)`
         const values = [
           `inactivity allowance: ${timing(check.inactivityTimeoutMs)}`,
           `hard backstop: ${timing(check.hardTimeoutMs)}`,

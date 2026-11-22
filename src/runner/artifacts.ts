@@ -18,10 +18,6 @@ import { checkEnvironment, checkSucceeded } from "./checks.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
 import type { CheckRunProfile } from "../projects/profile-runtime.ts"
 import { withTestHangGuard } from "./test-hang-guard.ts"
-import {
-  DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
-  DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
-} from "./verification-timeout.ts"
 import type { VerificationDeadlineReceipt } from "./verification-timeout.ts"
 import { protectedPaths, type ScopeGuard } from "./scope.ts"
 import type { TaskProposal } from "../task.ts"
@@ -856,10 +852,14 @@ export async function runCheck(
   const environmentIdentity =
     options.environmentIdentity ?? verificationEnvironmentIdentity(options.profile?.identity)
   const startedAt = Date.now()
-  const inactivityTimeoutMs =
-    check.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS
-  const hardTimeoutMs = check.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS
-  if (inactivityTimeoutMs > hardTimeoutMs)
+  // Deadlines exist only when the check or its project set one; otherwise the check runs until it
+  // exits or is cancelled.
+  const { inactivityTimeoutMs, hardTimeoutMs } = check
+  if (
+    inactivityTimeoutMs !== undefined &&
+    hardTimeoutMs !== undefined &&
+    inactivityTimeoutMs > hardTimeoutMs
+  )
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
   let stopCause: RunnerCheckReceipt["stopCause"] = null
   const effectiveCommand = withTestHangGuard(check.command)
@@ -905,10 +905,14 @@ export async function runCheck(
     terminate()
   }
   const onAbort = () => terminateFor("cancelled")
-  const hardDeadline = options.hardDeadline ?? performance.now() + hardTimeoutMs
-  const inactivityDeadline = options.inactivityDeadline ?? {
-    value: performance.now() + inactivityTimeoutMs,
-  }
+  const hardDeadline =
+    options.hardDeadline ??
+    (hardTimeoutMs === undefined ? undefined : performance.now() + hardTimeoutMs)
+  const inactivityDeadline =
+    options.inactivityDeadline ??
+    (inactivityTimeoutMs === undefined
+      ? undefined
+      : { value: performance.now() + inactivityTimeoutMs })
   let hardTimer: ReturnType<typeof setTimeout> | undefined
   let inactivityTimer: ReturnType<typeof setTimeout> | undefined
   const armDeadline = (
@@ -925,23 +929,27 @@ export async function runCheck(
       setTimeout(() => armDeadline(cause, deadline, setTimer), Math.min(remaining, 2147483647)),
     )
   }
-  const armInactivity = () =>
+  const armInactivity = () => {
+    if (inactivityDeadline === undefined) return
     armDeadline("inactivity", inactivityDeadline.value, (timer) => {
       if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
       inactivityTimer = timer
     })
+  }
   const onProgress = () => {
-    if (stopCause !== null) return
-    inactivityDeadline.value = performance.now() + inactivityTimeoutMs
+    if (stopCause !== null || inactivityDeadline === undefined) return
+    if (inactivityTimeoutMs !== undefined)
+      inactivityDeadline.value = performance.now() + inactivityTimeoutMs
     if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
     armInactivity()
   }
   options.signal?.addEventListener("abort", onAbort, { once: true })
   if (options.signal?.aborted) onAbort()
-  armDeadline("hard-backstop", hardDeadline, (timer) => {
-    clearTimeout(hardTimer)
-    hardTimer = timer
-  })
+  if (hardDeadline !== undefined)
+    armDeadline("hard-backstop", hardDeadline, (timer) => {
+      clearTimeout(hardTimer)
+      hardTimer = timer
+    })
   armInactivity()
   try {
     const [stdout, initialStderr, initialExitCode] = await Promise.all([
@@ -1016,8 +1024,8 @@ export async function runCheck(
       exitCode,
       timedOut: stopCause === "inactivity" || stopCause === "hard-backstop",
       stopCause,
-      inactivityTimeoutMs,
-      hardTimeoutMs,
+      ...(inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs }),
+      ...(hardTimeoutMs === undefined ? {} : { hardTimeoutMs }),
       aborted:
         stopCause === "cancelled" || (options.signal?.aborted === true && stopCause === null),
       stdout,
@@ -1081,19 +1089,29 @@ export async function runDeclaredCheck(
   if (!commands) return runCheck(directory, artifact, check, receiptPath, options)
   const phases: CheckPhaseReceipt[] = []
   const startedAt = Date.now()
-  const inactivityTimeoutMs =
-    check.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS
-  const hardTimeoutMs = check.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS
-  if (inactivityTimeoutMs > hardTimeoutMs)
+  const { inactivityTimeoutMs, hardTimeoutMs } = check
+  if (
+    inactivityTimeoutMs !== undefined &&
+    hardTimeoutMs !== undefined &&
+    inactivityTimeoutMs > hardTimeoutMs
+  )
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
-  const deadline = options.hardDeadline ?? performance.now() + hardTimeoutMs
-  const inactivityDeadline = options.inactivityDeadline ?? {
-    value: performance.now() + inactivityTimeoutMs,
+  const deadline =
+    options.hardDeadline ??
+    (hardTimeoutMs === undefined ? undefined : performance.now() + hardTimeoutMs)
+  const inactivityDeadline =
+    options.inactivityDeadline ??
+    (inactivityTimeoutMs === undefined
+      ? undefined
+      : { value: performance.now() + inactivityTimeoutMs })
+  const deadlines = {
+    ...(inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs }),
+    ...(hardTimeoutMs === undefined ? {} : { hardTimeoutMs }),
   }
   let latest: RunnerCheckReceipt | undefined
   for (let index = 0; index < commands.length; index++) {
     const command = commands[index]!
-    if (options.signal?.aborted || deadline <= performance.now()) {
+    if (options.signal?.aborted || (deadline !== undefined && deadline <= performance.now())) {
       const cancelled = options.signal?.aborted === true
       latest = {
         id: check.id,
@@ -1108,8 +1126,7 @@ export async function runDeclaredCheck(
         exitCode: null,
         timedOut: !cancelled,
         stopCause: cancelled ? "cancelled" : "hard-backstop",
-        inactivityTimeoutMs,
-        hardTimeoutMs,
+        ...deadlines,
         aborted: cancelled,
         stdout: "",
         stderr: "",
@@ -1132,11 +1149,13 @@ export async function runDeclaredCheck(
       {
         ...check,
         command,
-        inactivityTimeoutMs,
-        hardTimeoutMs,
       },
       `${receiptPath}.phase-${index}.json`,
-      { ...options, hardDeadline: deadline, inactivityDeadline },
+      {
+        ...options,
+        ...(deadline === undefined ? {} : { hardDeadline: deadline }),
+        ...(inactivityDeadline === undefined ? {} : { inactivityDeadline }),
+      },
     )
     phases.push({
       command,
@@ -1166,8 +1185,7 @@ export async function runDeclaredCheck(
     artifact,
     inputIdentity: options.inputIdentity ?? artifact,
     startedAt,
-    inactivityTimeoutMs,
-    hardTimeoutMs,
+    ...deadlines,
     stopCause: latest.stopCause,
     stdout: phases.map((phase) => phase.stdout).join(""),
     stderr: phases.map((phase) => phase.stderr).join(""),
