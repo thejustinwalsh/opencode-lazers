@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { makeFixture, firstAttemptID, taskID } from "../../test/trajectory/fixture.ts"
 import { observationRevisionStamp } from "../core/stamp-gate.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { ensureObservationRevision } from "./source-revision.ts"
@@ -146,6 +146,58 @@ test("runner tool-count changes move the revision even when the repository water
       db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID)
     })
     expect(fixture.repository.version()).toBe(repositoryVersion)
+    expect(revisionOf(fixture)).not.toBe(revision)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("adoption and adoption-check changes move the observation revision", () => {
+  const fixture = makeFixture()
+  try {
+    let revision = revisionOf(fixture)
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_adoptions(
+            id,plan_id,task_id,request_id,owner,plan_version,task_revision,attempt_id,
+            node_state,attempt_state,old_artifact,descendant_commit,target_branch,landing_head,
+            reviewed_baseline,candidate_tree,input_fingerprint,environment_identity,reason,
+            combined_artifact,state,created_at,updated_at
+          ) VALUES(?,?,?,?,?,1,1,?,'accepted','accepted','old','descendant','main','landing',
+            'baseline','tree','input','environment','reason','combined','accepted',1,1)`,
+        )
+        .run(
+          "revision-adoption",
+          fixture.receipt.planID,
+          taskID,
+          "request",
+          "ses-owner",
+          firstAttemptID,
+        ),
+    )
+    expect(revisionOf(fixture)).not.toBe(revision)
+    revision = revisionOf(fixture)
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_adoption_checks(
+            adoption_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,
+            environment_identity,receipt_path,state,receipt,created_at
+          ) VALUES(?,'task','check','{}','/worktree','artifact','input','environment',
+            '/receipt','completed','{"exitCode":0}',1)`,
+        )
+        .run("revision-adoption"),
+    )
+    expect(revisionOf(fixture)).not.toBe(revision)
+    revision = revisionOf(fixture)
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          "UPDATE runner_adoption_checks SET receipt=? WHERE adoption_id=? AND phase='task' AND check_id='check'",
+        )
+        .run('{"exitCode":1}', "revision-adoption"),
+    )
     expect(revisionOf(fixture)).not.toBe(revision)
   } finally {
     fixture.close()

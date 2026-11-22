@@ -168,7 +168,6 @@ src/runner/takeover.ts:307 | star | runner_takeovers | takeovers of one attempt 
 src/runner/takeover.ts:640 | star | runner_takeovers | takeovers of one attempt or plan | SELECT t.* FROM runner_takeovers t JOIN runner_attempts a ON a.id=t.attempt_id WHERE t.pro
 src/runner/takeover.ts:685 | all | runner_evidence | verification receipts of one attempt | SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' ORDER BY rowid
 src/runner/verification-review.ts:696 | all | runner_evidence | verification receipts of one attempt | SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' ORDER BY rowid
-src/runner/worktree-cleanup.ts:464 | all | runner_attempts | attempts that name one workspace path | SELECT plan_id,id,task_id,session_id,state FROM runner_attempts WHERE project_directory=?
 src/storage.ts:315 | all | task_changes | one row per project from an indexed aggregate | SELECT project_directory, MAX(id) AS newest FROM task_changes GROUP BY project_directory
 src/storage.ts:976 | star | task_classifications | one row by request or review key | SELECT * FROM task_classifications WHERE project_directory=? AND request_id=?
 src/storage.ts:1029 | star | task_classifications | one row by request or review key | SELECT * FROM task_classifications WHERE project_directory=? AND request_id=?

@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
+import { observationRevisionStamp } from "../core/stamp-gate.ts"
 import { gitAsync, registeredWorktreePaths } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { WorktreeLocationRetirement } from "./host.ts"
@@ -25,16 +26,14 @@ import {
   cleanupAttemptWorkerOwnership,
   cleanupWorkerActivityBlockers,
 } from "./cleanup/worker-ownership.ts"
+import {
+  CleanupFactsCache,
+  currentWorktreeCleanupRetryFacts,
+  type CleanupFacts,
+  WORKTREE_CREATION_KINDS,
+} from "./cleanup/facts.ts"
 
 /** A cleanup blocker that the host can observe directly, so a short poll re-checks it. */
-const WORKTREE_CREATION_KINDS = [
-  "worktree",
-  "worktree-recovery",
-  "graph-worktree",
-  "adoption-task-worktree",
-  "adoption-combined-worktree",
-]
-
 /** What one owned worktree's removal carries between its steps and into its failure record. */
 type WorktreeCleanupRun = {
   plan: PlanRow
@@ -47,11 +46,14 @@ type WorktreeCleanupRun = {
   removalStarted: boolean
   retryFacts: string | undefined
   source: EffectRow | undefined
+  facts: CleanupFacts
 }
 
 class LiveActivityBlockedError extends Error {}
 
 export class WorktreeCleanup {
+  private readonly cleanupFactsCache: CleanupFactsCache
+
   constructor(
     private readonly runtime: {
       adoptionCheckReceiptMatches: AdoptionExecution["adoptionCheckReceiptMatches"]
@@ -68,7 +70,17 @@ export class WorktreeCleanup {
       store: TaskRuntime["store"]
       timed<T>(name: string, run: () => Promise<T>): Promise<T>
     },
-  ) {}
+  ) {
+    this.cleanupFactsCache = new CleanupFactsCache(runtime.directory, runtime.projectID)
+  }
+
+  cleanupFacts(planID: string): CleanupFacts {
+    return this.runtime.store.read((db) => this.cleanupFactsCache.read(db, planID))
+  }
+
+  dispose() {
+    this.cleanupFactsCache.clear()
+  }
 
   private assertAdoptionWorkspaceQuiescent(
     plan: PlanRow,
@@ -411,162 +423,34 @@ export class WorktreeCleanup {
       return "unavailable"
     }
   }
-  pendingOwnedWorktreeCleanup(plan: PlanRow): boolean {
-    const creationKinds = new Set([
-      "worktree",
-      "worktree-recovery",
-      "graph-worktree",
-      "adoption-task-worktree",
-      "adoption-combined-worktree",
-    ])
-    const effects = this.runtime.store.effects(plan.id)
-    return effects.some((effect) => {
-      if (!creationKinds.has(effect.kind) || effect.state !== "completed" || !effect.receipt)
-        return false
-      try {
-        const workspace = JSON.parse(effect.receipt).workspace
-        return (
-          typeof workspace === "string" &&
-          !effects.some(
-            (candidate) =>
-              candidate.kind === "worktree-remove" &&
-              JSON.parse(candidate.payload).workspace === workspace &&
-              candidate.state === "completed",
-          )
-        )
-      } catch {
-        return false
-      }
-    })
+  pendingOwnedWorktreeCleanup(facts: CleanupFacts): boolean {
+    return facts.pending
   }
 
   worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, workspace: string): string {
-    const target = resolve(workspace)
-    const effects = this.runtime.store
-      .effects(plan.id)
-      .filter((effect) => effect.kind !== "worktree-remove")
-    const attempts = this.runtime.store
-      .attempts(plan.id)
-      .filter((attempt) => resolve(attempt.workspace) === target)
-    const sessions = attempts.map((attempt) => ({
-      sessionID: attempt.session_id,
-      assignment: this.runtime.progress.assignmentForSession(attempt.session_id) ?? null,
-    }))
-    const owners = this.runtime.store.atomic((db) =>
-      db
-        .query<
-          { plan_id: string; id: string; task_id: string; session_id: string; state: string },
-          [string, string]
-        >(
-          `SELECT plan_id,id,task_id,session_id,state FROM runner_attempts
-           WHERE project_directory=? AND workspace=? ORDER BY plan_id,id`,
-        )
-        .all(this.runtime.directory, workspace),
+    return this.runtime.store.read((db) =>
+      currentWorktreeCleanupRetryFacts(
+        db,
+        this.runtime.directory,
+        this.runtime.projectID,
+        plan.id,
+        source,
+        workspace,
+      ),
     )
-    let adoptionFacts: unknown = null
-    try {
-      const payload = JSON.parse(source.payload) as { adoptionID?: unknown }
-      if (typeof payload.adoptionID === "string") {
-        const adoption = this.runtime.store.adoption(payload.adoptionID)
-        adoptionFacts = {
-          id: adoption?.id ?? null,
-          state: adoption?.state ?? null,
-          taskWorkspace: adoption?.task_workspace ?? null,
-          combinedWorkspace: adoption?.combined_workspace ?? null,
-          checks: (["task", "combined"] as const).flatMap((phase) =>
-            this.runtime.store.adoptionChecks(payload.adoptionID as string, phase).map((check) => ({
-              phase,
-              checkID: check.check_id,
-              state: check.state,
-              receipt: check.receipt ? fingerprint(check.receipt) : null,
-            })),
-          ),
-        }
-      }
-    } catch {
-      adoptionFacts = { unavailable: true }
-    }
-
-    return fingerprint({
-      plan: { id: plan.id, revision: plan.revision, owner: plan.owner, artifact: plan.artifact },
-      workspace: target,
-      workspaceExists: existsSync(workspace),
-      attempts: attempts.map((attempt) => ({
-        id: attempt.id,
-        taskID: attempt.task_id,
-        state: attempt.state,
-        messageID: attempt.message_id,
-        sessionID: attempt.session_id,
-        artifact: attempt.artifact,
-      })),
-      sessions,
-      owners,
-      adoptionFacts,
-      source: {
-        kind: source.kind,
-        payload: fingerprint(source.payload),
-        receipt: source.receipt ? fingerprint(source.receipt) : null,
-      },
-      effects: effects.map((effect) => ({
-        id: effect.id,
-        kind: effect.kind,
-        state: effect.state,
-        payload: fingerprint(effect.payload),
-        receipt: effect.receipt ? fingerprint(effect.receipt) : null,
-      })),
-    })
   }
 
-  async worktreeCleanupFactsChanged(plan: PlanRow): Promise<boolean> {
-    const creationKinds = new Set([
-      "worktree",
-      "worktree-recovery",
-      "graph-worktree",
-      "adoption-task-worktree",
-      "adoption-combined-worktree",
-    ])
-    const effects = this.runtime.store.effects(plan.id)
-    for (const source of effects) {
-      if (!creationKinds.has(source.kind) || source.state !== "completed" || !source.receipt)
-        continue
-      let workspace: string | undefined
-      try {
-        workspace = JSON.parse(source.receipt).workspace
-      } catch {
-        continue
-      }
-      if (typeof workspace !== "string") continue
-      const removal = effects.find(
-        (effect) =>
-          effect.kind === "worktree-remove" && JSON.parse(effect.payload).workspace === workspace,
-      )
-      if (!removal) return true
-      if (removal.state === "completed") continue
-      let previousFacts: unknown
-      let previousCheckedAt: unknown
-      let liveBlocker = false
-      try {
-        const receipt = JSON.parse(removal.receipt ?? "{}") as {
-          retryFacts?: unknown
-          retryCheckedAt?: unknown
-          liveBlocker?: unknown
-        }
-        previousFacts = receipt.retryFacts
-        previousCheckedAt = receipt.retryCheckedAt
-        liveBlocker = receipt.liveBlocker === true
-      } catch {
-        previousFacts = undefined
-      }
-      if (typeof previousCheckedAt !== "number") return true
-      let currentFacts: string | undefined
-      try {
-        currentFacts = this.worktreeCleanupRetryFacts(plan, source, workspace)
-      } catch {
-        // A local signal read failure never authorizes cleanup; the bounded native fallback retries.
-      }
-      if (currentFacts !== undefined && currentFacts !== previousFacts) return true
-      const elapsed = this.runtime.now() - previousCheckedAt
-      const interval = liveBlocker ? WORKTREE_CLEANUP_LIVE_RETRY_MS : WORKTREE_CLEANUP_FALLBACK_MS
+  async worktreeCleanupFactsChanged(facts: CleanupFacts): Promise<boolean> {
+    for (const retry of facts.retries) {
+      if (!retry.removalFound) return true
+      if (retry.removalState === "completed") continue
+      if (typeof retry.previousCheckedAt !== "number") return true
+      if (existsSync(retry.workspace) !== retry.workspaceExists) return true
+      if (retry.retryFacts !== undefined && retry.retryFacts !== retry.previousFacts) return true
+      const elapsed = this.runtime.now() - retry.previousCheckedAt
+      const interval = retry.liveBlocker
+        ? WORKTREE_CLEANUP_LIVE_RETRY_MS
+        : WORKTREE_CLEANUP_FALLBACK_MS
       if (elapsed < 0 || elapsed >= interval) return true
     }
     return false
@@ -576,20 +460,32 @@ export class WorktreeCleanup {
     plan: PlanRow,
     fence: number,
     mode: "integration" | "cancellation" = "integration",
+    facts = this.cleanupFacts(plan.id),
   ) {
     // A fallback probe is not a lifecycle change. Keep an existing hold until
     // its reason changes or native cleanup completes.
-    const cleanupCurrent = () => {
-      const state = this.runtime.store.plan(plan.id)?.state
-      return mode === "integration"
-        ? state === "cleaning" || state === "cleanup-blocked"
-        : state === "cancelled"
-    }
+    let checkedRevision: number | undefined
+    let checkedState: string | undefined
+    const cleanupCurrent = () =>
+      this.runtime.store.read((db) => {
+        const revision = observationRevisionStamp(db, this.runtime.directory)
+        if (revision !== checkedRevision) {
+          checkedRevision = revision
+          checkedState = db
+            .query<{ state: string }, [string, string]>(
+              "SELECT state FROM runner_plans WHERE id=? AND project_directory=?",
+            )
+            .get(plan.id, this.runtime.directory)?.state
+        }
+        return mode === "integration"
+          ? checkedState === "cleaning" || checkedState === "cleanup-blocked"
+          : checkedState === "cancelled"
+      })
     if (!cleanupCurrent()) return
+    const effects = this.runtime.store.effects(plan.id)
     const owned = [
       ...new Set(
-        this.runtime.store
-          .effects(plan.id)
+        effects
           .filter(
             (effect) =>
               WORKTREE_CREATION_KINDS.includes(effect.kind) && effect.state === "completed",
@@ -600,12 +496,10 @@ export class WorktreeCleanup {
     for (const workspace of owned) {
       if (workspace === this.runtime.directory)
         throw new Error("Refusing to remove the shared checkout")
-      const previous = this.runtime.store
-        .effects(plan.id)
-        .find(
-          (entry) =>
-            entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
-        )
+      const previous = effects.find(
+        (entry) =>
+          entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
+      )
       const effect =
         previous ??
         this.runtime.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
@@ -621,6 +515,7 @@ export class WorktreeCleanup {
         removalStarted: false,
         retryFacts: undefined,
         source: undefined,
+        facts,
       }
       try {
         if ((await this.removeOwnedWorktree(run)) === "stop") return
@@ -687,7 +582,14 @@ export class WorktreeCleanup {
     run.source = sourceEffect
     if (!sourceEffect)
       throw new Error("Owned worktree has no completed creation receipt; preserve it")
-    run.retryFacts = this.retryFactsOrUnavailable(plan, sourceEffect, workspace)
+    const memoizedFacts = run.facts.retries.find(
+      (retry) => retry.sourceID === sourceEffect.id && retry.workspace === workspace,
+    )
+    run.retryFacts =
+      memoizedFacts?.retryFacts !== undefined &&
+      memoizedFacts.workspaceExists === existsSync(workspace)
+        ? memoizedFacts.retryFacts
+        : this.retryFactsOrUnavailable(plan, sourceEffect, workspace)
     const listed = await this.runtime.timed("cleanup:host.worktrees", () =>
       this.runtime.host.worktrees(),
     )

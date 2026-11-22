@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
+import { meterRepository } from "./read-meter.fixture.ts"
 import {
   acceptedMergedFixture,
   fixture,
@@ -146,4 +147,141 @@ test("a cancelled plan that preserved unmerged commits costs a stamp check per t
       `[idle-terminal] cancelled, 5 ticks ${JSON.stringify({ ...few, host: few.host.length })}`,
     )
   expectStampOnly(few, many)
+}, 120_000)
+
+async function cleanupHistoryCost(historySize: number, gitCalls: () => number) {
+  const clock = { offset: 0 }
+  const { f, plan, attempt, integrate } = await acceptedMergedFixture({ clock })
+  const dirtyFile = join(attempt.workspace, "uncommitted.txt")
+  writeFileSync(dirtyFile, "preserve this")
+  await integrate(`cleanup-history-${historySize}`)
+  await f.runtime.tick()
+  expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+
+  const source = f.store.effects(plan.id).find((effect) => effect.kind === "worktree")!
+  const adoptionID = `cleanup-history-adoption-${historySize}`
+  f.repository.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_adoptions(
+        id,plan_id,task_id,request_id,owner,plan_version,task_revision,attempt_id,
+        node_state,attempt_state,old_artifact,descendant_commit,target_branch,landing_head,
+        reviewed_baseline,candidate_tree,input_fingerprint,environment_identity,reason,
+        combined_artifact,task_workspace,state,created_at,updated_at
+      ) VALUES(?,?,?,?,?,1,1,?,'accepted','accepted','old','descendant','main','landing',
+        'baseline','tree','input','environment','history facts','combined',?,'accepted',1,1)`,
+    ).run(
+      adoptionID,
+      plan.id,
+      attempt.task_id,
+      `request-${historySize}`,
+      "owner",
+      attempt.id,
+      attempt.workspace,
+    )
+    const insertCheck = db.query(
+      `INSERT INTO runner_adoption_checks(
+        adoption_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,
+        environment_identity,receipt_path,state,receipt,created_at
+      ) VALUES(?,'task',?,'{}',?,?,'input','environment','/receipt','completed','{"exitCode":0}',?)`,
+    )
+    for (let index = 0; index < historySize; index++)
+      insertCheck.run(
+        adoptionID,
+        `historical-check-${index}`,
+        attempt.workspace,
+        plan.artifact,
+        index,
+      )
+    const insertAttempt = db.query(
+      `INSERT INTO runner_attempts(
+        id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,
+        base_commit,artifact,policy,state,started_at,token_count,tool_count,retry_count,cost
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'accepted',?,0,0,0,NULL)`,
+    )
+    const insertEffect = db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'completed',?,?,1)")
+    for (let index = 0; index < historySize; index++) {
+      insertAttempt.run(
+        `cleanup-history-attempt-${historySize}-${index}`,
+        plan.id,
+        f.root,
+        attempt.task_id,
+        10_000 + index,
+        `cleanup-history-session-${historySize}-${index}`,
+        `cleanup-history-message-${historySize}-${index}`,
+        join(f.root, `history-workspace-${historySize}-${index}`),
+        attempt.base_commit,
+        null,
+        "{}",
+        10_000 + index,
+      )
+      insertEffect.run(
+        `cleanup-history-effect-${historySize}-${index}`,
+        plan.id,
+        null,
+        null,
+        "cleanup-history",
+        JSON.stringify({ index }),
+        JSON.stringify({ history: "x".repeat(300) }),
+      )
+    }
+    db.query("UPDATE runner_effects SET kind=?,payload=? WHERE id=?").run(
+      "adoption-task-worktree",
+      JSON.stringify({ adoptionID }),
+      source.id,
+    )
+  })
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+
+  const host = f.host as unknown as Record<string, unknown>
+  const hostCalls: string[] = []
+  const originals = new Map<string, unknown>()
+  for (const [name, value] of Object.entries(host)) {
+    if (typeof value !== "function") continue
+    originals.set(name, value)
+    host[name] = (...args: unknown[]) => {
+      hostCalls.push(name)
+      return (value as (...items: unknown[]) => unknown).apply(host, args)
+    }
+  }
+  const gitBefore = gitCalls()
+  const planVersion = f.store.plan(plan.id)!.version
+  const removalReceipt = f.store
+    .effects(plan.id)
+    .find((effect) => effect.kind === "worktree-remove")!.receipt
+  const sql = meterRepository(f.repository)
+  for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
+  const cost = {
+    rows: sql.rows,
+    statements: [...sql.statements],
+    cleanupHistoryRows: sql.of(/FROM runner_(?:effects|attempts|adoptions|adoption_checks)\b/i)
+      .rows,
+    fullPlanRows: sql.of(/SELECT \* FROM runner_plans\b/i).rows,
+    hostCalls,
+    gitCalls: gitCalls() - gitBefore,
+  }
+  sql.stop()
+  for (const [name, value] of originals) host[name] = value
+  expect(f.store.plan(plan.id)?.version).toBe(planVersion)
+  expect(
+    f.store.effects(plan.id).find((effect) => effect.kind === "worktree-remove")?.receipt,
+  ).toBe(removalReceipt)
+  return cost
+}
+
+test("unchanged cleanup facts read no histories or plan bodies at small and large scale", async () => {
+  const gitCalls = gitShim()
+  const small = await cleanupHistoryCost(5, gitCalls)
+  const large = await cleanupHistoryCost(500, gitCalls)
+  expect(small.cleanupHistoryRows).toBe(0)
+  expect(large.cleanupHistoryRows).toBe(0)
+  expect(small.fullPlanRows).toBe(0)
+  expect(large.fullPlanRows).toBe(0)
+  expect(small.hostCalls).toEqual([])
+  expect(large.hostCalls).toEqual([])
+  expect(small.gitCalls).toBe(0)
+  expect(large.gitCalls).toBe(0)
+  expect(large.rows).toBe(small.rows)
+  expect(large.statements).toEqual(small.statements)
 }, 120_000)

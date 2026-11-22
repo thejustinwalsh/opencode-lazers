@@ -16,6 +16,8 @@ export function ensureObservationRevision(db: Database) {
     "runner_dependencies",
     "runner_attempts",
     "runner_effects",
+    "runner_adoptions",
+    "runner_adoption_checks",
     "runner_continuations",
     "runner_outbox",
     "runner_transitions",
@@ -34,11 +36,13 @@ export function ensureObservationRevision(db: Database) {
           : ""
       const rows = event === "UPDATE" ? ["OLD", "NEW"] : [event === "DELETE" ? "OLD" : "NEW"]
       const projects = rows
-        .map((row) =>
-          direct.includes(table)
-            ? `SELECT ${row}.project_directory AS project_directory`
-            : `SELECT project_directory FROM runner_plans WHERE id=${row}.plan_id`,
-        )
+        .map((row) => {
+          if (direct.includes(table)) return `SELECT ${row}.project_directory AS project_directory`
+          if (table === "runner_adoption_checks")
+            return `SELECT p.project_directory FROM runner_adoptions a
+              JOIN runner_plans p ON p.id=a.plan_id WHERE a.id=${row}.adoption_id`
+          return `SELECT project_directory FROM runner_plans WHERE id=${row}.plan_id`
+        })
         .join(" UNION ")
       const name = `observation_revision_${table}_${event}`
       const definition = `CREATE TRIGGER ${name}
