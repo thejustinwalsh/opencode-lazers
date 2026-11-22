@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test"
+import { costText } from "./configuration-cost.ts"
+import { observedCostFixture } from "./cost.fixture.ts"
 import {
   benchmarkCaveats,
   benchmarkHeadline,
@@ -58,18 +60,24 @@ test("the headline is one two-decimal figure with its unit", () => {
   expect(headlineMoney(0.00785)).toBe("$0.0079")
   expect(headlineRange({ minimum: 2.9278646, maximum: 2.9278646 })).toBe("$2.93")
   expect(headlineRange({ minimum: 0.35, maximum: 0.67 })).toBe("$0.35 – 0.67")
+  // The headline writes the stored cost as every view does, and names its basis.
   const headline = runsHeadline({
-    priceRange: { minimum: 2.9278646, maximum: 2.9278646 },
+    cost: observedCostFixture(2.9278646),
     accepted: 1,
     terminal: 2,
   })
-  expect(headline).toEqual({ value: "$2.93", unit: "per accepted task", smallSample: true })
+  expect(headline).toEqual({
+    value: costText(observedCostFixture(2.9278646)),
+    unit: "per accepted task · Observed in your runs",
+    smallSample: true,
+  })
+  expect(runsHeadline({ cost: observedCostFixture(0.57, 1.09) })?.value).toBe("$0.57–$1.09")
 })
 
 test("the small sample label follows the chart's threshold", () => {
-  const range = { minimum: 1, maximum: 1 }
-  expect(runsHeadline({ priceRange: range, terminal: 2 })?.smallSample).toBe(true)
-  expect(runsHeadline({ priceRange: range, terminal: 3 })?.smallSample).toBe(false)
+  const cost = observedCostFixture(1)
+  expect(runsHeadline({ cost, terminal: 2 })?.smallSample).toBe(true)
+  expect(runsHeadline({ cost, terminal: 3 })?.smallSample).toBe(false)
 })
 
 test("a missing price omits the headline instead of labelling it", () => {
@@ -218,7 +226,7 @@ test("the observed model shows no raw enum or id outside Identifiers", () => {
   const model = observedPaneModel({
     inspection: inspection(),
     facts: {
-      priceRange: { minimum: 2.93, maximum: 2.93 },
+      cost: observedCostFixture(2.93),
       accepted: 1,
       terminal: 2,
       tokens: "10.8M",

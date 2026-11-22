@@ -1,5 +1,6 @@
 import type { ModelCandidate } from "./comparison-presentation.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import { mergeRoutesByIdentity, representativeOf, routeIdentityKey } from "./model-groups.ts"
 import type { PublicCatalogItem } from "./comparison-schema.ts"
 import { priceCandidate, priceExternal } from "./price-resolution.ts"
@@ -54,6 +55,11 @@ export type BenchmarkBaselinePoint = {
   price: BenchmarkPrice
   /** The route has observed task outcomes under the current filters. */
   observed: boolean
+  /** The model's stored costs (the catalog entry's), for the tooltip; absent outside a view. */
+  costs?: {
+    observed: ConfigurationCost | null
+    projected: ConfigurationCost
+  }
 }
 
 export type BenchmarkBaselineGap = {

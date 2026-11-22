@@ -1,6 +1,8 @@
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import type { ModelChartPoint, RankingChartRow } from "./model-chart.tsx"
 import type { CatalogEntry } from "./catalog-projection.ts"
+import { costConfigurationLabel, costLine, costPosition, costRange } from "./configuration-cost.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import { SMALL_SAMPLE_TERMINAL_TASKS, paretoFrontier } from "./chart-layout.ts"
 import type { BenchmarkBaselinePoint } from "./benchmark-baseline.ts"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
@@ -31,6 +33,11 @@ export interface ComparisonChartData {
   references?: readonly ComparisonChartReference[]
   frontierConfigurationIDs: readonly string[]
   selectedConfigurationID?: string | null
+  /**
+   * Each configuration's stored cost. When given, a mark sits at its `costPosition` and the
+   * frontier is decided from that same position; a mark with no stored cost is not drawn.
+   */
+  costOf?: (configurationID: string) => ConfigurationCost | null | undefined
 }
 
 const money = new Intl.NumberFormat("en-US", {
@@ -279,8 +286,9 @@ export type ChartMark = {
 
 /**
  * Every plotted mark, one per model configuration. An observed point wins over a catalog
- * reference for the same configuration. Ranges plot at their midpoint; the range itself is in
- * the tooltip and the selection summary, never drawn as whiskers.
+ * reference for the same configuration. With `costOf` (every drawn chart), a mark's cost is its
+ * stored cost's position (a range's midpoint, drawn with a whisker), and the frontier is decided
+ * from that same position.
  *
  * The best trade-off (`frontier`) is the Pareto set over cost per accepted task (lower),
  * tokens per accepted task (lower) and acceptance rate (higher), among observed points with at
@@ -348,6 +356,17 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
     if (at >= 0) eligible.splice(at, 1)
     if (point.acceptedTaskCount > 0) eligible.push(mark)
   }
+  // The stored cost decides both where a mark is drawn and whether it is on the frontier.
+  const costOf = data.costOf
+  if (costOf)
+    for (const mark of [...marks.values()]) {
+      const position = costPosition(costOf(mark.configurationID))
+      if (position === null) {
+        marks.delete(mark.configurationID)
+        const at = eligible.indexOf(mark)
+        if (at >= 0) eligible.splice(at, 1)
+      } else mark.amount = position
+    }
   const rate = (mark: ChartMark) =>
     mark.terminal && mark.accepted !== undefined ? mark.accepted / mark.terminal : null
   for (const mark of paretoFrontier(eligible, [
@@ -446,19 +465,25 @@ function benchmarkDescription(points: readonly BenchmarkBaselinePoint[]) {
 
 const pointLabelLimit = 26
 
-/** Observed points and catalog references as chart points, frontier computed here. */
+/**
+ * Observed points and catalog references as chart points, frontier computed here. Each point's
+ * cost is its configuration's stored cost (`costOf`): a value is a mark, a range a whisker with
+ * the mark at its midpoint. A mark with no stored cost is not drawn.
+ */
 export function observedChartPoints(
   data: ComparisonChartData,
   priceSource: string | undefined,
+  costOf: (configurationID: string) => ConfigurationCost | null | undefined,
 ): ModelChartPoint[] {
-  return comparisonChartMarks(data).map((mark) => {
+  return comparisonChartMarks({ ...data, costOf }).flatMap((mark) => {
+    const cost = costOf(mark.configurationID)
+    if (!cost) return []
+    const y = mark.amount
     const name = modelEffortLabel(mark.label, mark.route)
-    const cost = mark.range
-      ? `${formatMarketRange(mark.range)} per accepted task`
-      : `≈${formatMarketAmount(mark.amount)} per accepted task`
+    const range = costRange(cost)
     const lines = [
       name,
-      cost,
+      `${costLine(cost)} per accepted task`,
       `${compactTokenAxisValue(mark.tokens)} tokens per accepted task`,
       ...(mark.accepted === undefined
         ? []
@@ -472,30 +497,31 @@ export function observedChartPoints(
         : []),
       ...(priceSource ? [`${priceSource} prices`] : []),
     ]
-    return {
-      id: mark.configurationID,
-      x: mark.tokens,
-      y: mark.amount,
-      label: chartMarkLabel(mark.label, mark.route, pointLabelLimit),
-      frontier: mark.frontier,
-      tooltip: lines,
-      description: mark.aria,
-    }
+    return [
+      {
+        id: mark.configurationID,
+        x: mark.tokens,
+        y,
+        ...(range ? { range: { axis: "y" as const, ...range } } : {}),
+        label: chartMarkLabel(mark.label, mark.route, pointLabelLimit),
+        frontier: mark.frontier,
+        tooltip: lines,
+        description: lines.join(". "),
+      },
+    ]
   })
 }
 
-/** Tooltip lines of a projected model: name, projected cost, score, measured facts, source. */
+/** Tooltip lines of a projected model: name, each cost labelled by its basis, score, source. */
 function projectedLines(entry: CatalogEntry) {
   const measured = entry.observed
   return [
     entry.label,
-    ...(entry.projection
-      ? [`Projected ≈${formatMarketAmount(entry.projection.usd)} per accepted task`]
-      : []),
+    ...(entry.projected.kind === "none" ? [] : [costLine(entry.projected)]),
     ...(entry.score !== null ? [`${entry.scoreName ?? "Coding index"} ${entry.score}`] : []),
-    ...(measured
+    ...(measured && measured.cost.kind !== "none"
       ? [
-          `Measured ${measured.range ? formatMarketRange(measured.range) : formatMarketAmount(measured.usd)} · ${
+          `${costLine(measured.cost)} (${costConfigurationLabel(entry.label, measured.cost)}) · ${
             measured.terminal
               ? `${measured.accepted} of ${measured.terminal} accepted`
               : `${measured.accepted} accepted`
@@ -510,20 +536,29 @@ function projectedLines(entry: CatalogEntry) {
   ]
 }
 
+/** The observed companion of a projected mark: its stored cost on the same axis. */
+function observedCompanion(entry: CatalogEntry) {
+  const cost = entry.observed?.cost
+  const value = costPosition(cost)
+  return cost && value !== null ? { value, low: cost.low!, high: cost.high! } : undefined
+}
+
 /** Projections with a public score: cost per task against the coding index (the secondary plot). */
 export function projectedChartPoints(entries: readonly CatalogEntry[]): ModelChartPoint[] {
   return entries.flatMap((entry) => {
-    if (!entry.projection || entry.score === null) return []
+    const x = costPosition(entry.projected)
+    if (x === null || entry.score === null) return []
     const lines = projectedLines(entry)
+    const observed = observedCompanion(entry)
     return [
       {
         id: entry.id,
         // Cost on x, the public score on y: better scores sit higher.
-        x: entry.projection.usd,
+        x,
         y: entry.score,
         label: boundedModelLabel(entry.label, pointLabelLimit),
         frontier: entry.frontier,
-        backed: entry.observed !== null,
+        ...(observed ? { observed } : {}),
         tooltip: lines,
         description: lines.join(". "),
       },
@@ -563,15 +598,19 @@ export function shortModelLabel(label: string) {
 
 export function projectedRankRows(entries: readonly CatalogEntry[]): RankingChartRow[] {
   return entries
-    .filter((entry) => entry.projection && !isFreeEntry(entry))
-    .toSorted((a, b) => a.projection!.usd - b.projection!.usd || a.label.localeCompare(b.label))
+    .filter((entry) => entry.projected.kind !== "none" && !isFreeEntry(entry))
+    .toSorted(
+      (a, b) =>
+        costPosition(a.projected)! - costPosition(b.projected)! || a.label.localeCompare(b.label),
+    )
     .map((entry) => {
       const lines = projectedLines(entry)
+      const observed = observedCompanion(entry)
       return {
         id: entry.id,
         label: shortModelLabel(entry.label),
-        value: entry.projection!.usd,
-        backed: entry.observed !== null,
+        value: costPosition(entry.projected)!,
+        ...(observed ? { observed } : {}),
         score: entry.score,
         tooltip: lines,
         description: lines.join(". "),
@@ -582,18 +621,23 @@ export function projectedRankRows(entries: readonly CatalogEntry[]): RankingChar
 /** The Benchmark view: coding index against list price per 1M tokens. */
 export function benchmarkChartPoints(points: readonly BenchmarkBaselinePoint[]): ModelChartPoint[] {
   const frontier = new Set(benchmarkFrontier(points).map((point) => point.id))
-  return points.map((point) => ({
-    id: point.id,
-    x: point.price.blended,
-    y: point.benchmark.codingIndex,
-    label: boundedModelLabel(point.label, pointLabelLimit),
-    frontier: frontier.has(point.id),
-    tooltip: [
-      point.label,
-      `${point.benchmark.scoreName ?? "Coding index"} ${index.format(point.benchmark.codingIndex)}`,
-      `${formatMarketAmount(point.price.blended)} per 1M tokens (${mix})`,
-      `${benchmarkSourceName[point.price.source]} list price`,
-    ],
-    description: benchmarkPointText(point),
-  }))
+  return points.map((point) => {
+    // The model's stored costs per accepted task, each labelled by its basis (the catalog's own).
+    const costs = [point.costs?.projected, point.costs?.observed].map(costLine).filter(Boolean)
+    return {
+      id: point.id,
+      x: point.price.blended,
+      y: point.benchmark.codingIndex,
+      label: boundedModelLabel(point.label, pointLabelLimit),
+      frontier: frontier.has(point.id),
+      tooltip: [
+        point.label,
+        `${point.benchmark.scoreName ?? "Coding index"} ${index.format(point.benchmark.codingIndex)}`,
+        `${formatMarketAmount(point.price.blended)} per 1M tokens (${mix})`,
+        `${benchmarkSourceName[point.price.source]} list price`,
+        ...costs,
+      ],
+      description: [benchmarkPointText(point), ...costs].join(" "),
+    }
+  })
 }

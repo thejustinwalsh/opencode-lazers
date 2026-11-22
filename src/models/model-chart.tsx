@@ -34,8 +34,8 @@ export type ModelChartProps = {
   label: string
   /** Right of the legend, e.g. "14 accepted tasks · OpenRouter prices". */
   caption?: string | undefined
-  /** Name the ring mark in the legend. */
-  backedLegend?: string
+  /** Name the observed ring in the legend; it sits only beside an observed cost. */
+  observedLegend?: string
   /** What to say, and offer, when there is nothing to plot. */
   emptyText?: string
   emptyAction?: JSX.Element
@@ -128,7 +128,7 @@ export function ModelChart(props: ModelChartProps) {
   const roving = () => props.selectedID ?? layout().points[0]?.id ?? null
   const hasFrontier = () => props.points.some((point) => point.frontier)
   const hasOther = () => props.points.some((point) => !point.frontier)
-  const hasBacked = () => props.points.some((point) => point.backed)
+  const hasObserved = () => props.points.some((point) => point.observed)
 
   return (
     <div class="lazers-chart" data-empty={empty()} ref={wrapper}>
@@ -269,8 +269,42 @@ export function ModelChart(props: ModelChartProps) {
                   onBlur={() => setHovered((current) => (current === point().id ? null : current))}
                 >
                   <circle class="lazers-chart-hit" cx={at().cx} cy={at().cy} r="10" />
-                  <Show when={point().backed}>
-                    <circle class="lazers-chart-ring" cx={at().cx} cy={at().cy} r="8" />
+                  <Show when={!fannedOut() && point().whisker}>
+                    {(whisker) => (
+                      <line
+                        class="lazers-chart-whisker"
+                        data-range=""
+                        x1={whisker().x1}
+                        y1={whisker().y1}
+                        x2={whisker().x2}
+                        y2={whisker().y2}
+                      />
+                    )}
+                  </Show>
+                  <Show when={!fannedOut() && point().ring}>
+                    {(ring) => (
+                      <>
+                        <Show when={ring().whisker}>
+                          {(whisker) => (
+                            <line
+                              class="lazers-chart-whisker"
+                              data-observed=""
+                              x1={whisker().x1}
+                              y1={whisker().y1}
+                              x2={whisker().x2}
+                              y2={whisker().y2}
+                            />
+                          )}
+                        </Show>
+                        <circle
+                          class="lazers-chart-ring"
+                          data-observed=""
+                          cx={ring().cx}
+                          cy={ring().cy}
+                          r="5"
+                        />
+                      </>
+                    )}
                   </Show>
                   <circle
                     class="lazers-chart-mark"
@@ -331,10 +365,10 @@ export function ModelChart(props: ModelChartProps) {
                 Other
               </li>
             </Show>
-            <Show when={hasBacked() && props.backedLegend}>
+            <Show when={hasObserved() && props.observedLegend}>
               <li>
                 <span class="lazers-chart-key" data-kind="backed" aria-hidden="true" />
-                {props.backedLegend}
+                {props.observedLegend}
               </li>
             </Show>
           </ul>
@@ -359,8 +393,10 @@ export type RankingChartProps = {
   formatValue: (value: number) => string
   label: string
   caption?: string | undefined
-  /** Name the ring mark in the legend. */
-  backedLegend?: string
+  /** Name the observed ring in the legend; it sits only beside an observed cost. */
+  observedLegend?: string
+  /** Name the bar's own mark in the legend ("Projected cost"). */
+  valueLegend?: string
   /** Show the public score as a muted right-hand column. */
   showScore?: boolean
   /** Title above the axis, e.g. "Projected cost per accepted task". */
@@ -441,7 +477,7 @@ export function RankingChart(props: RankingChartProps) {
   const left = () => layout().plotLeft
   const right = () => layout().plotRight
   const at = (position: number) => left() + position * (right() - left())
-  const hasBacked = () => props.rows.some((row) => row.backed)
+  const hasObserved = () => props.rows.some((row) => row.observed)
 
   return (
     <div class="lazers-chart lazers-rank" ref={wrapper}>
@@ -521,6 +557,9 @@ export function RankingChart(props: RankingChartProps) {
                     y={row().cy + 4}
                   >
                     {row().text}
+                    <Show when={row().text !== row().label}>
+                      <title>{row().label}</title>
+                    </Show>
                   </text>
                   <line
                     class="lazers-rank-stem"
@@ -529,8 +568,28 @@ export function RankingChart(props: RankingChartProps) {
                     y1={row().cy}
                     y2={row().cy}
                   />
-                  <Show when={row().backed}>
-                    <circle class="lazers-chart-ring" cx={row().cx} cy={row().cy} r="8" />
+                  <Show when={row().ring}>
+                    {(ring) => (
+                      <>
+                        <Show when={ring().low !== ring().high}>
+                          <line
+                            class="lazers-chart-whisker"
+                            data-observed=""
+                            x1={ring().low}
+                            x2={ring().high}
+                            y1={row().cy}
+                            y2={row().cy}
+                          />
+                        </Show>
+                        <circle
+                          class="lazers-chart-ring"
+                          data-observed=""
+                          cx={ring().cx}
+                          cy={row().cy}
+                          r="5"
+                        />
+                      </>
+                    )}
                   </Show>
                   <circle
                     class="lazers-chart-mark lazers-rank-mark"
@@ -566,12 +625,12 @@ export function RankingChart(props: RankingChartProps) {
         <ul class="lazers-chart-legend" aria-label="Chart mark legend">
           <li>
             <span class="lazers-chart-key" data-kind="frontier" aria-hidden="true" />
-            Projected cost
+            {props.valueLegend ?? "Projected cost"}
           </li>
-          <Show when={hasBacked() && props.backedLegend}>
+          <Show when={hasObserved() && props.observedLegend}>
             <li>
               <span class="lazers-chart-key" data-kind="backed" aria-hidden="true" />
-              {props.backedLegend}
+              {props.observedLegend}
             </li>
           </Show>
         </ul>

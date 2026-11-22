@@ -116,7 +116,10 @@ export const modelCatalogColumns = {
   frontier: "bool",
   observed: "bool",
   price_source: "text",
-  /** The whole `CatalogEntry` (price with provenance, projection, observed facts). */
+  /**
+   * The whole `CatalogEntry`: price with provenance, the projected cost and the observed facts
+   * with the observed configuration's stored cost. `cost_per_task` is the rank's order key only.
+   */
   detail: "json",
 } as const satisfies Columns
 
@@ -139,6 +142,8 @@ export const modelPointColumns = {
   reference: "json",
   chart: "json",
   chart_reference: "json",
+  /** The configuration's one displayed cost (`ConfigurationCost`, observed basis). */
+  cost: "json",
   inspection: "json",
 } as const satisfies Columns
 

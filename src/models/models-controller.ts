@@ -47,6 +47,8 @@ import {
   projectedChartPoints,
 } from "./chart-data.ts"
 import type { CatalogEntry, CatalogSummary } from "./catalog-projection.ts"
+import { costText } from "./configuration-cost.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import { referenceTokenProfile } from "./catalog-inputs.ts"
 import { routeKey } from "./benchmark-baseline.ts"
 import type {
@@ -592,6 +594,8 @@ export function createModelsController(props: ModelsProps) {
     reference_ord: number | null
     chart: ComparisonChartPoint | null
     chart_reference: ComparisonChartReference | null
+    /** The configuration's one stored cost; every view of it reads this. */
+    cost: ConfigurationCost | null
     inspection: DecisionInspectionFacts
   }
   const pointRows = held(
@@ -788,8 +792,7 @@ export function createModelsController(props: ModelsProps) {
     const inspection = heldInspection()
     if (!inspection || inspection.status !== "found") return undefined
     return selectedModelFacts({
-      estimate: inspection.estimate,
-      referenceEstimate: inspection.referenceEstimate,
+      cost: selectedRow()?.cost ?? null,
       efficiency: inspection.efficiency,
       cohort: inspection.cohort,
       ...(inspection.medianAcceptedDurationMs === undefined
@@ -818,7 +821,7 @@ export function createModelsController(props: ModelsProps) {
     const facts = heldMatchesSelection() ? selectedFacts() : undefined
     if (!facts) return undefined
     const parts = [
-      facts.price ? `${facts.price} per accepted task` : undefined,
+      facts.cost ? `${costText(facts.cost)} per accepted task` : undefined,
       facts.accepted !== undefined && facts.terminal !== undefined
         ? `${facts.accepted} of ${facts.terminal} accepted`
         : undefined,
@@ -891,7 +894,12 @@ export function createModelsController(props: ModelsProps) {
       (visible()?.decisionOverview?.context.priceIndex.source ?? "") as
         "openrouter" | "opencode" | "mixed"
     ]
+  /** Each configuration's stored cost, by id. */
+  const storedCosts = createMemo(
+    () => new Map(pointRows().map((item) => [item.configuration_id, item.cost] as const)),
+  )
   const observedPoints = createMemo(() => {
+    const costs = storedCosts()
     return observedChartPoints(
       {
         points: decisionChartPoints(),
@@ -899,6 +907,7 @@ export function createModelsController(props: ModelsProps) {
         frontierConfigurationIDs: [],
       },
       observedPriceSourceName(),
+      (configurationID) => costs.get(configurationID),
     )
   })
   const projectedPoints = createMemo(() => projectedChartPoints(catalogEntries()))
@@ -1023,6 +1032,11 @@ export function createModelsController(props: ModelsProps) {
   }
   const selectCompareMode = (mode: "observed" | "projected" | "benchmark") =>
     save({ compareMode: mode })
+  /** Another observed effort of a model row: its own point on "Your runs". */
+  const showObservedConfiguration = (configurationID: string) => {
+    selectCompareMode("observed")
+    state.selectConfiguration(configurationID)
+  }
   const observedScopeLabel = () => {
     const filters = visible()?.decisionFilters
     const scope = [
@@ -1546,6 +1560,8 @@ export function createModelsController(props: ModelsProps) {
     selectedEntryID,
     selectEntry,
     catalogEntries,
+    showObservedConfiguration,
+    storedCosts,
     catalogNotes,
     catalogSummary,
     catalogLoadingLine,

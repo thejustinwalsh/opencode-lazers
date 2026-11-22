@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { observedCostFixture, projectedCostFixture } from "./cost.fixture.ts"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { benchmarkBaseline, benchmarkPrice } from "./benchmark-baseline.ts"
@@ -397,7 +398,13 @@ test("a recorded run and a routed model join the catalog entry for the same mode
   const observed = new Map([
     [
       "moonshotai\u0000kimi-k3.1-pro-20261023",
-      { configurationID: "c1", usd: 0.5, tokens: 1000, accepted: 3, terminal: 4 },
+      {
+        configurationID: "c1",
+        cost: observedCostFixture(0.5),
+        tokens: 1000,
+        accepted: 3,
+        terminal: 4,
+      },
     ],
   ])
   const { entries } = buildCatalog({
@@ -479,7 +486,7 @@ test("a dated snapshot and its latest alias are one catalog entry; versions keep
     "routed",
   )
   // 4.1 lists at three times 4.5's rate: no version borrows a sibling's price.
-  const usd = (id: string) => entries.find((entry) => entry.route.modelID === id)!.projection!.usd
+  const usd = (id: string) => entries.find((entry) => entry.route.modelID === id)!.projected.low!
   expect(usd("claude-opus-4-1")).toBeCloseTo(usd("claude-opus-4-5") * 3, 6)
 })
 
@@ -593,7 +600,7 @@ test("public-catalog models join the ranked set, priced by their source and scor
   const opus = entries.find((entry) => entry.route.modelID === "claude-opus-4-6")!
   expect(opus).toMatchObject({ label: expect.any(String), tags: ["catalog"] })
   expect(opus.price).toMatchObject({ source: "models-dev", input: 5, output: 25 })
-  expect(opus.projection!.usd).toBeGreaterThan(0)
+  expect(opus.projected.low!).toBeGreaterThan(0)
   // A source that is not configured contributes nothing.
   expect(
     buildCatalog({
@@ -752,7 +759,13 @@ test("one model is one entry however many providers offer it, with the providers
       // The route the user actually runs is the Copilot one; it joins the same entry.
       [
         "github-copilot\u0000claude-haiku-5-5",
-        { configurationID: "c", usd: 0.4, tokens: 1e6, accepted: 2, terminal: 2 },
+        {
+          configurationID: "c",
+          cost: observedCostFixture(0.4),
+          tokens: 1e6,
+          accepted: 2,
+          terminal: 2,
+        },
       ],
     ]),
     routed: [],
@@ -833,7 +846,7 @@ test("ranking labels drop the vendor prefix and routing suffix; the tooltip keep
       appliesBelowTokens: null,
       retrievedAt: null,
     },
-    projection: { usd: 1, cacheAtInputRate: false },
+    projected: projectedCostFixture(1),
     score: null,
     contextTokens: null,
     observed: null,
