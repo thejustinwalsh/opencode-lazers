@@ -575,6 +575,15 @@ test("the first window renders in the stored order, with one start-of-list state
     expect(h.treeHeight()).toBeGreaterThan(ROW * 60)
     expect(h.treeHeight()).toBeLessThan(ROW * order.length)
     expect(h.text()).not.toContain("unknown")
+    // Cut text carries its whole text as a tooltip: each row's title, and the header count,
+    // which gives way before the controls so the count's arrival never wraps the header.
+    const firstTitle = h
+      .row(ids["R1 only"]!)!
+      .querySelector<HTMLElement>(".lazers-tasks-row-title")!
+    expect(firstTitle.title).toBe(firstTitle.textContent!)
+    await until(() => Boolean(h.container.querySelector(".lazers-tasks-count")))
+    const count = h.container.querySelector<HTMLElement>(".lazers-tasks-count")!
+    expect(count.title).toBe(count.textContent!)
     // A single stream per source at rest: the list, the counts, the index, and the selected facts.
     expect(
       h.opens.filter((open) => open.source === "tasks.schedule" && open.window > 1),

@@ -1092,7 +1092,9 @@ function TaskPanel(
             )}
           </Show>
           {/* The whole first sentence: the row truncates to its own width, not to a fixed length. */}
-          <span class="lazers-tasks-row-title">{taskHeading(taskRow().title)}</span>
+          <span class="lazers-tasks-row-title" title={taskHeading(taskRow().title)}>
+            {taskHeading(taskRow().title)}
+          </span>
           <span class="lazers-tasks-row-signals">
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
