@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test as bunTest } from "bun:test"
 import { execFileSync } from "node:child_process"
 import {
   existsSync,
@@ -14,7 +14,14 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { publishCache, seedCache } from "../fallow-cache.ts"
-import { moduleKinds, makeFixture, runOp, snapshot } from "./test-support.ts"
+import { disposeFixture, moduleKinds, makeFixture, runOp, snapshot } from "./test-support.ts"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 /**
  * Fallow's own cache, in `<root>/.fallow`. It is the only place the module may write; it carries
@@ -38,9 +45,9 @@ describe("cache writes are confined to .fallow", () => {
   beforeAll(() => {
     dir = makeFixture()
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(async () => disposeFixture(dir))
 
-  test("nothing outside .fallow changes, and git sees a clean tree", () => {
+  test("nothing outside .fallow changes, and git sees a clean tree", async () => {
     const before = outsideCache(dir)
     for (const op of [
       "deadCode",
@@ -49,7 +56,7 @@ describe("cache writes are confined to .fallow", () => {
       "featureFlagReport",
       "duplicationReport",
     ])
-      runOp(op, dir, {}, { cache: true })
+      await runOp(op, dir, {}, { cache: true })
     expect(outsideCache(dir)).toEqual(before)
     expect(readFileSync(join(dir, ".fallow/.gitignore"), "utf8")).toBe("*\n")
     expect(readdirSync(join(dir, ".fallow")).some((name) => name.endsWith(".bin"))).toBe(true)
@@ -60,13 +67,10 @@ describe("cache writes are confined to .fallow", () => {
     )
   }, 120_000)
 
-  test("with the cache on, writes anywhere else are still refused and writes into .fallow work", () => {
+  test("with the cache on, writes anywhere else are still refused and writes into .fallow work", async () => {
     const before = outsideCache(dir)
-    const probe = runOp(
-      "fsProbe",
-      dir,
-      { options: { existing: "package.json" } },
-      { cache: true },
+    const probe = (
+      await runOp("fsProbe", dir, { options: { existing: "package.json" } }, { cache: true })
     ).report
     for (const name of ["createDir", "writeFile", "overwrite", "append", "removeFile", "rename"])
       expect(probe[name], name).toMatchObject({ ok: false })
@@ -76,17 +80,17 @@ describe("cache writes are confined to .fallow", () => {
     expect(outsideCache(dir)).toEqual(before)
   })
 
-  test("a .fallow that is a link to elsewhere is never written through", () => {
+  test("a .fallow that is a link to elsewhere is never written through", async () => {
     const fresh = makeFixture()
     const elsewhere = mkdtempSync(join(tmpdir(), "fallow-elsewhere-"))
     try {
       symlinkSync(elsewhere, join(fresh, ".fallow"))
-      const cold = runOp("deadCode", fresh).report
-      const linked = runOp("deadCode", fresh, {}, { cache: true }).report
+      const cold = (await runOp("deadCode", fresh)).report
+      const linked = (await runOp("deadCode", fresh, {}, { cache: true })).report
       expect(strip(linked)).toBe(strip(cold))
       expect(readdirSync(elsewhere)).toEqual([])
     } finally {
-      rmSync(fresh, { recursive: true, force: true })
+      await disposeFixture(fresh)
       rmSync(elsewhere, { recursive: true, force: true })
     }
   })
@@ -98,7 +102,7 @@ for (const kind of moduleKinds)
     beforeAll(() => {
       dir = makeFixture()
     })
-    afterAll(() => rmSync(dir, { recursive: true, force: true }))
+    afterAll(async () => disposeFixture(dir))
     const ops = [
       "deadCode",
       "cycles",
@@ -108,15 +112,15 @@ for (const kind of moduleKinds)
       "health",
     ]
 
-    test("cold, warm and corrupt caches give the uncached report", () => {
-      const uncached = Object.fromEntries(
-        ops.map((op) => [op, strip(runOp(op, dir, {}, {}, kind).report)]),
-      )
+    test("cold, warm and corrupt caches give the uncached report", async () => {
+      const uncached: Record<string, string> = {}
+      for (const op of ops) uncached[op] = strip((await runOp(op, dir, {}, {}, kind)).report)
       for (const round of ["cold", "warm"])
         for (const op of ops)
-          expect(strip(runOp(op, dir, {}, { cache: true }, kind).report), `${round} ${op}`).toBe(
-            uncached[op]!,
-          )
+          expect(
+            strip((await runOp(op, dir, {}, { cache: true }, kind)).report),
+            `${round} ${op}`,
+          ).toBe(uncached[op]!)
       // Garbage, truncation and a wrong header are misses.
       for (const name of readdirSync(join(dir, ".fallow")).filter((n) => n.endsWith(".bin"))) {
         const file = join(dir, ".fallow", name)
@@ -128,9 +132,10 @@ for (const kind of moduleKinds)
         ]) {
           writeFileSync(file, bad)
           for (const op of ops)
-            expect(strip(runOp(op, dir, {}, { cache: true }, kind).report), `${name} ${op}`).toBe(
-              uncached[op]!,
-            )
+            expect(
+              strip((await runOp(op, dir, {}, { cache: true }, kind)).report),
+              `${name} ${op}`,
+            ).toBe(uncached[op]!)
         }
       }
     }, 240_000)
@@ -144,18 +149,18 @@ describe("sharing a cache between checkouts", () => {
     worktree = join(mkdtempSync(join(tmpdir(), "fallow-wt-")), "wt")
     git(canonical, "worktree", "add", "-q", worktree, "-b", "feature")
   })
-  afterAll(() => {
-    rmSync(worktree, { recursive: true, force: true })
-    rmSync(canonical, { recursive: true, force: true })
+  afterAll(async () => {
+    await disposeFixture(worktree)
+    await disposeFixture(canonical)
   })
 
   test("a worktree seeded from the canonical checkout answers as a cold run does", async () => {
-    runOp("deadCode", canonical, {}, { cache: true })
+    await runOp("deadCode", canonical, {}, { cache: true })
     expect(await seedCache(worktree, canonical)).toBeGreaterThan(0)
     expect(readFileSync(join(worktree, ".fallow/.gitignore"), "utf8")).toBe("*\n")
     // The files differ in path and mtime, not in content, so the entries are hits.
-    const seeded = runOp("deadCode", worktree, {}, { cache: true }).report
-    const cold = runOp("deadCode", worktree).report
+    const seeded = (await runOp("deadCode", worktree, {}, { cache: true })).report
+    const cold = (await runOp("deadCode", worktree)).report
     expect(strip(seeded)).toBe(strip(cold))
     // Already holding a cache, it is left alone.
     expect(await seedCache(worktree, canonical)).toBe(0)
@@ -172,7 +177,7 @@ describe("sharing a cache between checkouts", () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "fallow-elsewhere-"))
     const source = makeFixture()
     try {
-      runOp("deadCode", source, {}, { cache: true })
+      await runOp("deadCode", source, {}, { cache: true })
       symlinkSync(elsewhere, join(target, ".fallow"))
       expect(await publishCache(source, target)).toBe(0)
       expect(await seedCache(target, source)).toBe(0)
@@ -180,7 +185,9 @@ describe("sharing a cache between checkouts", () => {
       expect(await publishCache(source, source)).toBe(0)
       mkdirSync(join(elsewhere, "x"))
     } finally {
-      for (const path of [target, elsewhere, source]) rmSync(path, { recursive: true, force: true })
+      await disposeFixture(target)
+      rmSync(elsewhere, { recursive: true, force: true })
+      await disposeFixture(source)
     }
   }, 60_000)
 })
@@ -189,7 +196,7 @@ describe("what a module keeps, and what a warm run reads", () => {
   const sinkFile = `import { exec } from "node:child_process"\nexport const run = (command: string) => exec(command)\n`
 
   for (const kind of moduleKinds)
-    test(`${kind} module: a config that turns the security rules on runs without the cache and gives the same findings`, () => {
+    test(`${kind} module: a config that turns the security rules on runs without the cache and gives the same findings`, async () => {
       // The security facts are about a third of what a module keeps after extraction, and nothing
       // this module reports reads them, so they are dropped unless a rule asks for them; the
       // cache stores modules without them, so such a config also runs without it.
@@ -202,15 +209,15 @@ describe("what a module keeps, and what a warm run reads", () => {
         }),
       })
       try {
-        const normal = runOp("deadCode", plain, {}, { cache: true }, kind).report
-        const withRule = runOp("deadCode", strict, {}, { cache: true }, kind).report
+        const normal = (await runOp("deadCode", plain, {}, { cache: true }, kind)).report
+        const withRule = (await runOp("deadCode", strict, {}, { cache: true }, kind)).report
         expect(existsSync(join(plain, ".fallow"))).toBe(true)
         expect(existsSync(join(strict, ".fallow"))).toBe(false)
         expect(withRule.unused_files).toEqual(normal.unused_files)
         expect(withRule.unused_exports).toEqual(normal.unused_exports)
       } finally {
-        rmSync(plain, { recursive: true, force: true })
-        rmSync(strict, { recursive: true, force: true })
+        await disposeFixture(plain)
+        await disposeFixture(strict)
       }
     }, 60_000)
 
@@ -224,11 +231,11 @@ describe("what a module keeps, and what a warm run reads", () => {
           utimesSync(join(dir, path), 1_700_000_000, 1_700_000_000)
         } catch {}
       }
-      const sourceBytes = () => {
+      const sourceBytes = async () => {
         const names = new Map<number, string>()
         let bytes = 0
         const decoder = new TextDecoder()
-        runOp(
+        await runOp(
           "deadCode",
           dir,
           {},
@@ -254,10 +261,10 @@ describe("what a module keeps, and what a warm run reads", () => {
       }
       // A fingerprint is trusted once the file has not changed for three seconds.
       await Bun.sleep(3300)
-      expect(sourceBytes()).toBeGreaterThan(0)
-      expect(sourceBytes()).toBe(0)
+      expect(await sourceBytes()).toBeGreaterThan(0)
+      expect(await sourceBytes()).toBe(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      await disposeFixture(dir)
     }
   }, 60_000)
 })
