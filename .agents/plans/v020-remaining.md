@@ -16,7 +16,14 @@ where each branch is. This file is the ordered list of what is left.
 - The product (Architect and workers) builds product tasks; the driver fixes the product when a
   run stalls.
 
-## Step 0: land the panel branch (in flight when this was written)
+## Step 0: land the panel branch — DONE
+
+Update, later the same evening: the merge round finished and its full gate passed at `812265ea`
+(Fallow 0; runtime 439, runner 644, audit 171, src 1,798, test and scripts 412, website 60; 0
+failures). It is merged into `main` and pushed. Start at step 1. The text below records what
+was merged.
+
+### What step 0 merged
 
 Agent `panels-integrate` was merging, in worktree `.claude/worktrees/panels-all`, branch
 `feat/panels-all`:

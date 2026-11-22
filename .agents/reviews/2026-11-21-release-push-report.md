@@ -3,7 +3,16 @@
 One driver session, from a restart request in the morning to a budget stop in the evening.
 What is left is in [the remaining-work plan](../plans/v020-remaining.md).
 
-## Where things stand
+## Update, later the same evening
+
+The panel branch finished its last merge round and passed the full gate at `812265ea` (Fallow
+0; 0 test failures). It is merged into `main` and pushed, so the section "Built on
+`feat/panels-all`" below is now on `main`. The running service has NOT been restarted on it:
+the schema changes need a restart, and no panel has been checked on screen. The startup fix and
+the Planning-panel finding are in that merge as described; `progressDiagnostics` and the
+all-projects paging behind it are deleted.
+
+## Where things stand (as first written)
 
 | Item                           | State                                                                                  |
 | ------------------------------ | -------------------------------------------------------------------------------------- |
