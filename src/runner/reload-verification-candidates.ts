@@ -12,7 +12,7 @@ import { unsettledProcessCleanupSQL } from "./reload-unsettled-cleanup.ts"
 import { readKeysetPages, RELOAD_READ_PAGE_SIZE } from "./reload-pages.ts"
 
 const SYNTHETIC_FALLOW_COMMAND = "lazers:fallow-audit"
-const TERMINAL_RETAINED_STATES = new Set(["accepted", "failed", "cancelled"])
+const TERMINAL_VERIFICATION_OPERATIONS = new Set(["accepted", "failed", "cancelled"])
 
 export type VerificationProcessCandidate = {
   key: string
@@ -200,15 +200,20 @@ function makeCandidate(input: {
         workspace,
         phaseCommands: phases ?? [command],
       },
+      fallbackToDatabaseOnFileFailure: terminal,
     })
   } catch (error) {
     if (!terminal) throw error
-    receipt = {
-      state: "invalid",
-      rootPIDs: [],
-      settled: false,
-      reason: error instanceof Error ? error.message : String(error),
-    }
+    receipt = inspectCheckReceipt({
+      databaseReceipt: input.receipt.databaseReceipt,
+      receiptPath: undefined,
+      expected: {
+        id: check.id as string,
+        command,
+        workspace,
+        phaseCommands: phases ?? [command],
+      },
+    })
   }
   const startedAt = receipt.startedAt ?? input.startTime
   if (typeof startedAt !== "number" || !Number.isSafeInteger(startedAt) || startedAt < 0) {
@@ -349,7 +354,7 @@ function retainedCandidates(db: Database): VerificationProcessCandidate[] {
   )
   return rows.map((row) => {
     const key = `retained:${row.operation_id}/${row.phase}/${row.check_id}`
-    const terminal = TERMINAL_RETAINED_STATES.has(row.operation_state ?? "")
+    const terminal = TERMINAL_VERIFICATION_OPERATIONS.has(row.operation_state ?? "")
     return makeCandidate({
       key,
       checkValue: row.check_json,
@@ -363,8 +368,10 @@ function retainedCandidates(db: Database): VerificationProcessCandidate[] {
 
 function adoptionCandidates(db: Database): VerificationProcessCandidate[] {
   if (!tableExists(db, "runner_adoption_checks")) return []
+  const hasAdoptionOperations = tableExists(db, "runner_adoptions")
   type AdoptionRow = {
     adoption_id: string
+    operation_state: string | null
     phase: string
     check_id: string
     check_json: string
@@ -375,31 +382,35 @@ function adoptionCandidates(db: Database): VerificationProcessCandidate[] {
   }
   const rows = readKeysetPages<AdoptionRow, RetainedCheckCursor>(
     (cursor, limit) => {
-      const after = cursor === undefined ? "" : "AND (adoption_id,phase,check_id) > (?,?,?)"
+      const after = cursor === undefined ? "" : "AND (c.adoption_id,c.phase,c.check_id) > (?,?,?)"
       const params: (string | number)[] =
         cursor === undefined ? [limit] : [cursor[0], cursor[1], cursor[2], limit]
       return db
         .query<AdoptionRow, (string | number)[]>(
-          `SELECT adoption_id,phase,check_id,check_json,workspace,created_at,receipt_path,receipt
-           FROM runner_adoption_checks
-           WHERE (state IN ('intended','uncertain')
-              OR (state='completed' AND ${unsettledProcessCleanupSQL("receipt", "check_json")}))
+          `SELECT c.adoption_id,${hasAdoptionOperations ? "a.state" : "NULL"} AS operation_state,
+                  c.phase,c.check_id,c.check_json,c.workspace,c.created_at,c.receipt_path,c.receipt
+           FROM runner_adoption_checks c
+           ${hasAdoptionOperations ? "LEFT JOIN runner_adoptions a ON a.id=c.adoption_id" : ""}
+           WHERE (c.state IN ('intended','uncertain')
+              OR (c.state='completed' AND ${unsettledProcessCleanupSQL("c.receipt", "c.check_json")}))
              ${after}
-           ORDER BY adoption_id,phase,check_id LIMIT ?`,
+           ORDER BY c.adoption_id,c.phase,c.check_id LIMIT ?`,
         )
         .all(...params)
     },
     (row) => [row.adoption_id, row.phase, row.check_id],
   )
-  return rows.map((row) =>
-    makeCandidate({
+  return rows.map((row) => {
+    const terminal = TERMINAL_VERIFICATION_OPERATIONS.has(row.operation_state ?? "")
+    return makeCandidate({
       key: `adoption:${row.adoption_id}/${row.phase}/${row.check_id}`,
       checkValue: row.check_json,
       workspace: row.workspace,
       startTime: row.created_at,
       receipt: { databaseReceipt: row.receipt, receiptPath: row.receipt_path },
-    }),
-  )
+      terminal,
+    })
+  })
 }
 
 export function verificationProcessCandidates(db: Database): VerificationProcessCandidate[] {

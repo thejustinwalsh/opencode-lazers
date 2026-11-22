@@ -389,6 +389,107 @@ test("reload-safe lists terminal unknown checks as stale and still blocks a live
   }
 })
 
+test("accepted adoption history is stale unless its database receipt identifies a live group", async () => {
+  const f = fixture()
+  const workspace = join(f.root, "workspace")
+  const receiptDirectory = join(f.root, "receipts")
+  mkdirSync(workspace)
+  mkdirSync(receiptDirectory)
+
+  const adoptionID = "044eb65e-6fed-413b-b638-b86dad63f8fd"
+  const startedAt = Date.now() - 1_000
+  const count = RELOAD_READ_PAGE_SIZE * 4 + 1
+  const checkID = (index: number) => `quality-${String(index).padStart(4, "0")}`
+  const command = (index: number) => `printf adoption-check-${String(index).padStart(4, "0")}`
+  const checkJSON = (index: number) =>
+    JSON.stringify({ id: checkID(index), command: command(index) })
+  const databaseReceipt = (index: number) =>
+    JSON.stringify({
+      id: checkID(index),
+      command: command(index),
+      cwd: workspace,
+      startedAt,
+      endedAt: startedAt + 1,
+      processCleanup: { state: "uncertain", capability: "process-group", rootPID: 8764 },
+    })
+  const lastReceiptPath = join(receiptDirectory, `${checkID(count - 1)}.json`)
+  writeFileSync(lastReceiptPath, "{ malformed historical receipt")
+
+  const db = new Database(f.databasePath)
+  db.exec(`
+    CREATE TABLE runner_adoptions(id TEXT, state TEXT);
+    CREATE TABLE runner_adoption_checks(
+      adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+      created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+    );
+  `)
+  db.run("INSERT INTO runner_adoptions VALUES(?, 'accepted')", [adoptionID])
+  const insert = db.query(
+    `INSERT INTO runner_adoption_checks
+     VALUES(?,'combined',?,?,?,?,?,?,'completed')`,
+  )
+  for (let i = 0; i < count; i++) {
+    const isLive = i === count - 1
+    insert.run(
+      adoptionID,
+      checkID(i),
+      checkJSON(i),
+      workspace,
+      startedAt,
+      isLive ? lastReceiptPath : join(f.root, "missing-adoption-receipts", `${checkID(i)}.json`),
+      isLive ? databaseReceipt(i) : null,
+    )
+  }
+  db.close()
+
+  const observeProcesses =
+    (stdout: string, cwdStatus = 0) =>
+    (readonlyDB: Database) =>
+      observeVerificationProcesses(readonlyDB, {
+        now: () => Date.now(),
+        list: () => ({ status: 0, stdout }),
+        cwd: (pid) => ({
+          status: cwdStatus,
+          stdout: `p${pid}\nfcwd\nn${workspace}\n`,
+        }),
+      })
+  try {
+    const idle = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+      ...f.dependencies,
+      observeVerifications: observeProcesses(""),
+    })
+    expect(idle.exitCode).toBe(0)
+    expect(idle.stdout).toContain(
+      `Stale verification checks: adoption:${adoptionID}/combined/${checkID(0)}`,
+    )
+    expect(idle.stdout).toContain(`adoption:${adoptionID}/combined/${checkID(count - 1)}`)
+
+    const live = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+      ...f.dependencies,
+      observeVerifications: observeProcesses("8765 8764 8764 00:01 /bin/sleep 30\n"),
+    })
+    expect(live.exitCode).toBe(1)
+    expect(live.stdout).toContain("1 verification running")
+    expect(live.stdout).not.toContain(`adoption:${adoptionID}/combined/${checkID(count - 1)}`)
+
+    const processFailure = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+      ...f.dependencies,
+      observeVerifications: observeProcesses("8765 8764 8764 00:01 /bin/sleep 30\n", 1),
+    })
+    expect(processFailure.exitCode).toBe(1)
+    expect(processFailure.stdout).toContain("live activity observation unavailable")
+
+    const unchanged = new Database(f.databasePath, { readonly: true })
+    expect(
+      unchanged.query<{ n: number }, []>("SELECT count(*) AS n FROM runner_adoption_checks").get()
+        ?.n,
+    ).toBe(count)
+    unchanged.close()
+  } finally {
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
 test("reload-safe fails closed for synthetic Fallow work until its completion receipt exists", async () => {
   const f = fixture()
   const workspace = join(f.root, "workspace")

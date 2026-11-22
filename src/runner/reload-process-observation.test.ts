@@ -103,6 +103,7 @@ test("retained and adoption checks page through tied timestamps without skipping
         operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
       );
+      CREATE TABLE runner_adoptions(id TEXT, state TEXT);
       CREATE TABLE runner_adoption_checks(
         adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
@@ -231,6 +232,7 @@ test("retained and adoption checks without process or settlement evidence stay u
         operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
       );
+      CREATE TABLE runner_adoptions(id TEXT, state TEXT);
       CREATE TABLE runner_adoption_checks(
         adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
@@ -245,6 +247,7 @@ test("retained and adoption checks without process or settlement evidence stay u
        VALUES('retained','task','quality',?,?,?, ?,NULL,'intended')`,
       [checkJSON, workspace, now, missingReceipt],
     )
+    db.run("INSERT INTO runner_adoptions VALUES('adoption','pending')")
     db.run(
       "INSERT INTO runner_adoption_checks VALUES('adoption','task','quality',?,?,?, ?,NULL,'uncertain')",
       [checkJSON, workspace, now, missingReceipt],
@@ -274,6 +277,7 @@ test("completed checks under terminal operations keep unsettled subprocess group
         operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
       );
+      CREATE TABLE runner_adoptions(id TEXT, state TEXT);
       CREATE TABLE runner_adoption_checks(
         adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
@@ -291,6 +295,7 @@ test("completed checks under terminal operations keep unsettled subprocess group
         processCleanup: { state: "uncertain", capability: "process-group", rootPID },
       })
     db.run("INSERT INTO runner_retained_verifications VALUES('retained','failed')")
+    db.run("INSERT INTO runner_adoptions VALUES('adoption','accepted')")
     db.run(
       `INSERT INTO runner_retained_verification_checks
        VALUES('retained','task','quality',?,?,?, ?,?,'completed')`,
@@ -322,7 +327,7 @@ test("completed checks under terminal operations keep unsettled subprocess group
     expect(exited).toEqual({
       kind: "observed",
       processIDs: [],
-      staleChecks: ["retained:retained/task/quality"],
+      staleChecks: ["retained:retained/task/quality", "adoption:adoption/task/quality"],
     })
   } finally {
     db.close()
