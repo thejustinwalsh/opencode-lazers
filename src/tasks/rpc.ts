@@ -1,4 +1,5 @@
 import { timedRpc } from "../diagnostics/stall-probe.ts"
+import { ArchivedSessionError } from "../session-archived.ts"
 import { FallowConfigRequiredError } from "../audit/fallow-refusal.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
@@ -30,8 +31,9 @@ export function registerTaskReads(
         Effect.tryPromise({
           try: async () => {
             const actor = await runtime.host.session(input.sessionID)
-            if (!actor || actor.archived || actor.projectID !== runtime.projectID || !actor.agent)
+            if (!actor || actor.projectID !== runtime.projectID || !actor.agent)
               throw new Error("Start requires a live session in this project")
+            if (actor.archived) throw new ArchivedSessionError()
             await Effect.runPromise(
               ctx.permission.assert({
                 sessionID: Session.ID.make(actor.id),

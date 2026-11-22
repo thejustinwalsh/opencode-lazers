@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite"
+import { ARCHIVED_SESSION_MESSAGE } from "../session-archived.ts"
 import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
@@ -1761,7 +1762,7 @@ test("Models source refresh fetches without credentials and only after authoriza
   }
 })
 
-test("an archived session of this project may read Models (streams, price sources, a timed refresh) but not write", async () => {
+test("an archived session of this project reads Models as a live one; a change gets the plain archived reason", async () => {
   // Live 2026-11-22: the Architect's renewals archive its session while the Models panel stays
   // open on it, and every read failed with "Models scope is unavailable".
   const root = directory()
@@ -1795,10 +1796,9 @@ test("an archived session of this project may read Models (streams, price source
     ).toBeDefined()
     expect(
       await rejects(methods.refreshSources({ sessionID: "ses-native", force: true })),
-    ).toMatchObject({
-      message: "Models scope is unavailable",
-    })
-    await expect(authorize("lz-configure-models")).rejects.toThrow("Models scope is unavailable")
+    ).toMatchObject({ message: ARCHIVED_SESSION_MESSAGE })
+    // A change gets the plain reason, not a scope error.
+    await expect(authorize("lz-configure-models")).rejects.toThrow(ARCHIVED_SESSION_MESSAGE)
     // A session of another project, or one without an agent, still reads nothing.
     harness.setActor({ ...archived, projectID: "foreign-project" })
     await expect(authorize("lz-read-model-decision")).rejects.toThrow("Models scope is unavailable")

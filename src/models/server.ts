@@ -6,6 +6,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Integration } from "@opencode/schema/integration"
 import { Session } from "@opencode/schema/session"
+import { ArchivedSessionError } from "../session-archived.ts"
 import { Effect } from "effect"
 import { TaskRepository } from "../storage.ts"
 import {
@@ -66,10 +67,9 @@ function isSessionNotFound(error: unknown): boolean {
 }
 
 /**
- * The Models actions that only read. An archived session of this project may still read: the
- * Architect's renewals archive its session every few minutes, and the panel stays open on it
- * (2026-11-22, live: every Models read refused with "Models scope is unavailable"). Writes
- * (`lz-configure-models`) and a forced refresh still need a live session.
+ * The Models actions that only read. An archived session of this project reads as a live one
+ * (`src/session-archived.ts`); writes (`lz-configure-models`) and a forced refresh from an
+ * archived session are refused with the plain reason.
  */
 const READ_ACTIONS: ReadonlySet<string> = new Set([
   "lz-read-model-decision",
@@ -78,8 +78,8 @@ const READ_ACTIONS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * The caller's session: it exists, belongs to this project and has an agent; unless the caller
- * only reads, it is not archived.
+ * The caller's session: it exists, belongs to this project and has an agent. A change from an
+ * archived session is refused with the plain reason (`ArchivedSessionError`).
  */
 async function eligibleSession(
   ctx: ModelsContext,
@@ -102,10 +102,10 @@ async function eligibleSession(
     !session ||
     String(session.id) !== sessionID ||
     session.projectID !== projectID ||
-    (!reading && session.time.archived !== undefined) ||
     !session.agent
   )
     throw new Error("Models scope is unavailable")
+  if (!reading && session.time.archived !== undefined) throw new ArchivedSessionError()
   return { session, agent: session.agent }
 }
 

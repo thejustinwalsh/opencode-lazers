@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode/plugin/effect"
+import { ArchivedSessionError } from "../session-archived.ts"
 import { Session } from "@opencode/schema/session"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
@@ -26,6 +27,7 @@ async function authorizeArchitectCaller(
   projectID: string,
   store: ManagedUsageStore,
   signal: AbortSignal,
+  access: "read" | "change",
 ) {
   if (call.agent !== "architect") throw new Error(UNAVAILABLE)
   signal.throwIfAborted()
@@ -34,11 +36,12 @@ async function authorizeArchitectCaller(
     String(caller.id) !== String(call.sessionID) ||
     caller.projectID !== projectID ||
     caller.agent !== "architect" ||
-    caller.time.archived !== undefined ||
     isWorkerAgent(caller.agent) ||
     store.isWorkerSession(String(caller.id))
   )
     throw new Error(UNAVAILABLE)
+  // An archived session reads as a live one; a change from it gets the plain reason.
+  if (access === "change" && caller.time.archived !== undefined) throw new ArchivedSessionError()
   return caller
 }
 
@@ -131,6 +134,7 @@ async function executeManagedUsageEnrollment(input: {
     input.projectID,
     input.store,
     input.signal,
+    "change",
   )
   const request = ManagedUsageEnrollmentInputSchema.parse(input.raw)
   assertProject(request, input.ctx)
@@ -249,6 +253,7 @@ export function registerManagedUsageTools(input: {
                     input.projectID,
                     input.store,
                     signal,
+                    "read",
                   )
                   validateReadScope(input.store, request.scope)
                   const report = await readManagedUsageReport({
@@ -265,6 +270,7 @@ export function registerManagedUsageTools(input: {
                     input.projectID,
                     input.store,
                     signal,
+                    "read",
                   )
                   if (String(currentCaller.id) !== String(caller.id)) throw new Error(UNAVAILABLE)
                   validateReadScope(input.store, request.scope)
