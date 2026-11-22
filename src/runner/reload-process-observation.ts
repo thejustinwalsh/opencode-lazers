@@ -173,6 +173,8 @@ export async function observeVerificationProcesses(
         let identityFound = false
         for (const member of groupMembers) {
           if (!withinCheckLifetime(candidate, member)) continue
+          // A reused root PID is not enough; confirm its command still identifies this check.
+          if (member.pid === rootPID && !phaseRootMatches(candidate, member)) continue
           if (processCwd(dependencies.cwd(member.pid), member.pid) !== candidate.workspace) continue
           identityFound = true
           break
