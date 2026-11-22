@@ -11,6 +11,7 @@ import {
   eventFromTranscript,
   timelineEventID,
 } from "../../src/trajectory-panel/rows.ts"
+import { buildTracks } from "../../src/trajectory-panel/tracks.ts"
 
 const base = { plan_id: "plan", attempt_id: "attempt", session_id: "ses" }
 
@@ -59,6 +60,52 @@ test("a timeline row maps to the event kind the view knows", () => {
   expect(
     eventFromRow({ ...base, ref: "pg:2", kind: "progress", event: "commentary" }, "t").kind,
   ).toBe("commentary")
+})
+
+test("a stored progress row keeps its projected kind, its call and its file targets", () => {
+  // The live display rows store the projected kind (`worker-tool`), not the raw one.
+  const targets = { coverage: "observed", operation: "edit", paths: ["src/a.ts"] }
+  const progress = eventFromRow(
+    {
+      ...base,
+      ref: "pg:7",
+      kind: "progress",
+      event: "worker-tool",
+      tool: "edit",
+      at: 10,
+      message_id: "msg",
+      call_id: "call-1",
+      file_targets: targets,
+    },
+    "t",
+  )
+  expect(progress).toMatchObject({ kind: "worker-tool", callID: "call-1", fileTargets: targets })
+  for (const kind of ["user", "synthetic", "worker-gap"])
+    expect(eventFromRow({ ...base, ref: "pg:8", kind: "progress", event: kind }, "t").kind).toBe(
+      kind,
+    )
+  // With the host's call for the same session and call id: one tool mark, one file mark.
+  const native = eventFromRow(
+    {
+      ...base,
+      ref: "call:1",
+      kind: "tool",
+      at: 9,
+      message_id: "msg",
+      call_id: "call-1",
+      tool: "edit",
+      status: "completed",
+      completed_at: 11,
+    },
+    "t",
+  )
+  const tracks = buildTracks(
+    { origin: 0, durationMs: 100 },
+    [native, progress],
+    new Map([["attempt", "accepted"]]),
+  )
+  expect(tracks.tools).toHaveLength(1)
+  expect(tracks.files.map((file) => file.paths)).toEqual([["src/a.ts"]])
 })
 
 test("a tool row and its transcript row are one event by id", () => {

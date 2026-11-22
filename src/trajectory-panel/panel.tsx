@@ -16,7 +16,7 @@ import {
 import { Streams } from "../streams/contract.ts"
 import { rpcStreamsTransport } from "../streams/gui.ts"
 import type { StreamsRpc } from "../streams/gui.ts"
-import { endPadding, rulerLabels, slowSeconds } from "./panel-layout.ts"
+import { endPadding, laneCountText, rulerLabels, slowSeconds } from "./panel-layout.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { PanelIcon } from "./icons.tsx"
@@ -35,6 +35,7 @@ import { isSpanWidth, layoutMarks } from "./marks.ts"
 import type { MarkGlyph } from "./marks.ts"
 import { taskStatePresentation } from "./state-presentation.ts"
 import {
+  attemptActive,
   attemptDuration,
   attemptName,
   attemptSignals,
@@ -59,6 +60,7 @@ import {
   elapsedDurationLabel,
   eventPayload,
   currentTaskState,
+  isActiveAttemptState,
   sourceReferences,
 } from "./projection.ts"
 import type {
@@ -938,7 +940,9 @@ function PanelView(
   const headerModel = () => attemptModel(headerAttempt())
   const headerTiming = () => {
     const attempt = headerAttempt()
-    const duration = attempt ? spanOf(attempt) : null
+    if (!attempt) return null
+    // Active: elapsed so far. Finished: time the session worked, never the wall span.
+    const duration = isActiveAttemptState(attempt.state) ? spanOf(attempt) : attemptActive(attempt)
     return duration ? { text: durationText(duration.ms), open: duration.open } : null
   }
   const taskStatus = () => (report() ? currentTaskState(report()!) : "")
@@ -1020,7 +1024,7 @@ function PanelView(
     const view = taskView()
     return view
       ? { glyph: view.icon, tone: view.tone, label: view.label }
-      : taskStatePresentation(taskStatus())
+      : taskStatePresentation(taskStatus(), report()?.task.integrated)
   }
   const isLatestAttempt = (attempt: { id: string }) => report()?.attempts.at(-1)?.id === attempt.id
   const lastActivityOf = (attempt: { id: string }) => lastWorkerActivity(loadedEvents(), attempt.id)
@@ -1146,10 +1150,23 @@ function PanelView(
       </div>
     )
   }
-  const LaneLabel = (label: { name: string; count: number }) => (
+  /** `windowed`: the lane is drawn from the timeline window, so its count may be partial. */
+  const LaneLabel = (label: {
+    name: string
+    count: number
+    windowed?: boolean
+    total?: number | null
+  }) => (
     <span class="lazers-trajectory-label-cell">
       <span class="lazers-trajectory-lane-name">{label.name}</span>
-      <span class="lazers-trajectory-lane-count">{label.count.toLocaleString()}</span>
+      <span
+        class="lazers-trajectory-lane-count"
+        title={
+          label.windowed && streaming() ? "Loaded in view; pan or zoom to load the rest" : undefined
+        }
+      >
+        {laneCountText(label.count, Boolean(label.windowed && streaming()), label.total)}
+      </span>
     </span>
   )
   const contextAttempt = createMemo(() => {
@@ -1780,7 +1797,7 @@ function PanelView(
                 <ul class="lazers-trajectory-recent" aria-label="Recent tasks">
                   <For each={recentTasks()}>
                     {(task) => {
-                      const glyph = () => taskStatePresentation(task.status)
+                      const glyph = () => taskStatePresentation(task.status, task.integrated)
                       return (
                         <li>
                           <button
@@ -2129,7 +2146,15 @@ function PanelView(
                         data-track="tools"
                         data-selected={laneSelected("tools")}
                       >
-                        <LaneLabel name="Tools" count={tracks()?.tools.length ?? 0} />
+                        <LaneLabel
+                          name="Tools"
+                          windowed
+                          count={tracks()?.tools.length ?? 0}
+                          total={report()?.attempts.reduce(
+                            (sum, attempt) => sum + attempt.toolCount.value,
+                            0,
+                          )}
+                        />
                         <div
                           class="lazers-trajectory-track lazers-trajectory-mark-track"
                           role="listbox"
@@ -2210,7 +2235,7 @@ function PanelView(
                         data-track="files"
                         data-selected={laneSelected("files")}
                       >
-                        <LaneLabel name="Files" count={tracks()?.files.length ?? 0} />
+                        <LaneLabel name="Files" windowed count={tracks()?.files.length ?? 0} />
                         <div
                           class="lazers-trajectory-track lazers-trajectory-mark-track"
                           role="listbox"
