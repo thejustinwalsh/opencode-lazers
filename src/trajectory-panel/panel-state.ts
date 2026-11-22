@@ -512,7 +512,13 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
         count(value?.timeline.after() ?? 0),
       partial: value ? value.timeline.before() !== 0 || value.timeline.after() !== 0 : false,
       loadingTranscript: transcript ? !transcript.loaded() : false,
-      loading: Boolean(id) && !failure() && !(value?.schedule.loaded() && value.attempts.loaded()),
+      // Before a task is chosen the panel is loading until the task choices answer, so it never
+      // says "no tasks" for a list that has not arrived.
+      loading:
+        !failure() &&
+        (id
+          ? !(value?.schedule.loaded() && value.attempts.loaded())
+          : !choices.loaded() && !choices.error()),
       stale: Boolean(error) && Boolean(report),
       error,
       asOf: value?.timeline.loaded() ? Date.now() : null,
