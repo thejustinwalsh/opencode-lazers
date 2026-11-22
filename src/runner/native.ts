@@ -677,6 +677,24 @@ export function nativeHost(
       throw error
     }
   }
+  /** The attempt's own unarchived worker session in its assigned worktree, or the given refusal. */
+  const assertOwnedWorker = async (
+    input: { sessionID: string; attemptID: string; directory: string },
+    refusal: string,
+  ) => {
+    const sessionID = Session.ID.make(input.sessionID)
+    const session = await Effect.runPromise(ctx.session.get({ sessionID }))
+    if (
+      session.id !== input.sessionID ||
+      !isWorkerAgent(session.agent) ||
+      session.projectID !== ctx.location.project.id ||
+      session.location.directory !== input.directory ||
+      session.metadata?.lazersAttemptID !== input.attemptID ||
+      session.time.archived !== undefined
+    )
+      throw new Error(refusal)
+    return sessionID
+  }
   const observeWorker = (
     client: NativeInboxClient,
     sessionID: string,
@@ -1296,18 +1314,28 @@ export function nativeHost(
         }),
       )
     },
+    async cancelStrandedInput(input) {
+      await assertOwnedWorker(input, "Stranded input target is not the owned worker attempt")
+      const client = await connectedClient()
+      const worker = await observeWorker(client, input.sessionID, input.directory)
+      if (worker.active || worker.runningShells > 0)
+        throw new Error("Worker is running; its inbox is not stranded")
+      const cancelled: string[] = []
+      for (const entry of await runNative(client, () =>
+        client.session.inbox.list({ sessionID: input.sessionID }),
+      )) {
+        await runNative(client, () =>
+          client.session.inbox.cancel({ sessionID: input.sessionID, inboxID: entry.id }),
+        )
+        cancelled.push(entry.id)
+      }
+      return cancelled
+    },
     async steerWorker(input) {
-      const sessionID = Session.ID.make(input.sessionID)
-      const session = await Effect.runPromise(ctx.session.get({ sessionID }))
-      if (
-        session.id !== input.sessionID ||
-        !isWorkerAgent(session.agent) ||
-        session.projectID !== ctx.location.project.id ||
-        session.location.directory !== input.directory ||
-        session.metadata?.lazersAttemptID !== input.attemptID ||
-        session.time.archived !== undefined
+      const sessionID = await assertOwnedWorker(
+        input,
+        "Takeover notice target is not the owned worker attempt",
       )
-        throw new Error("Takeover notice target is not the owned worker attempt")
       const client = await connectedClient()
       await runNative(client, () =>
         client.session.synthetic({

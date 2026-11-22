@@ -312,6 +312,45 @@ export class AttemptAdvance {
     )
   }
 
+  /**
+   * An idle worker (not running, no shell, no child, no approval) whose inbox still holds input
+   * after a whole no-progress window will not run it: the host queued it for a session it does not
+   * resume (a shell notice queued across a restart). Waiting on it has no exit, so the entries are
+   * cancelled through the host and the next pass settles the idle turn the ordinary way.
+   */
+  private async cancelStrandedInput(ctx: AdvanceContext): Promise<boolean> {
+    const { plan, attempt, fence, session } = ctx
+    if (
+      this.workerNoProgressWindowMs <= 0 ||
+      !this.host.cancelStrandedInput ||
+      session.busy ||
+      !session.pendingInput ||
+      session.observationUnstable ||
+      (session.runningShells ?? 0) > 0 ||
+      (session.activeChildren ?? 0) > 0 ||
+      (session.pendingPermissions ?? 0) > 0 ||
+      (session.pendingForms ?? 0) > 0
+    )
+      return false
+    const progressAt = this.lastWorkerProgressAt(attempt, session)
+    if (this.now() - progressAt < this.workerNoProgressWindowMs) return false
+    const inboxIDs = await this.host.cancelStrandedInput({
+      sessionID: session.id,
+      attemptID: attempt.id,
+      directory: attempt.workspace,
+    })
+    this.store.fenced(this.owner, fence, () =>
+      this.store.record(plan.id, attempt.task_id, "WORKER_STRANDED_INPUT_CANCELLED", {
+        attemptID: attempt.id,
+        sessionID: session.id,
+        inboxIDs,
+        progressAt,
+        windowMs: this.workerNoProgressWindowMs,
+      }),
+    )
+    return true
+  }
+
   async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
@@ -324,6 +363,7 @@ export class AttemptAdvance {
     if (!session) return
     const ctx: AdvanceContext = { plan, attempt, fence, observation, session }
     if (await this.holdWorkerWaits(ctx)) return
+    if (await this.cancelStrandedInput(ctx)) return
     if (await this.settleIdleWorker(ctx)) return
     await this.finishWorkerTurn(ctx)
   }
