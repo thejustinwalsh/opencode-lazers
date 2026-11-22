@@ -10,6 +10,7 @@ import type { RuntimeCore } from "./runtime-core.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
 import type { VerificationReview } from "./verification-review.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
+import type { AttemptSettlementObservation } from "./attempt-settlement-observation.ts"
 import type { Dispatch } from "./dispatch.ts"
 import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { TaskRuntime } from "./runtime.ts"
@@ -39,6 +40,7 @@ export type AttemptAdvanceDeps = {
     approvalWaitReason: WorkerObservation["approvalWaitReason"]
     resumeTransientObservationWait: WorkerObservation["resumeTransientObservationWait"]
     backgroundWait: WorkerObservation["backgroundWait"]
+    attemptSettlementObservation: WorkerObservation["attemptSettlementObservation"]
   }
 }
 
@@ -78,6 +80,7 @@ export class AttemptAdvance {
   private readonly approvalWaitReason: WorkerObservation["approvalWaitReason"]
   private readonly resumeTransientObservationWait: WorkerObservation["resumeTransientObservationWait"]
   private readonly backgroundWait: WorkerObservation["backgroundWait"]
+  private readonly attemptSettlementObservation: WorkerObservation["attemptSettlementObservation"]
 
   constructor(
     private readonly core: RuntimeCore,
@@ -108,6 +111,8 @@ export class AttemptAdvance {
     this.resumeTransientObservationWait = (...args) =>
       deps.workerObservation.resumeTransientObservationWait(...args)
     this.backgroundWait = (...args) => deps.workerObservation.backgroundWait(...args)
+    this.attemptSettlementObservation = (...args) =>
+      deps.workerObservation.attemptSettlementObservation(...args)
   }
 
   private get store() {
@@ -145,6 +150,8 @@ export class AttemptAdvance {
       const node = this.store.node(plan.id, attempt.task_id)
       let target: "accepted" | "failed" | "cancelled" | undefined
       let cause: string
+      let workerObservation: AttemptSettlementObservation | undefined
+      let observationFence: WorkerObservationFence | undefined
       if (node && ["accepted", "incorporated"].includes(node.state)) {
         if (!["running", "verifying"].includes(attempt.state)) continue
         target = "accepted"
@@ -161,23 +168,69 @@ export class AttemptAdvance {
         if (seen === undefined || now - seen.probed < AttemptAdvance.staleAttemptWindowMs) continue
         seen.probed = now
         const session = attempt.session_id ? await this.host.session(attempt.session_id) : null
-        if (
-          session &&
-          (!session.archived ||
+        if (!session) {
+          target = plan.state === "blocked" ? "failed" : "cancelled"
+          cause = "session-absent"
+        } else if (session.archived) {
+          if (
             session.busy ||
             session.pendingInput ||
             (session.pendingPermissions ?? 0) > 0 ||
             (session.pendingForms ?? 0) > 0 ||
             session.observationUnstable ||
             (session.runningShells ?? 0) > 0 ||
-            (session.activeChildren ?? 0) > 0)
-        )
-          continue
-        target = plan.state === "blocked" ? "failed" : "cancelled"
-        cause = session ? "session-archived-and-quiet" : "session-absent"
+            (session.activeChildren ?? 0) > 0
+          )
+            continue
+          target = plan.state === "blocked" ? "failed" : "cancelled"
+          cause = "session-archived-and-quiet"
+        } else if (
+          plan.state === "blocked" &&
+          attempt.state === "running" &&
+          session.outcome === undefined &&
+          !session.busy &&
+          session.pendingInput === false &&
+          session.pendingPermissions === 0 &&
+          session.pendingForms === 0 &&
+          !session.observationUnstable &&
+          (session.runningShells ?? 0) === 0 &&
+          (session.activeChildren ?? 0) === 0
+        ) {
+          if (!attempt.session_id) continue
+          const currentPlan = this.store.plan(plan.id)
+          if (!currentPlan || currentPlan.version !== plan.version) continue
+          const scopeWait = this.store.latestTransition<{
+            attemptID?: string
+            reason?: string
+          }>(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED")
+          if (scopeWait?.attemptID === attempt.id && scopeWait.reason === currentPlan.reason)
+            continue
+          observationFence = this.workerObservationFence(currentPlan, attempt)
+          if (!observationFence) continue
+          const detailed = await this.host.session(attempt.session_id, { messages: true })
+          if (!detailed || !this.workerObservationCurrent(observationFence)) continue
+          workerObservation = this.attemptSettlementObservation(attempt, detailed)
+          if (!workerObservation) continue
+          this.observeUsage(attempt, detailed, fence)
+          if (!this.workerObservationCurrent(observationFence)) continue
+          target = "failed"
+          cause = "session-live-idle-exact-completed-input"
+        } else continue
       } else continue
       this.store.fenced(this.owner, fence, (db) => {
         if (this.store.planStatus(plan.id)?.version !== plan.version) return
+        if (observationFence) {
+          const currentPlan = this.store.plan(plan.id)
+          const scopeWait = this.store.latestTransition<{
+            attemptID?: string
+            reason?: string
+          }>(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED")
+          if (
+            !this.workerObservationCurrent(observationFence) ||
+            (scopeWait?.attemptID === attempt.id && scopeWait.reason === currentPlan?.reason)
+          )
+            return
+        }
         const changed = db
           .query(
             `UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,?),artifact=COALESCE(artifact,?)
@@ -195,6 +248,7 @@ export class AttemptAdvance {
           planState: plan.state,
           nodeState: node?.state ?? null,
           cause,
+          ...(workerObservation ? { workerObservation } : {}),
         })
       })
     }
