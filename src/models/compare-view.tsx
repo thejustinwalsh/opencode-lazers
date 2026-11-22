@@ -362,8 +362,11 @@ function CompareTop(props: { ctl: ModelsController }) {
                   emptyText={benchmarkEmptyText()}
                 />
                 <p class="lazers-models-benchmark-coverage">
-                  {baseline()?.points.length ?? 0} plotted · {baseline()?.unmatchedRoutes ?? 0}{" "}
-                  loaded catalog models without a benchmark match
+                  {baseline()?.points.length ?? 0} plotted
+                  {/* Each segment names something left out; nothing left out says nothing. */}
+                  {baseline()?.unmatchedRoutes
+                    ? ` · ${baseline()!.unmatchedRoutes} loaded catalog ${baseline()!.unmatchedRoutes === 1 ? "model" : "models"} without a benchmark match`
+                    : ""}
                   {baseline()?.ambiguousRoutes
                     ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
                     : ""}

@@ -360,6 +360,8 @@ test("benchmark: points come from models.benchmark, left-off models are named", 
   const stream = host.lastOpen("models.benchmark")!
   expect(stream.window).toBe(5)
   expect(text(root)).toContain("4 plotted")
+  // A zero is not a finding: the coverage line names only what was left out.
+  expect(text(root)).not.toMatch(/\b0 loaded catalog/)
   expect(text(root)).toContain("1 scored model has no price in any source")
   expect(text(root)).toContain("Muse Ember \u00b7 no price in any configured source")
   expect(text(root)).toContain("Artificial Analysis Coding Index")
