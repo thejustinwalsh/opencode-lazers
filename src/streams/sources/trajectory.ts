@@ -1,4 +1,5 @@
 import { defineSource, type StreamContext } from "../source.ts"
+import { LINEAGE_KEY_SQL } from "../../tasks/schedule/lineage.ts"
 import {
   TRAJECTORY_SOURCES,
   trajectoryAttemptColumns,
@@ -203,8 +204,10 @@ export async function authorizeTask<F extends TrajectoryAttemptsFilter>(
           .query("SELECT 1 FROM tasks WHERE project_directory=? AND id=?")
           .get(projectDirectory, input.taskID)
       : db
-          .query("SELECT 1 FROM task_schedule_sessions WHERE session_id=? AND task_id=?")
-          .get(scope.sessionID, input.taskID),
+          .query(
+            `SELECT 1 FROM task_schedule_sessions WHERE lineage_key=${LINEAGE_KEY_SQL} AND task_id=?`,
+          )
+          .get(scope.sessionID, scope.sessionID, input.taskID),
   )
   if (!belongs) throw new Error("Trajectory scope is unavailable")
   return { ...input, projectDirectory }

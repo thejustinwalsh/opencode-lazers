@@ -107,15 +107,18 @@ Index `(project_directory, priority_key, seq)`: the scheduler's plan order, whic
 
 ### Child tables
 
-| Table                    | Key                           | Holds                                                                                                                       | Replaces                                                                  |
-| ------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `task_schedule_edges`    | `(parent_task_id, ord)`       | `child_task_id`, `kind` (`plan`, `after-plan`), `child_reference`, `child_title`, `child_state`, `waiting`, `child_plan_id` | `relationMap`/`dependencyTasks` (`execution-list.ts:304`), topology edges |
-| `task_schedule_blockers` | `(task_id, blocker_task_id)`  | the active reservations a queued task conflicts with                                                                        | `reservationTaskIDs` (capped at 100 today)                                |
-| `task_schedule_waits`    | `(task_id, ord)`              | `plan_id`, `title`, `state`, `reason`: prerequisite plans not yet integrated                                                | `waitingOnPlans` (capped at 100, `schema.ts:381`)                         |
-| `task_schedule_sessions` | `(session_id, task_id, role)` | `role`: `creator`, `owner` (plan owner), `attempt`                                                                          | the three-way `OR EXISTS` of `observability/task-reads.ts:120`            |
+| Table                    | Key                           | Holds                                                                                                                              | Replaces                                                                                                             |
+| ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `task_schedule_edges`    | `(parent_task_id, ord)`       | `child_task_id`, `kind` (`plan`, `after-plan`), `child_reference`, `child_title`, `child_state`, `waiting`, `child_plan_id`        | `relationMap`/`dependencyTasks` (`execution-list.ts:304`), topology edges                                            |
+| `task_schedule_blockers` | `(task_id, blocker_task_id)`  | the active reservations a queued task conflicts with                                                                               | `reservationTaskIDs` (capped at 100 today)                                                                           |
+| `task_schedule_waits`    | `(task_id, ord)`              | `plan_id`, `title`, `state`, `reason`: prerequisite plans not yet integrated                                                       | `waitingOnPlans` (capped at 100, `schema.ts:381`)                                                                    |
+| `task_schedule_sessions` | `(session_id, task_id, role)` | `role`: `creator`, `owner` (plan owner), `attempt`, `continuation` (the plan's continuation session and its parent); `lineage_key` | the three-way `OR EXISTS` of `observability/task-reads.ts:120`, plus the continuation links of `sessionAssociations` |
+| `task_schedule_lineage`  | `(session_id)`                | `root_session_id`: the first session of an Architect renewal chain, one row per renewal successor                                  | a session reads what its whole renewal lineage owns, archived predecessors included                                  |
 
 Edge indexes: `(child_task_id)`, `(child_plan_id)` for fan-out updates. Blockers: `(blocker_task_id)`.
-Sessions: `(task_id)`.
+Sessions: `(task_id)`, `(lineage_key, task_id)`. A session view resolves the session's lineage key
+with one read of `task_schedule_lineage` and matches `lineage_key`; a 147-session chain stores
+no row per member and task.
 
 Search has no index. `task_schedule.search_text` holds the lower-cased six fields
 `summarize` matches (id, reference, objective, write scope, acceptance assertions, context

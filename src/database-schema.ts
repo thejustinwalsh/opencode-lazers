@@ -246,6 +246,7 @@ export const schemaModules = {
       "task_schedule_blockers",
       "task_schedule_waits",
       "task_schedule_sessions",
+      "task_schedule_lineage",
       "task_schedule_scopes",
       "task_schedule_search",
       "task_schedule_counts",
