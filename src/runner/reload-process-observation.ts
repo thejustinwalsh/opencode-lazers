@@ -9,7 +9,6 @@ import {
 } from "./reload-verification-candidates.ts"
 
 const PROCESS_START_TOLERANCE_MS = 2_000
-const PROCESS_LAUNCH_WINDOW_MS = 10_000
 
 type ProcessSnapshot = {
   pid: number
@@ -18,15 +17,16 @@ type ProcessSnapshot = {
   command: string
 }
 
-type ProbeResult = {
+export type ProcessProbeResult = {
   status: number | null
   stdout: string
   error?: Error
 }
 
 export type ProcessProbeDependencies = {
-  list(): ProbeResult
-  cwd(pid: number): ProbeResult
+  list(): ProcessProbeResult
+  cwd(pid: number): ProcessProbeResult
+  now?(): number
 }
 
 function errorReason(error: unknown) {
@@ -42,7 +42,7 @@ function canonicalPath(path: string) {
 }
 
 function defaultProcessProbe(): ProcessProbeDependencies {
-  const run = (command: string, args: string[]): ProbeResult => {
+  const run = (command: string, args: string[]): ProcessProbeResult => {
     const result = spawnSync(command, args, { encoding: "utf8", timeout: 5_000 })
     return {
       status: result.status,
@@ -73,7 +73,7 @@ function elapsedMilliseconds(value: string): number | undefined {
   return (Number(dayText) * 24 * 60 * 60 + hours * 60 * 60 + minutes * 60 + seconds) * 1_000
 }
 
-function parseProcessList(result: ProbeResult, observedAt: number): ProcessSnapshot[] {
+function parseProcessList(result: ProcessProbeResult, observedAt: number): ProcessSnapshot[] {
   if (result.error) throw new Error(`Process listing failed: ${errorReason(result.error)}`)
   if (result.status !== 0)
     throw new Error(`Process listing exited with ${result.status ?? "unknown"}`)
@@ -104,7 +104,7 @@ function parseProcessList(result: ProbeResult, observedAt: number): ProcessSnaps
   return processes
 }
 
-function processCwd(result: ProbeResult, pid: number) {
+function processCwd(result: ProcessProbeResult, pid: number) {
   if (result.error)
     throw new Error(`Could not inspect process ${pid} cwd: ${errorReason(result.error)}`)
   if (result.status !== 0)
@@ -117,17 +117,32 @@ function processCwd(result: ProbeResult, pid: number) {
   return canonicalPath(path)
 }
 
-function processMatches(
+function withinCheckLifetime(candidate: VerificationProcessCandidate, process: ProcessSnapshot) {
+  return (
+    process.startedAt >= candidate.startedAt - PROCESS_START_TOLERANCE_MS &&
+    process.startedAt <= candidate.startedAt + candidate.hardTimeoutMs + PROCESS_START_TOLERANCE_MS
+  )
+}
+
+function commandAppears(processCommand: string, expected: string) {
+  if (processCommand.includes(expected)) return true
+  const quoted = `'${expected.replaceAll("'", "'\\''")}'`
+  return processCommand.includes(quoted)
+}
+
+function phaseRootMatches(
   candidate: VerificationProcessCandidate,
   process: ProcessSnapshot,
 ): boolean {
   return (
-    (!candidate.pid || process.pid === candidate.pid) &&
     process.processGroupID === process.pid &&
-    process.startedAt >= candidate.startedAt - PROCESS_START_TOLERANCE_MS &&
-    process.startedAt <= candidate.startedAt + PROCESS_LAUNCH_WINDOW_MS &&
-    process.command.includes(candidate.command)
+    withinCheckLifetime(candidate, process) &&
+    candidate.processCommands.some((command) => commandAppears(process.command, command))
   )
+}
+
+function membersOfGroup(groupID: number, processes: readonly ProcessSnapshot[]): ProcessSnapshot[] {
+  return processes.filter((process) => process.processGroupID === groupID)
 }
 
 export async function observeVerificationProcesses(
@@ -136,13 +151,53 @@ export async function observeVerificationProcesses(
 ): Promise<ReloadProcessObservation> {
   try {
     const candidates = verificationProcessCandidates(db)
-    const processes = parseProcessList(dependencies.list(), Date.now())
+    const observedAt = dependencies.now?.() ?? Date.now()
+    const processes = parseProcessList(dependencies.list(), observedAt)
     const processIDs = new Set<number>()
-    for (const process of processes) {
-      const matches = candidates.filter((check) => processMatches(check, process))
-      if (matches.length === 0) continue
-      const cwd = processCwd(dependencies.cwd(process.pid), process.pid)
-      if (matches.some((check) => check.workspace === cwd)) processIDs.add(process.pid)
+    const matchedCandidates = new Set<string>()
+    const rootCandidates = candidates.filter((candidate) => !candidate.settled)
+
+    for (const candidate of rootCandidates) {
+      for (const root of processes.filter((process) => phaseRootMatches(candidate, process))) {
+        if (processCwd(dependencies.cwd(root.pid), root.pid) !== candidate.workspace) continue
+        processIDs.add(root.processGroupID)
+        matchedCandidates.add(candidate.key)
+      }
+      for (const rootPID of candidate.rootPIDs) {
+        const groupMembers = membersOfGroup(rootPID, processes)
+        if (groupMembers.length === 0) {
+          // A complete process-table observation proves this recorded process group is gone.
+          matchedCandidates.add(candidate.key)
+          continue
+        }
+        let identityFound = false
+        for (const member of groupMembers) {
+          if (!withinCheckLifetime(candidate, member)) continue
+          if (processCwd(dependencies.cwd(member.pid), member.pid) !== candidate.workspace) continue
+          identityFound = true
+          break
+        }
+        if (identityFound) {
+          processIDs.add(rootPID)
+          matchedCandidates.add(candidate.key)
+        }
+      }
+    }
+
+    const unknown = rootCandidates.filter((candidate) => !matchedCandidates.has(candidate.key))
+    if (unknown.length > 0) {
+      const examples = unknown
+        .slice(0, 3)
+        .map((candidate) =>
+          candidate.receiptReason ? `${candidate.key} (${candidate.receiptReason})` : candidate.key,
+        )
+      const remainder =
+        unknown.length > examples.length ? ` (+${unknown.length - examples.length} more)` : ""
+      return {
+        kind: "unavailable",
+        processIDs: [...processIDs],
+        reason: `live verification settlement could not be identified for ${examples.join(", ")}${remainder}`,
+      }
     }
     return { kind: "observed", processIDs: [...processIDs] }
   } catch (error) {

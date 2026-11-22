@@ -42,7 +42,8 @@ export type ReloadObservation =
   { kind: "observed"; sessionIDs: readonly string[] } | { kind: "unavailable"; reason: string }
 
 export type ReloadProcessObservation =
-  { kind: "observed"; processIDs: readonly number[] } | { kind: "unavailable"; reason: string }
+  | { kind: "observed"; processIDs: readonly number[] }
+  | { kind: "unavailable"; reason: string; processIDs?: readonly number[] }
 
 export type ReloadObservations = {
   sessions: ReloadObservation
@@ -184,8 +185,7 @@ export function reloadSafety(
             state: attempt.state,
           }))
       : []
-  const verifications =
-    observed.verifications.kind === "observed" ? new Set(observed.verifications.processIDs).size : 0
+  const verifications = new Set(observed.verifications.processIDs ?? []).size
   const architectTakeovers = count(
     db,
     `SELECT count(*) AS n FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
