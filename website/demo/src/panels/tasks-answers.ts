@@ -217,9 +217,12 @@ function currentActivity(data: TasksData, ids: string[]) {
   }
 }
 
+/** The open streams of the mounted panel, told to re-read when the story moves. */
+let streams: ReturnType<typeof taskStreams> | undefined
+
 export function rpc(data: () => TasksData) {
   // The detail and the rows' current activity read as streams.
-  const streams = taskStreams(data, PROJECT.canonical, {
+  streams = taskStreams(data, PROJECT.canonical, {
     detail: (id) => detail(data(), id),
     currentActivity: (ids) => currentActivity(data(), ids),
   })
@@ -246,5 +249,10 @@ export function reads(data: TasksData): Read[] {
   return out
 }
 
-export const tasksChanged = (emit: (type: string, data: unknown) => void) =>
-  emit("rpc.lazers.tasks.changed", { projectDirectory: PROJECT.canonical, version: Date.now() })
+/**
+ * What the service publishes after a change: the `changed` event of every open stream, so the
+ * list, counters and detail each re-read their window over the moved data.
+ */
+export function tasksChanged(emit: (type: string, data: unknown) => void) {
+  for (const event of streams?.changes() ?? []) emit(`rpc.${Streams.id}.changed`, event)
+}

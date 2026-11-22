@@ -75,3 +75,17 @@ test("the demo answers chip counters and the index as ready", () => {
   )
   expect(index.row(0).ready).toBe(true)
 })
+
+test("a story step tells every open Tasks stream to re-read, so the list moves live", async () => {
+  const { rpc, tasksChanged } = await import("../src/panels/tasks-answers.ts")
+  const { Streams } = await import("../../../src/streams/contract.ts")
+  let data = { tasks }
+  const server = rpc(() => data)[Streams.id] as unknown as ReturnType<typeof taskStreams>
+  open(server, 5)
+  data = { tasks: tasks.map((task) => ({ ...task, state: "accepted" as const })) }
+  const events: { type: string; data: unknown }[] = []
+  tasksChanged((type, payload) => events.push({ type, data: payload }))
+  expect(events).toEqual([
+    { type: `rpc.${Streams.id}.changed`, data: { stream: "s", seq: expect.any(Number) } },
+  ])
+})
