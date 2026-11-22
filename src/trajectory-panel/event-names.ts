@@ -193,6 +193,7 @@ export const runnerTransitions: Record<string, string> = {
   WORKER_BACKGROUND_WAIT: "Worker waiting on background work",
   WORKER_CANCEL_WITHOUT_IDLE: "Worker cancelled while busy",
   WORKER_NO_PROGRESS_INTERRUPT: "Worker interrupted, no progress",
+  WORKER_STRANDED_INPUT_CANCELLED: "Worker input the host would not run cancelled",
   WORKER_OBSERVATION_SETTLED: "Worker observation settled",
   WORKER_REVIEW_INPUT_RECONCILED: "Worker review input reconciled",
   WORKER_SESSION_ABSENT: "Worker session missing",

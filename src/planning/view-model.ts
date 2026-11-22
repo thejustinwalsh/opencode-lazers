@@ -26,7 +26,7 @@ export type ViewQuestion = {
 }
 export type ViewAgent = {
   agent: string
-  status: "running" | "stuck" | "reviewed" | "not-run"
+  status: "running" | "reviewed" | "not-run"
   attempts: number
   tokens: number
   durationMs: number
@@ -128,12 +128,12 @@ export function planningViewModel(view: PlanningView): Section[] {
     })
   for (const review of view.reviews) {
     const rows: Row[] = review.agents.map((agent) => ({
-      text: `${agent.agent}: ${agent.status === "stuck" ? "stuck, retrying" : agent.status} · ${
+      text: `${agent.agent}: ${agent.status} · ${
         agent.attempts
       } ${agent.attempts === 1 ? "attempt" : "attempts"} · ${agent.tokens.toLocaleString(
         "en-US",
       )} tokens · ${duration(agent.durationMs)}${agent.reason ? ` · ${agent.reason}` : ""}`,
-      ...(agent.status === "stuck" || agent.status === "not-run" ? { tone: "warn" as const } : {}),
+      ...(agent.status === "not-run" ? { tone: "warn" as const } : {}),
     }))
     if (review.costUSD !== undefined) rows.push({ text: `Cost: $${review.costUSD.toFixed(2)}` })
     sections.push({

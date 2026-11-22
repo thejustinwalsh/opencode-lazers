@@ -121,7 +121,6 @@ function fixture(behavior: (agent: string, nth: number) => Behavior = () => "ok"
       host,
       now: () => clock.t,
       pollMs: 0,
-      inactivityMs: 300_000,
       mapFor: async () => ({
         text: "Source files:\nsrc/a.ts: const a",
         hash: "maphash",
@@ -226,18 +225,17 @@ test("a reply cut off by length fails as truncated", async () => {
   expect(result.agents[0]).toMatchObject({ status: "not-run", reason: "truncated" })
 })
 
-test("a hung agent is interrupted and retried once, then recorded stuck", async () => {
+test("a quiet agent is never interrupted on elapsed time; it keeps running", async () => {
   const f = fixture(() => "hang")
   const reviews = f.make()
   const review = await f.start(reviews, "readiness")
-  for (let i = 0; i < 8 && !f.store.review(review.id)!.settledAt; i++) {
+  for (let i = 0; i < 8; i++) {
     await reviews.advance(review.id)
-    f.clock.t += 300_000
+    f.clock.t += 24 * 3_600_000
   }
-  const result = reviews.result(review.id)
-  expect(result.agents[0]).toMatchObject({ status: "not-run", reason: "stuck", attempts: 2 })
-  expect(f.interrupts).toHaveLength(2)
-  expect(f.store.planning("p1")!.state).toBe("questions-open")
+  expect(f.store.review(review.id)!.settledAt).toBeFalsy()
+  expect(f.interrupts).toHaveLength(0)
+  expect(f.store.runs(review.id).map((run) => run.state)).toEqual(["running"])
 })
 
 test("a restart mid-review finishes from stored state and reports once", async () => {

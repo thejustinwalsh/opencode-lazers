@@ -296,6 +296,7 @@ export class TaskRuntime {
       effect: (...args) => this.journal.effect(...args),
       outcome: (...args) => this.journal.outcome(...args),
       uncertain: (...args) => this.journal.uncertain(...args),
+      supersedeEffect: (...args) => this.journal.supersedeEffect(...args),
       checkActivity: (...args) => this.checkActivities.checkActivity(...args),
       startCheckActivity: (...args) => this.checkActivities.startCheckActivity(...args),
       verificationDeadline: (...args) => this.checkActivities.verificationDeadline(...args),
@@ -309,7 +310,6 @@ export class TaskRuntime {
       startAuditorReport: (...args) => this.verificationReview.startAuditorReport(...args),
       verificationTimeoutDefaults: this.verificationTimeoutDefaults,
       activeProfile: () => activeProfile(this.store.repository, this.directory),
-      profileRevision: (id) => profileRevisionByID(this.store.repository, id),
     })
     this.effectReconciliation = new EffectReconciliation(this.core, {
       supersedeEffect: (...args) => this.journal.supersedeEffect(...args),
@@ -349,6 +349,7 @@ export class TaskRuntime {
     })
     this.planFinish = new PlanFinish(this.core, {
       effect: (...args) => this.journal.effect(...args),
+      supersedeEffect: (...args) => this.journal.supersedeEffect(...args),
       hold: (...args) => this.journal.hold(...args),
       outcome: (...args) => this.journal.outcome(...args),
       receipt: (...args) => this.journal.receipt(...args),

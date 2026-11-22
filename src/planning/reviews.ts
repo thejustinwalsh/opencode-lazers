@@ -19,14 +19,6 @@ import type {
   RunRow,
 } from "./store.ts"
 
-/**
- * How long a planning agent may show no progress before it is interrupted and retried.
- * Hand-picked starting value; not measured. Replaced by: 3 x p99 of `planning_runs.max_gap_ms`
- * over at least 50 reviewed runs, rounded up to a minute, floor 2 minutes (planning-report,
- * Reviews).
- */
-export const PLANNING_AGENT_INACTIVITY_MS = 5 * 60_000
-
 /** Why an agent is in the review. `all` is the default: every planning agent runs. */
 export type AgentSelection = {
   agent: AgentID
@@ -69,7 +61,6 @@ export type PlanningReviewsDeps = {
   now: () => number
   /** Wait between observations of the children; 0 in tests. */
   pollMs?: number
-  inactivityMs?: number
   mapFor: (directory: string) => Promise<RepoMapFacts>
   /** Reports a settled review nobody was waiting for, once, to the Architect's session. */
   notify: (sessionID: string, id: string, text: string) => Promise<void>
@@ -126,10 +117,6 @@ export class PlanningReviews {
   private readonly maps = new Map<string, RepoMapFacts>()
 
   constructor(private readonly deps: PlanningReviewsDeps) {}
-
-  private get inactivityMs() {
-    return this.deps.inactivityMs ?? PLANNING_AGENT_INACTIVITY_MS
-  }
 
   private selection(review: ReviewRow): ReviewSelection {
     return JSON.parse(review.selectionJson) as ReviewSelection
@@ -270,27 +257,22 @@ export class PlanningReviews {
     return [...new Set(runs.map((run) => run.agent))].every((agent) => {
       const latest = this.latest(reviewID, agent)
       if (latest.state === "reviewed" || latest.state === "cancelled") return true
-      return (latest.state === "failed" || latest.state === "stuck") && latest.attempt >= 2
+      return latest.state === "failed" && latest.attempt >= 2
     })
   }
 
   private async advanceAgent(review: ReviewRow, agent: string) {
     let run = this.latest(review.id, agent)
     try {
-      if ((run.state === "failed" || run.state === "stuck") && run.attempt === 1) {
+      if (run.state === "failed" && run.attempt === 1) {
         run = await this.retry(review, run)
       }
       if (run.state === "starting") await this.startRun(review, run)
       run = this.latest(review.id, agent)
       if (run.state === "starting" || run.state === "running") await this.observeRun(review, run)
-    } catch (error) {
-      // A host failure is retried on the next step; a run that cannot even start ends failed.
-      run = this.latest(review.id, agent)
-      if (run.state === "starting" && this.deps.now() - run.startedAt >= this.inactivityMs)
-        this.deps.store.moveRun(run.id, "starting", "failed", {
-          reason: `could not start: ${String(error).slice(0, 300)}`,
-          endedAt: this.deps.now(),
-        })
+    } catch {
+      // A host failure is retried on the next step; the run ends on the host's own outcome or a
+      // lost session, never on elapsed time.
     }
   }
 
@@ -372,7 +354,7 @@ export class PlanningReviews {
       store.moveRun(run.id, "starting", "running")
       run = { ...run, state: "running" }
     }
-    // Progress: any new update from the child resets the inactivity clock.
+    // Progress is recorded for the planning report; it decides nothing.
     if (this.seenUpdate.get(run.id) !== observed.updatedAt) {
       this.seenUpdate.set(run.id, observed.updatedAt)
       const gap = now() - (run.lastActivityAt ?? run.startedAt)
@@ -387,15 +369,7 @@ export class PlanningReviews {
       observed.busyAt !== undefined &&
       observed.idleAt !== undefined &&
       observed.idleAt >= observed.busyAt
-    if (done) return void (await this.finish(run, observed.outcome!))
-    if (now() - (run.lastActivityAt ?? run.startedAt) >= this.inactivityMs) {
-      await host.interrupt(run.sessionId!).catch(() => undefined)
-      store.moveRun(run.id, "running", "stuck", {
-        reason: "stuck",
-        endedAt: now(),
-        durationMs: now() - run.startedAt,
-      })
-    }
+    if (done) await this.finish(run, observed.outcome!)
   }
 
   private async finish(run: RunRow, outcome: "succeeded" | "failed" | "interrupted") {
@@ -502,7 +476,7 @@ export class PlanningReviews {
       if (latest.state === "starting" || latest.state === "running") {
         if (latest.sessionId) await host.interrupt(latest.sessionId).catch(() => undefined)
         store.moveRun(latest.id, latest.state, "cancelled", { reason, endedAt: now() })
-      } else if ((latest.state === "failed" || latest.state === "stuck") && latest.attempt === 1) {
+      } else if (latest.state === "failed" && latest.attempt === 1) {
         // The retry that would have followed never starts.
         store.createRun({
           ...latest,

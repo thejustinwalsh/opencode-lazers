@@ -2,16 +2,15 @@ import { existsSync, readFileSync } from "node:fs"
 import { gitAsync } from "./artifacts.ts"
 import { isStartupWorktreeCandidate } from "./startup-recovery.ts"
 import { terminalPlanStates as terminal } from "./plan-control.ts"
-import { messageID, isRerunnableEffect } from "./runtime-helpers.ts"
+import { errorText, messageID, isRerunnableEffect } from "./runtime-helpers.ts"
 import { fingerprint } from "../identity.ts"
-import { checkResourcesSettled, workingTreeIdentity } from "./artifacts.ts"
+import { checkResourcesSettled } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { protectedPaths } from "./scope.ts"
 import type { WorkerInstruction } from "./host.ts"
 import { hostMessageByID } from "./host-reads.ts"
 import { nativeWorktreeFailureFromReceipt } from "./startup-recovery.ts"
 import { forgetVerificationActivity, verificationActivityKey } from "./verification-activities.ts"
-import type { VerificationActivity } from "./verification-activities.ts"
 import type { CheckActivities } from "./check-activities.ts"
 import type { EffectRow } from "./store.ts"
 import type { RetickRequest } from "./runtime-core.ts"
@@ -84,7 +83,9 @@ export class EffectReconciliation {
     try {
       if (await this.reconcileEffectByKind(effect, payload, fence)) return
       if (isRerunnableEffect(effect.kind)) {
-        this.supersedeEffect(effect, "No receipt was recorded; the check re-runs", fence)
+        // A check reads its candidate: without a settled receipt it simply runs again.
+        this.forgetCheckActivity(effect, { effectID: effect.id, payload: effect.payload })
+        this.supersedeEffect(effect, "No settled receipt was recorded; the check re-runs", fence)
         this.requestRetick()
         return
       }
@@ -95,7 +96,10 @@ export class EffectReconciliation {
           fence,
         )
     } catch (error) {
-      if (effect.state !== "uncertain") this.uncertain(effect, error, fence)
+      if (isRerunnableEffect(effect.kind)) {
+        this.supersedeEffect(effect, `The check re-runs: ${errorText(error)}`, fence)
+        this.requestRetick()
+      } else if (effect.state !== "uncertain") this.uncertain(effect, error, fence)
     }
   }
   /** True when the effect's kind settled it; false leaves the generic no-receipt handling to run. */
@@ -259,7 +263,7 @@ export class EffectReconciliation {
     const check = readCheckReceipt(payload)
     if (check && (await this.checkReceiptMatchesEffect(effect, payload, check)))
       return this.settleMatchedCheck(effect, check, fence, activityIdentity)
-    return this.settleFailedCheckActivity(effect, activity, fence, activityIdentity)
+    return false
   }
   async checkReceiptMatchesEffect(
     effect: EffectRow,
@@ -275,7 +279,6 @@ export class EffectReconciliation {
         check.inputIdentity === payload.identity
       )
     const preparation = check.preparation
-    const scope = this.store.effectiveWriteScope(effect.task_id!)
     return (
       check.id === payload.check.id &&
       check.command === payload.command &&
@@ -286,37 +289,19 @@ export class EffectReconciliation {
       preparation !== undefined &&
       preparation.inputFingerprint === payload.inputFingerprint &&
       JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
-      JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
-      JSON.stringify(scope) === JSON.stringify(payload.scope) &&
-      preparation.resultingFingerprint ===
-        (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
       !protectedPaths(preparation.paths, this.store.effectiveScope(effect.task_id!)).length
     )
   }
+  /** A completed, settled receipt completes the effect; an aborted or unsettled one does not. */
   settleMatchedCheck(
     effect: EffectRow,
     check: RunnerCheckReceipt,
     fence: number,
     activityIdentity: unknown,
   ): boolean {
-    const mechanical = effect.kind === "mechanical-fix"
-    if (check.aborted) {
-      this.uncertain(effect, "Verification was interrupted before completion", fence, { check })
-      this.forgetCheckActivity(effect, activityIdentity)
-      return true
-    }
+    if (check.aborted || !checkResourcesSettled(check)) return false
     if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id)
       this.recordVerificationEvidence(effect, check)
-    if (!checkResourcesSettled(check)) {
-      this.uncertain(
-        effect,
-        unsettledCheckError(mechanical ? "Mechanical" : "Verification", check),
-        fence,
-        { check },
-      )
-      if (!mechanical) this.forgetCheckActivity(effect, activityIdentity)
-      return true
-    }
     this.receipt(effect, { check, reconciled: true }, fence)
     this.requestRetick()
     this.forgetCheckActivity(effect, activityIdentity)
@@ -343,18 +328,6 @@ export class EffectReconciliation {
           Date.now(),
         ),
     )
-  }
-  /** A check whose activity failed without a matching receipt is uncertain; anything else falls through. */
-  settleFailedCheckActivity(
-    effect: EffectRow,
-    activity: VerificationActivity<RunnerCheckReceipt> | undefined,
-    fence: number,
-    activityIdentity: unknown,
-  ): boolean {
-    if (activity?.state !== "failed") return false
-    this.uncertain(effect, activity.error, fence)
-    this.forgetCheckActivity(effect, activityIdentity)
-    return true
   }
 }
 
@@ -422,10 +395,4 @@ function readCheckReceipt(payload: { receiptPath: string }): RunnerCheckReceipt 
   return existsSync(payload.receiptPath)
     ? (JSON.parse(readFileSync(payload.receiptPath, "utf8")) as RunnerCheckReceipt)
     : undefined
-}
-
-function unsettledCheckError(label: "Mechanical" | "Verification", check: RunnerCheckReceipt) {
-  return new Error(
-    `${label} command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
-  )
 }

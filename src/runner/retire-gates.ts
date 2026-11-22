@@ -128,9 +128,13 @@ export function retireSourceQuarantines(db: Database): RetiredGateMove[] {
  */
 const STALE_BLOCKED_REASONS: readonly RegExp[] = [
   /experimental\.idle|background observation|worker input lineage/i,
-  /^Recovery uncertain for (?:graph-)?verify:/,
+  /^Recovery uncertain for (?:(?:graph-)?verify:|mechanical-fix )/,
   /^Worker execution was interrupted; explicit reconciliation or cancellation is required/,
   /^Mechanical candidate preparation is blocked by an active scope reservation/,
+  // Replay gates: the fix and the checks now run again on the current candidate.
+  /^Mechanical candidate preparation (?:inputs changed|is uncertain and was not replayed|journal is unreadable)/,
+  /^Mechanical candidate changed after its authorized fix receipt/,
+  /^(?:Combined v|V)erification \S+ (?:has an uncertain receipt and was not replayed|completed with exit .*; subprocess cleanup remains uncertain)/,
 ]
 
 /**
@@ -158,7 +162,7 @@ export function retireStaleHolds(db: Database): RetiredGateMove[] {
       .run(event, plan.id, plan.state, plan.reason).changes
     if (changed !== 1) continue
     if (
-      /^Recovery uncertain for (?:graph-)?verify:/.test(plan.reason) &&
+      /^Recovery uncertain for (?:(?:graph-)?verify:|mechanical-fix )/.test(plan.reason) &&
       tableExists(db, "runner_effects")
     )
       supersedeReceiptlessVerifications(db, plan.id)

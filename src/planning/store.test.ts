@@ -110,8 +110,8 @@ test("moving a run from a stale state changes 0 rows", () => {
   expect(store.run("run1")?.state).toBe("starting")
   expect(store.moveRun("run1", "starting", "running", { sessionId: "c1" })).toBe(1)
   expect(store.run("run1")).toMatchObject({ state: "running", sessionId: "c1" })
-  expect(store.moveRun("run1", "running", "stuck", { reason: "inactive" })).toBe(1)
-  expect(() => store.moveRun("run1", "stuck", "running")).toThrow("Invalid planningRun transition")
+  expect(store.moveRun("run1", "running", "failed", { reason: "interrupted" })).toBe(1)
+  expect(() => store.moveRun("run1", "failed", "running")).toThrow("Invalid planningRun transition")
 })
 
 test("findings, questions and tasked mappings round-trip", () => {

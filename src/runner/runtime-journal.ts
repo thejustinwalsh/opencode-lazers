@@ -8,7 +8,6 @@ import { terminalPlanStates as terminal } from "./plan-control.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import {
   errorText,
-  isRecord,
   isRerunnableEffect,
   messageID,
   type StartupRecoveryAuthorization,
@@ -288,11 +287,14 @@ export class RuntimeJournal {
   /** A re-runnable effect with no receipt is replaced, not left uncertain. */
   supersedeEffect(effect: EffectRow, reason: string, fence: number) {
     this.store.fenced(this.owner, fence, (db) => {
+      // What the replaced run left (an exit code, an unsettled process tree) stays as evidence.
       const changed = db
         .query(
-          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+          `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),
+           receipt=json_object('superseded',json('true'),'reason',?,'previous',json(receipt))
+           WHERE id=? AND state IN ('intended','uncertain')`,
         )
-        .run(JSON.stringify({ superseded: true, reason }), effect.id).changes
+        .run(reason, effect.id).changes
       if (changed !== 1) return
       this.store.record(effect.plan_id, effect.task_id, "EFFECT_SUPERSEDED", {
         effectID: effect.id,
@@ -325,6 +327,8 @@ export class RuntimeJournal {
           ).changes,
     )
     if (changed !== 1) return
+    // A check reads its candidate: the next pass supersedes the uncertain run and runs it again.
+    if (isRerunnableEffect(effect.kind)) return
     const plan = this.store.plan(effect.plan_id)
     if (!plan || plan.state === "cancelling" || terminal.has(plan.state)) return
     if (effect.kind === "worktree-recovery" && effect.attempt_id) {
@@ -344,17 +348,7 @@ export class RuntimeJournal {
       const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
       if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
         this.adoptionExecution.holdAdoption(plan, payload.adoptionID, reason, "pending", fence)
-      else
-        this.hold(
-          plan,
-          reason,
-          effect.kind.startsWith("verify:") &&
-            isRecord(result) &&
-            isRecord(result.check) &&
-            result.check.aborted === true
-            ? ["resume", "reconcile", "audit", "cancel"]
-            : undefined,
-        )
+      else this.hold(plan, reason, undefined)
     }
   }
 }

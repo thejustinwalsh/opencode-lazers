@@ -3,7 +3,6 @@ import {
   fallowAcceptance,
   isRecord,
   sameVerificationCheckIdentity,
-  actualCheckResultFromEffect,
   errorText,
 } from "./runtime-helpers.ts"
 import { lstatSync } from "node:fs"
@@ -19,7 +18,6 @@ import {
   ArtifactScopeViolation,
   artifactUnchanged,
   changedPaths,
-  checkResourcesSettled,
   commitArtifact,
   gitAsync,
   runCheck,
@@ -53,6 +51,7 @@ export type VerificationCandidateDeps = {
   effect: RuntimeJournal["effect"]
   outcome: RuntimeJournal["outcome"]
   uncertain: RuntimeJournal["uncertain"]
+  supersedeEffect: RuntimeJournal["supersedeEffect"]
   checkActivity: CheckActivities["checkActivity"]
   startCheckActivity: CheckActivities["startCheckActivity"]
   verificationDeadline: CheckActivities["verificationDeadline"]
@@ -65,7 +64,6 @@ export type VerificationCandidateDeps = {
   startAuditorReport: VerificationReview["startAuditorReport"]
   verificationTimeoutDefaults: VerificationTimeoutDefaults
   activeProfile: () => ActiveProfile | undefined
-  profileRevision: (id: number) => ActiveProfile | undefined
 }
 
 /**
@@ -78,6 +76,7 @@ export class VerificationCandidate {
   private readonly effect: VerificationCandidateDeps["effect"]
   private readonly outcome: VerificationCandidateDeps["outcome"]
   private readonly uncertain: VerificationCandidateDeps["uncertain"]
+  private readonly supersedeEffect: VerificationCandidateDeps["supersedeEffect"]
   private readonly checkActivity: VerificationCandidateDeps["checkActivity"]
   private readonly startCheckActivity: VerificationCandidateDeps["startCheckActivity"]
   private readonly verificationDeadline: VerificationCandidateDeps["verificationDeadline"]
@@ -90,7 +89,6 @@ export class VerificationCandidate {
   private readonly startAuditorReport: VerificationCandidateDeps["startAuditorReport"]
   private readonly verificationTimeoutDefaults: VerificationCandidateDeps["verificationTimeoutDefaults"]
   private readonly activeProfile: VerificationCandidateDeps["activeProfile"]
-  private readonly profileRevision: VerificationCandidateDeps["profileRevision"]
 
   constructor(
     private readonly core: RuntimeCore,
@@ -100,6 +98,7 @@ export class VerificationCandidate {
     this.effect = (...args) => deps.effect(...args)
     this.outcome = (...args) => deps.outcome(...args)
     this.uncertain = (...args) => deps.uncertain(...args)
+    this.supersedeEffect = (...args) => deps.supersedeEffect(...args)
     this.checkActivity = (...args) => deps.checkActivity(...args)
     this.startCheckActivity = (...args) => deps.startCheckActivity(...args)
     this.verificationDeadline = (...args) => deps.verificationDeadline(...args)
@@ -112,7 +111,6 @@ export class VerificationCandidate {
     this.failAttempt = (...args) => deps.failAttempt(...args)
     this.startAuditorReport = (...args) => deps.startAuditorReport(...args)
     this.activeProfile = () => deps.activeProfile()
-    this.profileRevision = (id) => deps.profileRevision(id)
     this.verificationTimeoutDefaults = deps.verificationTimeoutDefaults
   }
 
@@ -136,198 +134,73 @@ export class VerificationCandidate {
     return this.core.progress
   }
 
+  /**
+   * The mechanical fix (format and lint fix over the changed files) is idempotent, so it never
+   * blocks: a completed run whose result is the candidate as it is now prepared it; one still
+   * running is waited on; anything else, an interrupted run or one whose inputs changed since,
+   * is replaced by a run on the current candidate.
+   */
   async prepareVerificationCandidate(
     plan: PlanRow,
     attempt: AttemptRow,
     proposal: TaskProposal,
     fence: number,
   ): Promise<"ready" | "prepared" | "pending" | "held"> {
-    // With a confirmed profile the profile's own fix chain prepares the candidate; the Bun
-    // preparation below runs only without one, or to replay an effect that predates it.
-    const profile = this.activeProfile()
-    if (profile) {
-      const prepared = await this.prepareProfileFix(plan, attempt, proposal, fence, profile)
-      if (prepared !== undefined) return prepared
-    }
-    if (!needsMechanicalQualityPreparation(proposal.verification.map((check) => check.command)))
-      return "ready"
-    const scope = this.store.effectiveWriteScope(attempt.task_id)
-    const paths = await changedPaths(attempt.workspace, attempt.base_commit)
-    if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return "ready"
-    const formatterExtensions = new Set([
-      ".css",
-      ".htm",
-      ".html",
-      ".js",
-      ".jsx",
-      ".json",
-      ".json5",
-      ".jsonc",
-      ".md",
-      ".mdx",
-      ".mjs",
-      ".mts",
-      ".ts",
-      ".tsx",
-      ".yaml",
-      ".yml",
-    ])
-    const lintExtensions = new Set([".cjs", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".cts"])
-    const formatPaths: string[] = []
-    const lintPaths: string[] = []
-    for (const path of paths) {
-      let info: ReturnType<typeof lstatSync>
-      try {
-        info = lstatSync(join(attempt.workspace, path))
-      } catch {
-        continue
-      }
-      if (!info.isFile() || info.isSymbolicLink()) continue
-      const extension = extname(path).toLowerCase()
-      if (formatterExtensions.has(extension)) formatPaths.push(path)
-      if (lintExtensions.has(extension)) lintPaths.push(path)
-    }
-    if (!formatPaths.length && !lintPaths.length) return "ready"
-    // A write-scope overlap is a warning only: parallel work stays allowed.
-    if (!this.preparationAllowed(attempt))
-      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING", {
-        attemptID: attempt.id,
-        phase: "mechanical-preparation",
-      })
-    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
-    const commands = [
-      ...(formatPaths.length ? [`bun fmt ${formatPaths.map(quote).join(" ")}`] : []),
-      ...(lintPaths.length ? [`bun lint --fix ${lintPaths.map(quote).join(" ")}`] : []),
-      ...(formatPaths.length && lintPaths.length
-        ? [`bun fmt ${formatPaths.map(quote).join(" ")}`]
-        : []),
-    ]
-    const command = commands.join(" && ")
-    const check = verificationCheckWithDefaults(
-      { id: "mechanical-preparation", command },
-      this.verificationTimeoutDefaults,
-    )
-    const inputFingerprint = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
-    const shared = attempt.workspace === this.directory
-    const sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
-    const environmentIdentity = verificationEnvironmentIdentity()
     const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const payload = {
-      workspace: attempt.workspace,
-      baseCommit: attempt.base_commit,
-      inputFingerprint,
-      scope,
-      paths,
-      formatPaths,
-      lintPaths,
-      command,
-      check,
-      environmentIdentity,
-      messageID: attempt.message_id,
-      ...(repairID ? { repairID } : {}),
-      planVersion: plan.version,
-      receiptPath: join(
-        this.dataDirectory,
-        "receipts",
-        attempt.id,
-        `mechanical-preparation-${inputFingerprint}.json`,
-      ),
-    }
-    const existing = this.store.effects(plan.id).findLast((effect) => {
-      if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
-      if (effectSuperseded(effect)) return false
-      const recorded = JSON.parse(effect.payload)
-      if (
-        recorded.messageID !== attempt.message_id ||
-        (recorded.repairID ?? undefined) !== repairID
-      )
-        return false
-      // A clean shared checkout can contain a newly committed correction.
-      // Preserve old receipts and prepare the new candidate independently.
-      if (shared && !sharedDirty && effect.state === "completed") {
-        const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
-        if (
-          receipt?.preparation &&
-          recorded.inputFingerprint !== inputFingerprint &&
-          receipt.preparation.resultingFingerprint !== inputFingerprint
-        )
-          return false
-      }
-      return true
-    })
-    if (existing) {
-      let recorded: typeof payload
-      try {
-        recorded = JSON.parse(existing.payload) as typeof payload
-      } catch {
-        this.hold(
-          plan,
-          "Mechanical candidate preparation journal is unreadable; no check was replayed",
-        )
-        return "held"
-      }
-      if (
-        recorded.baseCommit !== payload.baseCommit ||
-        recorded.workspace !== payload.workspace ||
-        recorded.command !== payload.command ||
-        JSON.stringify(recorded.scope) !== JSON.stringify(scope) ||
-        recorded.messageID !== attempt.message_id ||
-        recorded.repairID !== payload.repairID
-      ) {
-        this.hold(
-          plan,
-          "Mechanical candidate preparation inputs changed; the original activity was not replayed",
-        )
-        return "held"
-      }
-      if (existing.state !== "completed") {
-        const activity = this.checkActivity(existing.id, {
-          effectID: existing.id,
-          payload: existing.payload,
+    // A write-scope overlap is a warning only: parallel work stays allowed.
+    const warnOverlap = () => {
+      if (!this.preparationAllowed(attempt))
+        this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING", {
+          attemptID: attempt.id,
+          phase: "mechanical-preparation",
         })
-        if (activity?.state === "running") return "pending"
-        this.hold(plan, "Mechanical candidate preparation is uncertain and was not replayed")
-        return "held"
-      }
-      let receipt: RunnerCheckReceipt | undefined
-      try {
-        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
-      } catch {
-        receipt = undefined
-      }
-      if (
-        !receipt?.preparation ||
-        receipt.id !== check.id ||
-        receipt.command !== check.command ||
-        receipt.artifact !== attempt.base_commit ||
-        receipt.inputIdentity !== recorded.inputFingerprint ||
-        receipt.environmentIdentity !== recorded.environmentIdentity ||
-        receipt.preparation.inputFingerprint !== recorded.inputFingerprint ||
-        receipt.preparation.resultingFingerprint !==
-          (await workingTreeIdentity(attempt.workspace, attempt.base_commit))
-      ) {
-        this.hold(
-          plan,
-          "Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted",
-        )
-        return "held"
-      }
-      if (!checkSucceeded(receipt)) {
-        this.hold(
-          plan,
-          `Mechanical candidate preparation failed (${receipt.command}, exit ${receipt.exitCode ?? "unknown"}); the original attempt was preserved without a worker repair`,
-          ["reconcile", "resume", "audit", "cancel"],
-        )
-        return "held"
-      }
-      return "prepared"
     }
-    if (sharedDirty) {
+    const recorded = await this.recordedPreparation(plan, attempt, repairID, fence)
+    if (recorded.result) {
+      if (recorded.result !== "held") warnOverlap()
+      return recorded.result
+    }
+    const step = await this.preparationStep(attempt, proposal)
+    if (!step) return "ready"
+    warnOverlap()
+    if (attempt.workspace === this.directory && (await changedPaths(attempt.workspace)).length) {
       this.hold(
         plan,
         "Commit task edits before verification; shared checkout has uncommitted changes",
       )
       return "held"
+    }
+    const check = verificationCheckWithDefaults(
+      { id: "mechanical-preparation", command: step.command },
+      this.verificationTimeoutDefaults,
+    )
+    const scope = this.store.effectiveWriteScope(attempt.task_id)
+    const inputFingerprint = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
+    const previous = recorded.previous
+    const payload = {
+      workspace: attempt.workspace,
+      baseCommit: attempt.base_commit,
+      inputFingerprint,
+      scope,
+      paths: step.paths,
+      formatPaths: step.formatPaths,
+      lintPaths: step.lintPaths,
+      command: step.command,
+      check,
+      environmentIdentity: step.environmentIdentity,
+      messageID: attempt.message_id,
+      ...(repairID ? { repairID } : {}),
+      ...(step.profileRevisionID === undefined
+        ? {}
+        : { profileRevisionID: step.profileRevisionID, fixSteps: step.fixSteps }),
+      ...(previous ? { previousEffectID: previous.id } : {}),
+      planVersion: plan.version,
+      receiptPath: join(
+        this.dataDirectory,
+        "receipts",
+        attempt.id,
+        `mechanical-preparation-${inputFingerprint}${previous ? `-${previous.id.slice(0, 16)}` : ""}.json`,
+      ),
     }
     const effect = this.effect(
       plan.id,
@@ -357,13 +230,14 @@ export class VerificationCandidate {
           {
             signal,
             inputIdentity: inputFingerprint,
-            environmentIdentity,
+            environmentIdentity: step.environmentIdentity,
+            ...(step.runProfile ? { profile: step.runProfile } : {}),
           },
         )
         const preparation = {
           inputFingerprint,
           resultingFingerprint: await workingTreeIdentity(attempt.workspace, attempt.base_commit),
-          paths,
+          paths: step.paths,
           scope,
         }
         const result = { ...receipt, preparation }
@@ -373,204 +247,74 @@ export class VerificationCandidate {
     })
     return "pending"
   }
+
   /**
-   * Mechanical preparation from the profile: its proven fix commands, in profile order, each on
-   * the changed files its globs select. A recorded effect keeps the revision it started with, so
-   * a replay recomputes from that revision and never from the latest. Returns undefined when an
-   * effect from before the profile exists, which the Bun preparation then replays.
+   * What earlier mechanical-fix effects of this attempt settle: a run still in flight (wait), or a
+   * completed run that produced the current candidate (its outcome). Interrupted runs are
+   * superseded so a new run replaces them; `previous` is the newest record, for the new run's identity.
    */
-  private async prepareProfileFix(
+  private async recordedPreparation(
     plan: PlanRow,
     attempt: AttemptRow,
-    proposal: TaskProposal,
+    repairID: string | undefined,
     fence: number,
-    active: ActiveProfile,
-  ): Promise<"ready" | "prepared" | "pending" | "held" | undefined> {
-    const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const scope = this.store.effectiveWriteScope(attempt.task_id)
-    const shared = attempt.workspace === this.directory
-    const candidates = this.store.effects(plan.id).filter((effect) => {
+  ): Promise<{ result?: "prepared" | "pending" | "held"; previous?: EffectRow }> {
+    const own = this.store.effects(plan.id).filter((effect) => {
       if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
-      if (effectSuperseded(effect)) return false
       try {
         const recorded = JSON.parse(effect.payload)
         return (
           recorded.messageID === attempt.message_id && (recorded.repairID ?? undefined) === repairID
         )
       } catch {
-        return true
+        return false
       }
     })
-    let inputFingerprint: string | undefined
-    let sharedDirty = false
-    let existing: EffectRow | undefined
-    if (candidates.length) {
-      inputFingerprint = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
-      sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
-      existing = candidates.findLast((effect) => {
-        // A clean shared checkout can contain a newly committed correction.
-        if (shared && !sharedDirty && effect.state === "completed") {
-          try {
-            const recorded = JSON.parse(effect.payload)
-            const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt })
-              .check
-            if (
-              receipt?.preparation &&
-              recorded.inputFingerprint !== inputFingerprint &&
-              receipt.preparation.resultingFingerprint !== inputFingerprint
-            )
-              return false
-          } catch {
-            return true
-          }
-        }
-        return true
+    if (!own.length) return {}
+    for (const effect of own) {
+      if (effect.state === "completed" || effectSuperseded(effect)) continue
+      const activity = this.checkActivity(effect.id, {
+        effectID: effect.id,
+        payload: effect.payload,
       })
+      if (activity?.state === "running" || activity?.state === "completed")
+        return { result: "pending" }
     }
-    let recorded: { profileRevisionID?: number; paths?: string[] } | undefined
-    if (existing) {
-      try {
-        recorded = JSON.parse(existing.payload)
-      } catch {
-        this.hold(
-          plan,
-          "Mechanical candidate preparation journal is unreadable; no check was replayed",
+    for (const effect of own)
+      if (effect.state !== "completed" && !effectSuperseded(effect))
+        this.supersedeEffect(
+          effect,
+          "Mechanical preparation was interrupted; it runs again on the current candidate",
+          fence,
         )
-        return "held"
-      }
-      if (recorded?.profileRevisionID === undefined) return undefined
-    }
-    const profile =
-      recorded?.profileRevisionID === undefined
-        ? active
-        : this.profileRevision(recorded.profileRevisionID)
-    if (!profile) {
+    const current = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
+    const covering = own.findLast((effect) => {
+      if (effect.state !== "completed") return false
+      const receipt = preparationReceipt(effect)
+      return Boolean(
+        receipt?.preparation?.resultingFingerprint === current &&
+        receipt.artifact === attempt.base_commit &&
+        receipt.cwd === attempt.workspace,
+      )
+    })
+    if (!covering) return { previous: own.at(-1) }
+    const receipt = preparationReceipt(covering)!
+    if (!checkSucceeded(receipt)) {
       this.hold(
         plan,
-        "Mechanical candidate preparation journal is unreadable; no check was replayed",
+        `Mechanical candidate preparation failed (${receipt.command}, exit ${receipt.exitCode ?? "unknown"}); the original attempt was preserved without a worker repair`,
+        ["reconcile", "resume", "audit", "cancel"],
       )
-      return "held"
+      return { result: "held" }
     }
-    const runProfile = checkRunProfile(profile)
-    const fix = runnableFix(profile)
-    if (
-      !needsMechanicalQualityPreparation(
-        proposal.verification.map((check) => check.command),
-        { ...runProfile.commands, runnableFix: fix.length },
-      )
-    )
-      return "ready"
-    // A replay works from the files the effect was given, not from what its fix changed since.
-    const paths = recorded?.paths ?? (await changedPaths(attempt.workspace, attempt.base_commit))
-    if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return "ready"
-    const filePaths: string[] = []
-    for (const path of paths) {
-      let info: ReturnType<typeof lstatSync>
-      try {
-        info = lstatSync(join(attempt.workspace, path))
-      } catch {
-        continue
-      }
-      if (info.isFile() && !info.isSymbolicLink()) filePaths.push(path)
+    const recorded = JSON.parse(covering.payload) as {
+      paths?: string[]
+      fixSteps?: { paths: string[] }[]
     }
-    const chain = profileFixChain(fix, filePaths)
-    if (!chain) return "ready"
-    if (!this.preparationAllowed(attempt))
-      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING", {
-        attemptID: attempt.id,
-        phase: "mechanical-preparation",
-      })
-    const command = chain.command
-    const check = verificationCheckWithDefaults(
-      { id: "mechanical-preparation", command },
-      this.verificationTimeoutDefaults,
-    )
-    inputFingerprint ??= await workingTreeIdentity(attempt.workspace, attempt.base_commit)
-    if (!candidates.length)
-      sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
-    const environmentIdentity = verificationEnvironmentIdentity(runProfile.identity)
-    const payload = {
-      workspace: attempt.workspace,
-      baseCommit: attempt.base_commit,
-      inputFingerprint,
-      scope,
-      paths,
-      formatPaths: filePaths,
-      lintPaths: [] as string[],
-      command,
-      check,
-      environmentIdentity,
-      messageID: attempt.message_id,
-      ...(repairID ? { repairID } : {}),
-      profileRevisionID: profile.revisionID,
-      fixSteps: chain.steps,
-      planVersion: plan.version,
-      receiptPath: join(
-        this.dataDirectory,
-        "receipts",
-        attempt.id,
-        `mechanical-preparation-${inputFingerprint}.json`,
-      ),
-    }
-    if (existing) {
-      const original = JSON.parse(existing.payload) as typeof payload
-      if (
-        original.baseCommit !== payload.baseCommit ||
-        original.workspace !== payload.workspace ||
-        original.command !== payload.command ||
-        JSON.stringify(original.scope) !== JSON.stringify(scope) ||
-        original.messageID !== attempt.message_id ||
-        original.repairID !== payload.repairID
-      ) {
-        this.hold(
-          plan,
-          "Mechanical candidate preparation inputs changed; the original activity was not replayed",
-        )
-        return "held"
-      }
-      if (existing.state !== "completed") {
-        const activity = this.checkActivity(existing.id, {
-          effectID: existing.id,
-          payload: existing.payload,
-        })
-        if (activity?.state === "running") return "pending"
-        this.hold(plan, "Mechanical candidate preparation is uncertain and was not replayed")
-        return "held"
-      }
-      let receipt: RunnerCheckReceipt | undefined
-      try {
-        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
-      } catch {
-        receipt = undefined
-      }
-      if (
-        !receipt?.preparation ||
-        receipt.id !== check.id ||
-        receipt.command !== check.command ||
-        receipt.artifact !== attempt.base_commit ||
-        receipt.inputIdentity !== original.inputFingerprint ||
-        receipt.environmentIdentity !== original.environmentIdentity ||
-        receipt.preparation.inputFingerprint !== original.inputFingerprint ||
-        receipt.preparation.resultingFingerprint !==
-          (await workingTreeIdentity(attempt.workspace, attempt.base_commit))
-      ) {
-        this.hold(
-          plan,
-          "Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted",
-        )
-        return "held"
-      }
-      if (!checkSucceeded(receipt)) {
-        this.hold(
-          plan,
-          `Mechanical candidate preparation failed (${receipt.command}, exit ${receipt.exitCode ?? "unknown"}); the original attempt was preserved without a worker repair`,
-          ["reconcile", "resume", "audit", "cancel"],
-        )
-        return "held"
-      }
-      // The fix may only touch the files it was given.
-      const before = new Set(original.paths)
-      const given = new Set(chain.steps.flatMap((step) => step.paths))
+    if (recorded.fixSteps) {
+      // A profile fix may only touch the files it was given.
+      const before = new Set(recorded.paths ?? [])
+      const given = new Set(recorded.fixSteps.flatMap((step) => step.paths))
       const unexpected = (await changedPaths(attempt.workspace, attempt.base_commit)).filter(
         (path) => !before.has(path) && !given.has(path),
       )
@@ -580,56 +324,75 @@ export class VerificationCandidate {
           `Mechanical candidate preparation changed files it was not given: ${unexpected.join(", ")}`,
           ["reconcile", "resume", "audit", "cancel"],
         )
-        return "held"
+        return { result: "held" }
       }
-      return "prepared"
     }
-    if (sharedDirty) {
-      this.hold(
-        plan,
-        "Commit task edits before verification; shared checkout has uncommitted changes",
+    return { result: "prepared" }
+  }
+
+  /**
+   * The fix to run on the candidate as it is now: the confirmed profile's proven fix commands, in
+   * profile order, each on the changed files its globs select; without a profile, Bun's formatter
+   * and lint fix. Undefined when nothing needs preparing.
+   */
+  private async preparationStep(attempt: AttemptRow, proposal: TaskProposal) {
+    const commands = proposal.verification.map((check) => check.command)
+    const profile = this.activeProfile()
+    if (profile) {
+      const runProfile = checkRunProfile(profile)
+      const fix = runnableFix(profile)
+      if (
+        !needsMechanicalQualityPreparation(commands, {
+          ...runProfile.commands,
+          runnableFix: fix.length,
+        })
       )
-      return "held"
+        return undefined
+      const paths = await changedPaths(attempt.workspace, attempt.base_commit)
+      if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return undefined
+      const filePaths = regularFiles(attempt.workspace, paths)
+      const chain = profileFixChain(fix, filePaths)
+      if (!chain) return undefined
+      return {
+        paths,
+        formatPaths: filePaths,
+        lintPaths: [] as string[],
+        command: chain.command,
+        environmentIdentity: verificationEnvironmentIdentity(runProfile.identity),
+        profileRevisionID: profile.revisionID as number | undefined,
+        fixSteps: chain.steps,
+        runProfile,
+      }
     }
-    const effect = this.effect(
-      plan.id,
-      attempt.task_id,
-      attempt.id,
-      "mechanical-fix",
-      payload,
-      fence,
-    )
-    this.startCheckActivity({
-      id: effect.id,
-      identity: { effectID: effect.id, payload: effect.payload },
-      metadata: {
-        kind: "effect",
-        projectDirectory: this.directory,
-        planID: plan.id,
-        taskID: attempt.task_id,
-        attemptID: attempt.id,
-        effectID: effect.id,
-      },
-      run: async (signal) => {
-        const receipt = await runCheck(
-          attempt.workspace,
-          attempt.base_commit,
-          check,
-          payload.receiptPath,
-          { signal, inputIdentity: inputFingerprint, environmentIdentity, profile: runProfile },
-        )
-        const preparation = {
-          inputFingerprint,
-          resultingFingerprint: await workingTreeIdentity(attempt.workspace, attempt.base_commit),
-          paths,
-          scope,
-        }
-        const result = { ...receipt, preparation }
-        await writeCheckReceipt(payload.receiptPath, result)
-        return result
-      },
-    })
-    return "pending"
+    if (!needsMechanicalQualityPreparation(commands)) return undefined
+    const paths = await changedPaths(attempt.workspace, attempt.base_commit)
+    if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return undefined
+    const formatPaths: string[] = []
+    const lintPaths: string[] = []
+    for (const path of regularFiles(attempt.workspace, paths)) {
+      const extension = extname(path).toLowerCase()
+      if (FORMATTER_EXTENSIONS.has(extension)) formatPaths.push(path)
+      if (LINT_EXTENSIONS.has(extension)) lintPaths.push(path)
+    }
+    if (!formatPaths.length && !lintPaths.length) return undefined
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+    const command = [
+      ...(formatPaths.length ? [`bun fmt ${formatPaths.map(quote).join(" ")}`] : []),
+      ...(lintPaths.length ? [`bun lint --fix ${lintPaths.map(quote).join(" ")}`] : []),
+      ...(formatPaths.length && lintPaths.length
+        ? [`bun fmt ${formatPaths.map(quote).join(" ")}`]
+        : []),
+    ].join(" && ")
+    return {
+      paths,
+      formatPaths,
+      lintPaths,
+      command,
+      environmentIdentity: verificationEnvironmentIdentity(),
+      profileRevisionID: undefined as number | undefined,
+      fixSteps: undefined,
+      runProfile: undefined,
+    }
   }
   /** True while the attempt is still the one this verification pass was started for. */
   verificationCurrentGuard(plan: PlanRow, attempt: AttemptRow, repairID: string | undefined) {
@@ -828,31 +591,10 @@ export class VerificationCandidate {
         )
       })
   }
-  /** An unfinished earlier effect for the check: wait while it runs, otherwise hold as uncertain. */
-  holdUncertainVerifyEffect(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    check: TaskProposal["verification"][number],
-    artifact: { commit: string; identity: string },
-    known: EffectRow,
-  ) {
-    const activityIdentity = { effectID: known.id, payload: known.payload }
-    const activity = this.checkActivity(known.id, activityIdentity)
-    if (activity?.state === "running" || activity?.state === "completed") return
-    const actual = actualCheckResultFromEffect(known)
-    const matches = Boolean(
-      actual &&
-      actual.id === check.id &&
-      actual.command === check.command &&
-      actual.cwd === attempt.workspace &&
-      actual.artifact === artifact.commit &&
-      actual.inputIdentity === artifact.identity,
-    )
-    const reason =
-      matches && actual && !checkResourcesSettled(actual)
-        ? `Verification ${check.id} completed with exit ${actual.exitCode ?? "unknown"} and timedOut=${actual.timedOut}; subprocess cleanup remains uncertain: ${actual.processCleanup?.detail ?? "termination was not confirmed"}`
-        : `Verification ${check.id} has an uncertain receipt and was not replayed`
-    this.hold(plan, reason, ["reconcile", "resume", "audit", "cancel"])
+  /** Whether an unfinished verify effect's check is still running or about to report. */
+  verifyEffectInFlight(known: EffectRow) {
+    const activity = this.checkActivity(known.id, { effectID: known.id, payload: known.payload })
+    return activity?.state === "running" || activity?.state === "completed"
   }
   /** Journals the verify effect and starts its check; the receipt arrives on a later tick. */
   startVerifyEffect(
@@ -867,11 +609,15 @@ export class VerificationCandidate {
     verificationEpoch: number,
     fence: number,
   ) {
+    // A run again never overwrites the receipt an earlier run left.
+    const earlierRuns = this.store
+      .effects(plan.id)
+      .filter((e) => e.attempt_id === attempt.id && e.kind === `verify:${check.id}`).length
     const receiptPath = join(
       this.dataDirectory,
       "receipts",
       attempt.id,
-      `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : ""}.json`,
+      `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : earlierRuns ? `-run${earlierRuns}` : ""}.json`,
     )
     // A confirmed profile is pinned into the effect, so a later revision never disturbs the run.
     const profileRevisionID = this.activeProfile()?.revisionID
@@ -976,8 +722,9 @@ export class VerificationCandidate {
       )
         return undefined
       if (known && known.state !== "completed") {
-        this.holdUncertainVerifyEffect(plan, attempt, check, artifact, known)
-        return undefined
+        if (this.verifyEffectInFlight(known)) return undefined
+        // A check reads the candidate: an interrupted or uncertain run is simply run again.
+        this.supersedeEffect(known, `Verification ${check.id} runs again`, fence)
       }
       if (known?.state === "completed") {
         receipts.push(JSON.parse(known.receipt!).check)
@@ -1100,6 +847,47 @@ export class VerificationCandidate {
       ? (JSON.parse(first.body) as RunnerCheckReceipt).fallow?.package
       : undefined
     return before ? dispositionsAfterRepair(before, review.package) : undefined
+  }
+}
+
+const FORMATTER_EXTENSIONS = new Set([
+  ".css",
+  ".htm",
+  ".html",
+  ".js",
+  ".jsx",
+  ".json",
+  ".json5",
+  ".jsonc",
+  ".md",
+  ".mdx",
+  ".mjs",
+  ".mts",
+  ".ts",
+  ".tsx",
+  ".yaml",
+  ".yml",
+])
+const LINT_EXTENSIONS = new Set([".cjs", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".cts"])
+
+/** The changed paths that are regular files in the workspace (no symlinks, no deletions). */
+function regularFiles(workspace: string, paths: string[]): string[] {
+  return paths.filter((path) => {
+    try {
+      const info = lstatSync(join(workspace, path))
+      return info.isFile() && !info.isSymbolicLink()
+    } catch {
+      return false
+    }
+  })
+}
+
+/** A mechanical-fix effect's check receipt, or undefined when it has none. */
+function preparationReceipt(effect: EffectRow): RunnerCheckReceipt | undefined {
+  try {
+    return (JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt }).check
+  } catch {
+    return undefined
   }
 }
 

@@ -692,6 +692,41 @@ test("a stalled turn that an interrupt does not stop holds the plan after anothe
   expect(countTransitions(f, f.receipt.planID, "WORKER_NO_PROGRESS_INTERRUPT")).toBe(1)
 })
 
+// Plan b6686170 (LZ-253) on 2026-11-22: the worker ended its turn with a background `bun test`
+// shell, the service restarted and cancelled the shell, and the host queued the cancellation
+// notice in the idle worker's inbox without resuming it. Idle, no shell, input pending forever.
+test("input the host leaves in an idle worker's inbox for a whole window is cancelled and the turn settles", async () => {
+  const { f, clock, attempt, worker } = await stallFixture(60_000)
+  worker.runningShells = 1
+  f.completeWorker(attempt.session_id)
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.reason).toMatch(
+    /^Worker (?:execution completed; )?has 1 running shell/,
+  )
+  // The restart cancels the shell; its notice waits in the inbox of a session nothing resumes.
+  worker.runningShells = 0
+  worker.pendingInput = true
+  const cancelled: string[] = []
+  f.host.cancelStrandedInput = async (input) => {
+    cancelled.push(input.sessionID)
+    worker.pendingInput = false
+    return ["msg_shell_cancelled"]
+  }
+  clock.now += 30_000
+  await f.runtime.tick()
+  expect(cancelled).toEqual([])
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  clock.now += 31_000
+  await f.runtime.tick()
+  expect(cancelled).toEqual([attempt.session_id])
+  expect(
+    f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_STRANDED_INPUT_CANCELLED"),
+  ).toMatchObject({ attemptID: attempt.id, inboxIDs: ["msg_shell_cancelled"] })
+  await drive(f.runtime, 12)
+  expect(f.store.plan(f.receipt.planID)?.reason ?? "").not.toMatch(/running shell/)
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).not.toBe("running")
+})
+
 test("cancelling a never-idle worker finishes within its bounded wait and preserves the worktree", async () => {
   let clock = 1_000_000
   const f = fixture({

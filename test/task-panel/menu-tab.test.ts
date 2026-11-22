@@ -79,10 +79,10 @@ const panelTab = () => {
 }
 
 describe("tasks native affordances", () => {
-  test("verification detail separates project defaults, authored overrides, and legacy timing", () => {
+  test("verification detail separates no deadline, authored overrides, and legacy timing", () => {
     const omitted = verificationTimingSummary({ id: "check", command: "bun test" })
     expect(omitted).toBe(
-      "Inactivity allowance: project default (not resolved here) · Hard backstop: project default (not resolved here)",
+      "Inactivity allowance: none unless the project sets one · Hard backstop: none unless the project sets one",
     )
     expect(omitted).not.toMatch(/NaN|undefined/)
 
@@ -91,8 +91,8 @@ describe("tasks native affordances", () => {
       command: "bun test",
       timeoutMs: 5_000,
     })
-    expect(legacyOnly).toContain("Inactivity allowance: project default")
-    expect(legacyOnly).toContain("Hard backstop: project default")
+    expect(legacyOnly).toContain("Inactivity allowance: none unless the project sets one")
+    expect(legacyOnly).toContain("Hard backstop: none unless the project sets one")
     expect(legacyOnly).toContain("Legacy timeout (historical): 5s (not used for execution)")
 
     const dualTiming = verificationTimingSummary({
@@ -111,7 +111,7 @@ describe("tasks native affordances", () => {
       inactivityTimeoutMs: 30_000,
     })
     expect(partial).toContain("Inactivity allowance: 30s (authored)")
-    expect(partial).toContain("Hard backstop: project default (not resolved here)")
+    expect(partial).toContain("Hard backstop: none unless the project sets one")
 
     const mixed = verificationTimingSummary({
       id: "mixed",

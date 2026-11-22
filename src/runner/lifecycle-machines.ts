@@ -169,10 +169,11 @@ const verificationResourceMachine = defineLifecycle("runner-verification-resourc
   uncertain: ["active", "removed"],
   removed: ["creating"],
 })
+/** A check reads its candidate: an uncertain or outdated run is begun again (`intended`). */
 const verificationCheckMachine = defineLifecycle("runner-verification-check", "intended", {
   intended: ["completed", "uncertain"],
-  uncertain: ["completed"],
-  completed: ["uncertain"],
+  uncertain: ["completed", "intended"],
+  completed: ["uncertain", "intended"],
 })
 const verificationCleanupMachine = defineLifecycle("runner-verification-cleanup", "pending", {
   pending: ["complete", "failed"],
@@ -208,13 +209,12 @@ const planningMachine = defineLifecycle("lazers-planning", "drafted", {
   tasked: [],
   abandoned: [],
 })
-/** One planning agent's attempt. A retry is a new run row, so `stuck` has no exit. */
+/** One planning agent's attempt. It ends on the host's outcome or a lost session; a retry is a new run row. */
 const planningRunMachine = defineLifecycle("lazers-planning-run", "starting", {
   starting: ["running", "failed", "cancelled"],
-  running: ["reviewed", "failed", "stuck", "cancelled"],
+  running: ["reviewed", "failed", "cancelled"],
   reviewed: [],
   failed: [],
-  stuck: [],
   cancelled: [],
 })
 
@@ -305,8 +305,7 @@ export function registerLifecycleTransitions(db: Database) {
 
 export type PlanningState =
   "drafted" | "in-review" | "questions-open" | "final-review" | "ready" | "tasked" | "abandoned"
-export type PlanningRunState =
-  "starting" | "running" | "reviewed" | "failed" | "stuck" | "cancelled"
+export type PlanningRunState = "starting" | "running" | "reviewed" | "failed" | "cancelled"
 export type PlanLifecycleState = keyof typeof planStates
 /** Every plan state, for a read that names the states it does not want. */
 export const planStateNames = Object.keys(planStates) as PlanLifecycleState[]

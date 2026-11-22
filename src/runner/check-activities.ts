@@ -194,8 +194,8 @@ export class CheckActivities {
       authoredTimeoutMs: check.timeoutMs ?? null,
       authoredInactivityTimeoutMs: check.inactivityTimeoutMs ?? null,
       authoredHardTimeoutMs: check.hardTimeoutMs ?? null,
-      defaultInactivityTimeoutMs: this.verificationTimeoutDefaults.inactivityTimeoutMs,
-      defaultHardTimeoutMs: this.verificationTimeoutDefaults.hardTimeoutMs,
+      defaultInactivityTimeoutMs: this.verificationTimeoutDefaults.inactivityTimeoutMs ?? null,
+      defaultHardTimeoutMs: this.verificationTimeoutDefaults.hardTimeoutMs ?? null,
     }
   }
   async runVerificationCheck(

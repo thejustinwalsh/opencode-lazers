@@ -138,21 +138,21 @@ export const TaskProposalSchema = z
             .positive()
             .optional()
             .describe(
-              "Optional historical single wall-clock limit. Preserved on legacy tasks and receipts; current execution uses inactivityTimeoutMs and hardTimeoutMs or the project defaults.",
+              "Optional historical single wall-clock limit. Preserved on legacy tasks and receipts; current execution uses inactivityTimeoutMs and hardTimeoutMs, or the project's own deadlines when it sets them.",
             ),
           inactivityTimeoutMs: z
             .int()
             .positive()
             .optional()
             .describe(
-              "Optional per-check inactivity allowance in milliseconds; absent uses the project default of 15 minutes.",
+              "Optional per-check inactivity allowance in milliseconds. Absent: none unless the project sets one; the check runs until it exits.",
             ),
           hardTimeoutMs: z
             .int()
             .positive()
             .optional()
             .describe(
-              "Optional per-check total hard backstop in milliseconds; absent uses the project default of 60 minutes.",
+              "Optional per-check total hard backstop in milliseconds. Absent: none unless the project sets one; the check runs until it exits.",
             ),
         }),
       )

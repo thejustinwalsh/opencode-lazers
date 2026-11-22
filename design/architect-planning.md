@@ -189,9 +189,9 @@ builder can act on. Answers (lead's, from the owner's stated direction unless ma
 - **Score rule:** per agent. An agent runs when its own combined score clears the threshold.
 - **Combining pieces:** the maximum over pieces per agent; an agent is needed if any piece needs it.
 - **Size:** the largest size any piece gets.
-- **A hung agent:** after an inactivity span with no progress it is marked stuck, retried once,
-  then recorded as `not run`. The plan itself stays open. The span is measured, like the
-  verification inactivity timeout, and written beside its constant.
+- **A quiet agent:** is never interrupted on elapsed time. A run ends on the host's outcome or a
+  lost session; a failed run is retried once, then recorded as `not run`. The plan itself stays
+  open, and the Architect can cancel the review.
 - **A blocker or question from the final pass** goes to the owner as in step 10, then tasks.
 - **Auto-dispatch** of planning agents is on by default per project (the owner: build it, run them,
   track the metrics); the owner can turn it off.

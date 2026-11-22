@@ -348,8 +348,10 @@ test("completed legacy combined checks survive changed defaults across reopen wi
   expect(JSON.parse(first.payload).authoredCheck).toBeUndefined()
   expect(JSON.parse(first.payload).check.inactivityTimeoutMs).toBe(10_000)
   expect(readFileSync(firstInvocations, "utf8")).toBe("x")
-  expect(state.interrupted.state).toBe("uncertain")
-  expect(readFileSync(secondInvocations, "utf8")).toBe("x")
+  // The interrupted check is superseded and runs again; the completed one is never repeated.
+  expect(state.interrupted.state).toBe("failed")
+  expect(JSON.parse(state.interrupted.receipt!).superseded).toBe(true)
+  expect(readFileSync(secondInvocations, "utf8").length).toBeGreaterThanOrEqual(1)
   expect(
     state.reopened.store
       .effects(state.planID)
@@ -392,182 +394,56 @@ test("integrated combined cleanup accepts a completed legacy check after default
   expect(existsSync(graphWorkspace)).toBe(false)
 })
 
-test("registered plan command resumes settled combined verification without replaying accepted workers", async () => {
-  let wakes = 0
-  const state = await prepareInterruptedCombinedCheck({ wakeScheduler: () => wakes++ })
-  const { f, reopened, interrupted, receiptPath, planID } = state
-  const originalReceipt = interrupted.receipt!
+test("an interrupted combined check runs again on reopen without a resume or replaying accepted workers", async () => {
+  const { f, reopened, interrupted, receiptPath, planID } = await prepareInterruptedCombinedCheck()
   const originalDiskReceipt = readFileSync(receiptPath, "utf8")
   const taskArtifact = reopened.store.nodes(planID)[0]!.artifact
-  const command = {
-    requestID: "resume-combined-after-interruption",
-    planID,
-    action: "resume" as const,
-    reason: "Continue the accepted artifacts after the settled combined-check interruption.",
-  }
-  expect(reopened.store.plan(planID)?.state).toBe("blocked")
+  expect(reopened.store.plan(planID)?.state).toBe("running")
   expect(reopened.store.nodes(planID).map((node) => node.state)).toEqual(["accepted"])
-
-  const registered = await registeredPlanCommand(reopened.runtime)
-  // The caller loses this reply when the owner process is replaced.
-  await registered.execute(command)
-  expect(wakes).toBe(1)
-  await reopened.runtime.stop()
-
-  const replayedRuntime = reopenRuntime(f)
-  const reply = await (await registeredPlanCommand(replayedRuntime.runtime)).execute(command)
-  const serializedReply =
-    typeof reply.content === "string"
-      ? reply.content
-      : reply.content?.find((item) => item.type === "text")?.text
-  if (!serializedReply) throw new Error("Registered plan command did not return its replay receipt")
-  const replay = JSON.parse(serializedReply)
-  expect(replay).toMatchObject({
-    status: "combined-verification-resumed",
-    planID,
-    supersededEffectIDs: [interrupted.id],
-    verificationEpoch: replayedRuntime.store.plan(planID)!.version,
-  })
-  const oldAfterReplay = replayedRuntime.store
-    .effects(planID)
-    .find((effect) => effect.id === interrupted.id)!
-  expect(oldAfterReplay.state).toBe("failed")
-  expect(oldAfterReplay.receipt).toBe(originalReceipt)
-  expect(readFileSync(receiptPath, "utf8")).toBe(originalDiskReceipt)
-  expect(
-    replayedRuntime.store
+  let fresh: ReturnType<typeof reopened.store.effects>[number] | undefined
+  for (let tick = 0; tick < 20 && !fresh; tick++) {
+    await reopened.runtime.tick()
+    fresh = reopened.store
       .effects(planID)
-      .filter((effect) => effect.kind === "graph-verify:combined"),
-  ).toHaveLength(1)
-
-  await replayedRuntime.runtime.tick()
-  const combinedChecksBeforeCompletion = replayedRuntime.store
-    .effects(planID)
-    .filter((effect) => effect.kind === "graph-verify:combined")
-  const fresh = combinedChecksBeforeCompletion.find((effect) => effect.id !== interrupted.id)!
+      .find((effect) => effect.kind === "graph-verify:combined" && effect.id !== interrupted.id)
+  }
+  if (!fresh) throw new Error("The interrupted combined check did not run again")
   const freshPayload = JSON.parse(fresh.payload) as {
     artifact: string
     workspace: string
-    verificationEpoch: number
     receiptPath: string
   }
   await waitForPath(join(freshPayload.workspace, ".lazers-combined-started"))
   const freshActivity = verificationActivitiesForDatabase(f.repository.path).find(
-    (activity) => activity.metadata.effectID === fresh.id,
+    (activity) => activity.metadata.effectID === fresh!.id,
   )!
   writeFileSync(join(freshPayload.workspace, ".lazers-combined-release"), "release\n")
   await freshActivity.settled
   rmSync(join(freshPayload.workspace, ".lazers-combined-started"), { force: true })
   rmSync(join(freshPayload.workspace, ".lazers-combined-release"), { force: true })
-  await drive(replayedRuntime.runtime, 8)
+  await drive(reopened.runtime, 8)
 
-  const plan = replayedRuntime.store.plan(planID)!
-  const checks = replayedRuntime.store
+  const plan = reopened.store.plan(planID)!
+  const checks = reopened.store
     .effects(planID)
     .filter((effect) => effect.kind === "graph-verify:combined")
-  const freshCompleted = checks.find((effect) => effect.id === fresh.id)!
   expect(plan.state).toBe("accepted")
   expect(plan.artifact).toBe(freshPayload.artifact)
-  expect(freshCompleted.state).toBe("completed")
+  expect(checks).toHaveLength(2)
+  expect(checks.find((effect) => effect.id === fresh!.id)?.state).toBe("completed")
   expect(freshPayload.artifact).toBe(
     (JSON.parse(interrupted.payload) as { artifact: string }).artifact,
   )
-  expect(freshPayload.verificationEpoch).toBeGreaterThan(0)
-  expect(freshPayload.workspace).toBe(
-    (JSON.parse(interrupted.payload) as { workspace: string }).workspace,
-  )
-  // No fingerprint binds the re-run to the interrupted check: it only supersedes it.
-  expect(freshPayload).not.toHaveProperty("combinedContinuationFingerprint")
-  const freshReceipt = (JSON.parse(freshCompleted.receipt!) as { check: RunnerCheckReceipt }).check
-  expect(freshReceipt).toMatchObject({ artifact: freshPayload.artifact, exitCode: 0 })
-  expect(freshReceipt.aborted).not.toBe(true)
   expect(freshPayload.receiptPath).not.toBe(receiptPath)
-  expect(checks).toHaveLength(2)
-  expect(checks.find((effect) => effect.id === interrupted.id)?.receipt).toBe(originalReceipt)
-  expect(replayedRuntime.store.nodes(planID)[0]?.artifact).toBe(taskArtifact)
-  expect(replayedRuntime.store.attempts(planID)).toHaveLength(1)
-  expect(
-    replayedRuntime.store.effects(planID).filter((effect) => effect.kind === "verify:content"),
-  ).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
   expect(readFileSync(receiptPath, "utf8")).toBe(originalDiskReceipt)
-  expect(readFileSync(receiptPath, "utf8")).toContain('"aborted":true')
-})
-
-test("combined verification resume needs a live Architect and no running check, and re-runs on the current candidate otherwise", async () => {
-  const { f, reopened, interrupted, planID } = await prepareInterruptedCombinedCheck()
-  const plan = reopened.store.plan(planID)!
-  const baseCommand = {
-    planID,
-    action: "resume" as const,
-    reason: "Continue the exact accepted artifacts after interruption.",
-  }
-  const command = (requestID: string) => ({ ...baseCommand, requestID })
-  const originalReceipt = interrupted.receipt!
-
-  await expect(reopened.runtime.command(command("wrong-owner"), "foreign")).rejects.toThrow(
-    "A live Architect session of this project must command the plan",
-  )
-  f.sessions.get("owner")!.projectID = "foreign-project"
-  await expect(reopened.runtime.command(command("wrong-project"), "owner")).rejects.toThrow(
-    "A live Architect session of this project must command the plan",
-  )
-  f.sessions.get("owner")!.projectID = "project"
-
-  const liveActivity = startVerificationActivity({
-    databasePath: f.repository.path,
-    key: verificationActivityKey(f.repository.path, "live-combined-probe"),
-    identity: "live-combined-probe",
-    owner: "test-runtime",
-    metadata: { kind: "effect", planID, projectDirectory: f.root },
-    run: (signal) =>
-      new Promise<void>((resolve) =>
-        signal.addEventListener("abort", () => resolve(), { once: true }),
-      ),
-  }).activity
-  await Promise.resolve()
-  await expect(reopened.runtime.command(command("live-activity"), "owner")).rejects.toThrow(
-    "live verification activity",
-  )
-  liveActivity.controller.abort()
-  await liveActivity.settled
-  forgetVerificationActivity(liveActivity.key, liveActivity.identity)
-
-  expect(reopened.store.plan(planID)?.state).toBe("blocked")
-  expect(
-    reopened.store.effects(planID).filter((effect) => effect.kind === "graph-verify:combined"),
-  ).toHaveLength(1)
-  expect(
-    reopened.store.effects(planID).find((effect) => effect.id === interrupted.id)?.receipt,
-  ).toBe(originalReceipt)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-
-  // The check re-runs on the unchanged candidate: no receipt, fingerprint or deadline gates it.
-  await reopened.runtime.command(command("resume-combined-check"), "owner")
-  await reopened.runtime.tick()
-  const fresh = reopened.store
-    .effects(planID)
-    .find((effect) => effect.kind === "graph-verify:combined" && effect.id !== interrupted.id)!
-  const freshPayload = JSON.parse(fresh.payload) as { workspace: string }
-  const freshActivity = verificationActivitiesForDatabase(f.repository.path).find(
-    (activity) => activity.metadata.effectID === fresh.id,
-  )!
-  await waitForPath(join(freshPayload.workspace, ".lazers-combined-started"))
-  writeFileSync(join(freshPayload.workspace, ".lazers-combined-release"), "release\n")
-  await freshActivity.settled
-  rmSync(join(freshPayload.workspace, ".lazers-combined-started"), { force: true })
-  rmSync(join(freshPayload.workspace, ".lazers-combined-release"), { force: true })
-  await drive(reopened.runtime, 4)
-  expect(reopened.store.plan(planID)?.state).toBe("accepted")
-  expect(reopened.store.effects(planID).find((effect) => effect.id === fresh.id)?.state).toBe(
-    "completed",
-  )
+  expect(reopened.store.nodes(planID)[0]?.artifact).toBe(taskArtifact)
+  expect(reopened.store.attempts(planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
 })
 
 test.each([false, true])(
-  "an exit-zero check with uncertain cleanup survives stop-before-reconcile=%s and reopen",
+  "an exit-zero check with uncertain cleanup runs again (stop-before-reconcile=%s)",
   async (stopBeforeReconcile) => {
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
     const f = fixture({
@@ -610,39 +486,19 @@ test.each([false, true])(
         await drive(reopened.runtime, 4)
       } else await drive(f.runtime, 4)
 
-      const uncertain = f.store
+      // The check finished but its process tree did not settle: it is superseded, the finished
+      // result kept as evidence, and the check runs again; the plan is never held on it.
+      const first = f.store
         .effects(f.receipt.planID)
         .find((candidate) => candidate.id === effect.id)!
-      const envelope = JSON.parse(uncertain.receipt!) as {
-        result: { check: RunnerCheckReceipt }
-      }
-      expect(uncertain.state).toBe("uncertain")
-      expect(envelope.result.check).toMatchObject({
-        exitCode: 0,
-        timedOut: false,
-        processCleanup: {
-          state: "uncertain",
-          capability: "process-group",
-          rootPID: processGroupID,
-        },
-      })
-      expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
-      expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
-
-      await f.runtime.stop()
-      const reopened = reopenRuntime(f)
-      await reopened.runtime.tick()
-      const afterReopen = reopened.store
-        .effects(f.receipt.planID)
-        .find((candidate) => candidate.id === effect.id)!
-      expect(afterReopen.state).toBe("uncertain")
-      expect((JSON.parse(afterReopen.receipt!) as typeof envelope).result.check.exitCode).toBe(0)
+      expect(first.state).toBe("failed")
+      expect(JSON.parse(first.receipt!).superseded).toBe(true)
+      expect(f.store.plan(f.receipt.planID)?.state).not.toBe("blocked")
       expect(
-        reopened.store
-          .effects(f.receipt.planID)
-          .filter((candidate) => candidate.kind === "verify:content"),
-      ).toHaveLength(1)
-      expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
+        f.store.effects(f.receipt.planID).filter((candidate) => candidate.kind === "verify:content")
+          .length,
+      ).toBeGreaterThanOrEqual(2)
+      expect(readFileSync(join(f.root, "check-count"), "utf8").length).toBeGreaterThanOrEqual(2)
     } finally {
       mockedKill.mockRestore()
       if (processGroupID !== undefined) {
@@ -656,7 +512,7 @@ test.each([false, true])(
   },
 )
 
-test("whole-plan cancellation interrupts busy siblings while retaining uncertain check ownership", async () => {
+test("whole-plan cancellation interrupts busy siblings and settles past an unsettled finished check", async () => {
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
   const f = fixture({
     independent: true,
@@ -708,31 +564,29 @@ test("whole-plan cancellation interrupts busy siblings while retaining uncertain
     })
     await f.runtime.tick()
     expect(interrupted.toSorted()).toEqual(siblings.map((attempt) => attempt.session_id).toSorted())
-    // The finished check's uncertain tree settlement does not fence the cancel: its effect
-    // stays uncertain for the bounded effect wait, then the plan settles.
-    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+    // The finished check's unsettled process tree does not fence the cancel: its effect is
+    // superseded with the finished result kept as evidence, and the plan settles.
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
     expect(
       f.store.latestTransition(f.receipt.planID, null, "VERIFICATION_CANCELLATION_UNCERTAIN"),
     ).toBeUndefined()
-    await f.runtime.tick()
-    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
     expect(
       f.store
         .attempts(f.receipt.planID)
         .filter((attempt) => siblings.some((sibling) => sibling.id === attempt.id))
         .every((attempt) => attempt.state === "cancelled"),
     ).toBe(true)
-    expect(
-      f.store.attempts(f.receipt.planID).find((attempt) => attempt.id === checked!.id)?.state,
-    ).toBe("verifying")
-    expect(siblings.every((attempt) => existsSync(attempt.workspace))).toBe(true)
     const effect = f.store
       .effects(f.receipt.planID)
       .find((entry) => entry.kind === "verify:content")!
-    expect(effect.state).toBe("uncertain")
-    expect(JSON.parse(effect.receipt!).result.check).toMatchObject({ exitCode: 0, timedOut: false })
+    expect(effect.state).toBe("failed")
+    const superseded = JSON.parse(effect.receipt!)
+    expect(superseded.superseded).toBe(true)
+    // The run's own receipt file stays as the evidence of what it finished with.
+    const onDisk = JSON.parse(readFileSync(JSON.parse(effect.payload).receiptPath, "utf8"))
+    expect(onDisk).toMatchObject({ exitCode: 0, timedOut: false })
     expect(f.notifications.some((notice) => notice.text.includes('"status":"cancelled"'))).toBe(
-      false,
+      true,
     )
   } finally {
     kill.mockRestore()
@@ -1098,4 +952,38 @@ test("a verification effect with no receipt is superseded and its check re-runs 
       .activity(planID, original.task_id!)
       .some((event) => event.event === "EFFECT_SUPERSEDED"),
   ).toBe(true)
+})
+
+test("an uncertain task check and an uncertain combined check are run again and the plan is accepted", async () => {
+  const f = fixture()
+  const runtime = Reflect.get(f.runtime, "checkActivities") as {
+    startCheckActivity: (input: { id: string }) => unknown
+  }
+  const original = runtime.startCheckActivity.bind(runtime)
+  const dropped = new Set<string>()
+  runtime.startCheckActivity = (input) => {
+    const kind = f.store.effects(f.receipt.planID).find((e) => e.id === input.id)?.kind ?? ""
+    const family = kind.startsWith("verify:")
+      ? "task"
+      : kind.startsWith("graph-verify:")
+        ? "combined"
+        : ""
+    // The first run of each kind fails to start: its effect is left uncertain.
+    if (family && !dropped.has(family)) {
+      dropped.add(family)
+      throw new Error("check runner unavailable")
+    }
+    return original(input as never)
+  }
+  await runPlan(f)
+  await driveWithTaskSourceLandings(f, 24)
+  expect([...dropped].sort()).toEqual(["combined", "task"])
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.reason ?? "").not.toContain("not replayed")
+  expect(plan.state).toBe("accepted")
+  const superseded = f.store
+    .effects(plan.id)
+    .filter((e) => e.state === "failed" && JSON.parse(e.receipt ?? "{}").superseded)
+  expect(superseded.some((e) => e.kind.startsWith("verify:"))).toBe(true)
+  expect(superseded.some((e) => e.kind.startsWith("graph-verify:"))).toBe(true)
 })
