@@ -16,7 +16,15 @@ import {
 import { Streams } from "../streams/contract.ts"
 import { rpcStreamsTransport } from "../streams/gui.ts"
 import type { StreamsRpc } from "../streams/gui.ts"
-import { endPadding, laneCountText, rulerLabels, slowSeconds } from "./panel-layout.ts"
+import {
+  endPadding,
+  laneCountShort,
+  laneCountText,
+  laneCountTitle,
+  laneLabelFitPx,
+  rulerLabels,
+  slowSeconds,
+} from "./panel-layout.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { PanelIcon } from "./icons.tsx"
@@ -1150,6 +1158,22 @@ function PanelView(
       </div>
     )
   }
+  const partial = (label: { windowed?: boolean }) => Boolean(label.windowed && streaming())
+  const toolsTotal = () =>
+    report()?.attempts.reduce((sum, attempt) => sum + attempt.toolCount.value, 0)
+  /** The column is sized to the widest lane label, so a count is never clipped. */
+  const labelFit = createMemo(() => {
+    const tools = { windowed: true }
+    return laneLabelFitPx([
+      { name: "Architect", count: "99" },
+      {
+        name: "Tools",
+        count: laneCountShort(tracks()?.tools.length ?? 0, partial(tools), toolsTotal()),
+      },
+      { name: "Files", count: laneCountShort(tracks()?.files.length ?? 0, partial(tools)) },
+      { name: "Checks", count: laneCountShort(timeline()?.checks.length ?? 0, false) },
+    ])
+  })
   /** `windowed`: the lane is drawn from the timeline window, so its count may be partial. */
   const LaneLabel = (label: {
     name: string
@@ -1161,11 +1185,10 @@ function PanelView(
       <span class="lazers-trajectory-lane-name">{label.name}</span>
       <span
         class="lazers-trajectory-lane-count"
-        title={
-          label.windowed && streaming() ? "Loaded in view; pan or zoom to load the rest" : undefined
-        }
+        title={laneCountTitle(label.count, partial(label), label.total)}
+        aria-label={`${label.name} ${laneCountText(label.count, partial(label), label.total)}`}
       >
-        {laneCountText(label.count, Boolean(label.windowed && streaming()), label.total)}
+        {laneCountShort(label.count, partial(label), label.total)}
       </span>
     </span>
   )
@@ -1591,7 +1614,10 @@ function PanelView(
   )
 
   return (
-    <div class="lazers-trajectory" style={{ "--trajectory-zoom": String(zoom()) }}>
+    <div
+      class="lazers-trajectory"
+      style={{ "--trajectory-zoom": String(zoom()), "--trajectory-label-fit": `${labelFit()}px` }}
+    >
       <DetailsPane
         ui={Ui}
         class="lazers-trajectory-pane"
@@ -2150,10 +2176,7 @@ function PanelView(
                           name="Tools"
                           windowed
                           count={tracks()?.tools.length ?? 0}
-                          total={report()?.attempts.reduce(
-                            (sum, attempt) => sum + attempt.toolCount.value,
-                            0,
-                          )}
+                          total={toolsTotal()}
                         />
                         <div
                           class="lazers-trajectory-track lazers-trajectory-mark-track"

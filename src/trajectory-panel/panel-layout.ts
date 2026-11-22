@@ -103,3 +103,34 @@ export function laneCountText(count: number, partial: boolean, total?: number | 
     ? `${count.toLocaleString()} of ${total.toLocaleString()}`
     : `${count.toLocaleString()} loaded`
 }
+
+/** The compact count shown in the narrow label column: "66/330", "66+" (no total), or the plain count. */
+export function laneCountShort(count: number, partial: boolean, total?: number | null) {
+  if (!partial) return count.toLocaleString()
+  return typeof total === "number" && total >= count
+    ? `${count.toLocaleString()}/${total.toLocaleString()}`
+    : `${count.toLocaleString()}+`
+}
+
+/** The full count for the tooltip and `aria-label` of a partial lane; undefined when the count is whole. */
+export function laneCountTitle(count: number, partial: boolean, total?: number | null) {
+  return partial ? `${laneCountText(count, true, total)}; pan or zoom to load the rest` : undefined
+}
+
+/** Estimated width of one proportional 12 px lane-name character, in px. */
+export const LANE_NAME_CHAR_PX = 7
+
+/**
+ * Width the widest lane's name and count need side by side, excluding the cell's padding and gap
+ * (the stylesheet adds those). The label column grows to this so no count is clipped.
+ */
+export function laneLabelFitPx(lanes: readonly { name: string; count: string }[]) {
+  return Math.ceil(
+    Math.max(
+      0,
+      ...lanes.map(
+        (lane) => lane.name.length * LANE_NAME_CHAR_PX + lane.count.length * LABEL_CHAR_PX,
+      ),
+    ),
+  )
+}
