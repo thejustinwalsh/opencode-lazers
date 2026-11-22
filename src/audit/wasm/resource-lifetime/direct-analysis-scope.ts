@@ -44,7 +44,7 @@ class DirectAnalysisScope {
   private readonly pending = new Set<Promise<unknown>>()
   private closePromise: Promise<void> | undefined
 
-  run<T>(operation: () => T | Promise<T>): Promise<T> {
+  run<T>(operation: () => T | Promise<T>, afterOperation?: () => void | Promise<void>): Promise<T> {
     const queuedAt = performance.now()
     this.metrics.queued++
     if (this.closed) {
@@ -62,7 +62,11 @@ class DirectAnalysisScope {
       try {
         return await operation()
       } finally {
-        this.metrics.completed++
+        try {
+          await afterOperation?.()
+        } finally {
+          this.metrics.completed++
+        }
       }
     })
     this.pending.add(completion)

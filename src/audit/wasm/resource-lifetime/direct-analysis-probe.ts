@@ -18,6 +18,8 @@ const modules = {
 } satisfies Record<ModuleKind, { module: WebAssembly.Module; threads: number }>
 const instanceRefs: WeakRef<WebAssembly.Instance>[] = []
 const memoryRefs: WeakRef<WebAssembly.Memory>[] = []
+const scheduledInstanceRefs: WeakRef<WebAssembly.Instance>[] = []
+const scheduledMemoryRefs: WeakRef<WebAssembly.Memory>[] = []
 const memorySizes: number[] = []
 const instancesByKind: Record<ModuleKind, number> = { single: 0, threads: 0 }
 let completed = 0
@@ -50,6 +52,33 @@ const fixture = makeFixture({ "config/bad.json": "{ nope" })
 const badConfig = join(fixture, "config/bad.json")
 
 try {
+  const scope = directAnalysisScopeFor(fixture)
+  const gcBeforeSingleBatch = scope.metrics.gcMs
+  for (let run = 0; run < 8; run++) {
+    await runDirectFallowModule(
+      wasmModule,
+      {
+        op: "health",
+        root: fixture,
+        options: { threads: 1, cache: false },
+      },
+      {
+        maxThreads: 1,
+        onInstance: (instance) => {
+          scheduledInstanceRefs.push(new WeakRef(instance))
+          const memory = instance.exports.memory
+          if (!(memory instanceof WebAssembly.Memory))
+            throw new Error("analysis instance did not export its linear memory")
+          scheduledMemoryRefs.push(new WeakRef(memory))
+        },
+      },
+    )
+    recordRss()
+  }
+  const scheduledCollectionGcMs = Math.round(scope.metrics.gcMs - gcBeforeSingleBatch)
+  if (scheduledCollectionGcMs <= 0)
+    throw new Error("eight single-module analyses did not trigger scheduled collection")
+
   for (let round = 0; round < 4; round++) {
     for (const kind of ["single", "threads"] as const) {
       const { threads } = modules[kind]
@@ -126,9 +155,12 @@ try {
   }
 
   await Bun.sleep(0)
-  Bun.gc(true)
-  const retainedInstances = instanceRefs.filter((ref) => ref.deref() !== undefined).length
-  const retainedMemories = memoryRefs.filter((ref) => ref.deref() !== undefined).length
+  const retainedInstances = [...instanceRefs, ...scheduledInstanceRefs].filter(
+    (ref) => ref.deref() !== undefined,
+  ).length
+  const retainedMemories = [...memoryRefs, ...scheduledMemoryRefs].filter(
+    (ref) => ref.deref() !== undefined,
+  ).length
   const timings = directAnalysisScopeFor(repoRoot).metrics
   if (peakPendingTerminations > 2)
     throw new Error(`direct helper termination peak exceeded its bound: ${peakPendingTerminations}`)
@@ -141,6 +173,8 @@ try {
       expectedFailures,
       instancesByKind,
       observedInstances: instanceRefs.length,
+      scheduledCollectionRuns: scheduledInstanceRefs.length,
+      scheduledCollectionGcMs,
       distinctMemorySizes: [...new Set(memorySizes)],
       retainedInstances,
       retainedMemories,
