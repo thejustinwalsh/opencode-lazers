@@ -9,13 +9,10 @@ import { recognizedVerificationPhases } from "./quality-failure.ts"
 import { inspectCheckReceipt, type CheckReceiptIdentity } from "./reload-check-receipt.ts"
 import { DEFAULT_VERIFICATION_HARD_TIMEOUT_MS } from "./verification-timeout.ts"
 import { unsettledProcessCleanupSQL } from "./reload-unsettled-cleanup.ts"
-
-export const MAX_OPEN_VERIFICATION_CANDIDATES = 1_000
-export const MAX_RECENT_TRANSITION_ROWS = 4_096
-export const RECENT_EFFECT_INTENTS_SQL = `SELECT id,event,payload,created_at FROM runner_transitions
-ORDER BY id DESC LIMIT ${MAX_RECENT_TRANSITION_ROWS}`
+import { readKeysetPages, RELOAD_READ_PAGE_SIZE } from "./reload-pages.ts"
 
 const SYNTHETIC_FALLOW_COMMAND = "lazers:fallow-audit"
+const TERMINAL_RETAINED_STATES = new Set(["accepted", "failed", "cancelled"])
 
 export type VerificationProcessCandidate = {
   key: string
@@ -26,6 +23,7 @@ export type VerificationProcessCandidate = {
   hardTimeoutMs: number
   rootPIDs: readonly number[]
   settled: boolean
+  terminal: boolean
   receiptReason?: string
 }
 
@@ -41,6 +39,8 @@ type CandidateReceipt = {
 }
 
 type ProfileReader = Pick<TaskRepository, "read">
+type RetainedCheckCursor = readonly [string, string, string]
+type IntentRow = { id: number; payload: string; created_at: number }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -72,19 +72,42 @@ function decodeJSON(value: string, description: string): unknown {
   }
 }
 
-function intentTimeMap(db: Database): Map<string, number> {
-  const rows = db
-    .query<{ id: number; event: string; payload: string; created_at: number }, []>(
-      RECENT_EFFECT_INTENTS_SQL,
-    )
-    .all()
+function intentTimeMap(db: Database, effectIDs: ReadonlySet<string>): Map<string, number> {
+  const remaining = new Set(effectIDs)
   const result = new Map<string, number>()
-  for (const row of rows) {
-    if (row.event !== "EFFECT_INTENDED") continue
-    const payload = decodeJSON(row.payload, `Transition ${row.id}`)
-    if (!isRecord(payload) || typeof payload.effectID !== "string") continue
-    if (!Number.isSafeInteger(row.created_at) || row.created_at < 0) continue
-    if (!result.has(payload.effectID)) result.set(payload.effectID, row.created_at)
+  let cursor: number | undefined
+  while (remaining.size > 0) {
+    const page =
+      cursor === undefined
+        ? db
+            .query<IntentRow, [number]>(
+              `SELECT id,payload,created_at FROM runner_transitions
+               WHERE event='EFFECT_INTENDED' ORDER BY id DESC LIMIT ?`,
+            )
+            .all(RELOAD_READ_PAGE_SIZE)
+        : db
+            .query<IntentRow, [number, number]>(
+              `SELECT id,payload,created_at FROM runner_transitions
+               WHERE event='EFFECT_INTENDED' AND id < ? ORDER BY id DESC LIMIT ?`,
+            )
+            .all(cursor, RELOAD_READ_PAGE_SIZE)
+    if (page.length === 0) break
+    cursor = page[page.length - 1]!.id
+    for (const row of page) {
+      let payload: unknown
+      try {
+        payload = JSON.parse(row.payload) as unknown
+      } catch {
+        // A malformed unrelated intent cannot identify one of the current candidates.
+        continue
+      }
+      if (!isRecord(payload) || typeof payload.effectID !== "string") continue
+      if (!remaining.has(payload.effectID)) continue
+      if (!Number.isSafeInteger(row.created_at) || row.created_at < 0) continue
+      result.set(payload.effectID, row.created_at)
+      remaining.delete(payload.effectID)
+    }
+    if (page.length < RELOAD_READ_PAGE_SIZE) break
   }
   return result
 }
@@ -145,10 +168,20 @@ function makeCandidate(input: {
   deadline?: unknown
   profileCommands?: ProfileCommands
   receipt: CandidateReceipt
+  terminal?: boolean
 }): VerificationProcessCandidate {
-  const check = parseCheck(input.checkValue, input.key)
-  if (typeof input.workspace !== "string" || input.workspace.length === 0)
-    throw new Error(`Verification ${input.key} is missing workspace evidence`)
+  const terminal = input.terminal ?? false
+  let check: CheckMetadata & Record<string, unknown>
+  try {
+    check = parseCheck(input.checkValue, input.key)
+  } catch (error) {
+    if (!terminal) throw error
+    return unknownTerminalCandidate(input.key, input.startTime)
+  }
+  if (typeof input.workspace !== "string" || input.workspace.length === 0) {
+    if (!terminal) throw new Error(`Verification ${input.key} is missing workspace evidence`)
+    return unknownTerminalCandidate(input.key, input.startTime)
+  }
   const workspace = canonicalPath(input.workspace)
   const command = check.command as string
   const phases = recognizedVerificationPhases(command, input.profileCommands)
@@ -156,19 +189,32 @@ function makeCandidate(input: {
   const processCommands = synthetic
     ? []
     : (phases ?? [command]).map((phase) => withTestHangGuard(phase))
-  const receipt: CheckReceiptIdentity = inspectCheckReceipt({
-    databaseReceipt: input.receipt.databaseReceipt,
-    receiptPath: input.receipt.receiptPath,
-    expected: {
-      id: check.id as string,
-      command,
-      workspace,
-      phaseCommands: phases ?? [command],
-    },
-  })
+  let receipt: CheckReceiptIdentity
+  try {
+    receipt = inspectCheckReceipt({
+      databaseReceipt: input.receipt.databaseReceipt,
+      receiptPath: input.receipt.receiptPath,
+      expected: {
+        id: check.id as string,
+        command,
+        workspace,
+        phaseCommands: phases ?? [command],
+      },
+    })
+  } catch (error) {
+    if (!terminal) throw error
+    receipt = {
+      state: "invalid",
+      rootPIDs: [],
+      settled: false,
+      reason: error instanceof Error ? error.message : String(error),
+    }
+  }
   const startedAt = receipt.startedAt ?? input.startTime
-  if (typeof startedAt !== "number" || !Number.isSafeInteger(startedAt) || startedAt < 0)
+  if (typeof startedAt !== "number" || !Number.isSafeInteger(startedAt) || startedAt < 0) {
+    if (terminal) return unknownTerminalCandidate(input.key, input.startTime)
     throw new Error(`Verification ${input.key} is missing bounded start-time evidence`)
+  }
   if (receipt.state === "invalid" && receipt.reason)
     return {
       key: input.key,
@@ -179,6 +225,7 @@ function makeCandidate(input: {
       hardTimeoutMs: hardTimeoutMs(check, input.deadline),
       rootPIDs: [],
       settled: false,
+      terminal,
       receiptReason: receipt.reason,
     }
   return {
@@ -190,7 +237,25 @@ function makeCandidate(input: {
     hardTimeoutMs: hardTimeoutMs(check, input.deadline),
     rootPIDs: receipt.rootPIDs,
     settled: receipt.settled,
+    terminal,
     ...(receipt.reason ? { receiptReason: receipt.reason } : {}),
+  }
+}
+
+function unknownTerminalCandidate(key: string, startTime: unknown): VerificationProcessCandidate {
+  return {
+    key,
+    command: "",
+    processCommands: [],
+    workspace: "",
+    startedAt:
+      typeof startTime === "number" && Number.isSafeInteger(startTime) && startTime >= 0
+        ? startTime
+        : 0,
+    hardTimeoutMs: DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+    rootPIDs: [],
+    settled: false,
+    terminal: true,
   }
 }
 
@@ -202,30 +267,33 @@ function parseEffectPayload(payloadJSON: string, effectID: string) {
 
 function effectCandidates(db: Database): VerificationProcessCandidate[] {
   if (!tableExists(db, "runner_effects")) return []
-  const rows = db
-    .query<
-      {
-        id: string
-        plan_id: string
-        kind: string
-        payload: string
-        receipt: string | null
-      },
-      []
-    >(
-      `SELECT id,plan_id,kind,payload,receipt FROM runner_effects
-       WHERE (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%' OR kind='mechanical-fix')
-         AND state IN ('intended','uncertain','held')
-       ORDER BY id LIMIT ${MAX_OPEN_VERIFICATION_CANDIDATES + 1}`,
-    )
-    .all()
-  if (rows.length > MAX_OPEN_VERIFICATION_CANDIDATES)
-    throw new Error("Too many open verification effects to inspect")
+  type EffectRow = {
+    id: string
+    plan_id: string
+    kind: string
+    payload: string
+    receipt: string | null
+  }
+  const rows = readKeysetPages<EffectRow, string>(
+    (cursor, limit) => {
+      const after = cursor === undefined ? "" : "AND id > ?"
+      const params: (string | number)[] = cursor === undefined ? [limit] : [cursor, limit]
+      return db
+        .query<EffectRow, (string | number)[]>(
+          `SELECT id,plan_id,kind,payload,receipt FROM runner_effects
+           WHERE (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%' OR kind='mechanical-fix')
+             AND state IN ('intended','uncertain','held') ${after}
+           ORDER BY id LIMIT ?`,
+        )
+        .all(...params)
+    },
+    (row) => row.id,
+  )
   if (rows.length === 0) return []
   if (!tableExists(db, "runner_transitions"))
     throw new Error("Verification effect start-time evidence is unavailable")
 
-  const starts = intentTimeMap(db)
+  const starts = intentTimeMap(db, new Set(rows.map((row) => row.id)))
   const profiles = new Map<number, ProfileCommands>()
   return rows.map((row) => {
     const payload = parseEffectPayload(row.payload, row.id)
@@ -248,68 +316,81 @@ function retainedCandidates(db: Database): VerificationProcessCandidate[] {
     !tableExists(db, "runner_retained_verification_checks")
   )
     return []
-  const rows = db
-    .query<
-      {
-        operation_id: string
-        phase: string
-        check_id: string
-        check_json: string
-        workspace: string
-        created_at: number
-        receipt_path: string
-        receipt: string | null
-      },
-      []
-    >(
-      `SELECT c.operation_id,c.phase,c.check_id,c.check_json,c.workspace,c.created_at,
-               c.receipt_path,c.receipt
-       FROM runner_retained_verification_checks c
-       WHERE c.state IN ('intended','uncertain')
-          OR (c.state='completed' AND ${unsettledProcessCleanupSQL("c.receipt", "c.check_json")})
-       ORDER BY c.created_at,c.operation_id,c.phase,c.check_id
-       LIMIT ${MAX_OPEN_VERIFICATION_CANDIDATES + 1}`,
-    )
-    .all()
-  if (rows.length > MAX_OPEN_VERIFICATION_CANDIDATES)
-    throw new Error("Too many retained verification checks to inspect")
-  return rows.map((row) =>
-    makeCandidate({
-      key: `retained:${row.operation_id}/${row.phase}/${row.check_id}`,
+  type RetainedRow = {
+    operation_id: string
+    operation_state: string | null
+    phase: string
+    check_id: string
+    check_json: string
+    workspace: string
+    created_at: number
+    receipt_path: string
+    receipt: string | null
+  }
+  const rows = readKeysetPages<RetainedRow, RetainedCheckCursor>(
+    (cursor, limit) => {
+      const after = cursor === undefined ? "" : "AND (c.operation_id,c.phase,c.check_id) > (?,?,?)"
+      const params: (string | number)[] =
+        cursor === undefined ? [limit] : [cursor[0], cursor[1], cursor[2], limit]
+      return db
+        .query<RetainedRow, (string | number)[]>(
+          `SELECT c.operation_id,r.state AS operation_state,c.phase,c.check_id,c.check_json,
+                  c.workspace,c.created_at,c.receipt_path,c.receipt
+           FROM runner_retained_verification_checks c
+           LEFT JOIN runner_retained_verifications r ON r.id=c.operation_id
+           WHERE (c.state IN ('intended','uncertain')
+              OR (c.state='completed' AND ${unsettledProcessCleanupSQL("c.receipt", "c.check_json")}))
+             ${after}
+           ORDER BY c.operation_id,c.phase,c.check_id LIMIT ?`,
+        )
+        .all(...params)
+    },
+    (row) => [row.operation_id, row.phase, row.check_id],
+  )
+  return rows.map((row) => {
+    const key = `retained:${row.operation_id}/${row.phase}/${row.check_id}`
+    const terminal = TERMINAL_RETAINED_STATES.has(row.operation_state ?? "")
+    return makeCandidate({
+      key,
       checkValue: row.check_json,
       workspace: row.workspace,
       startTime: row.created_at,
       receipt: { databaseReceipt: row.receipt, receiptPath: row.receipt_path },
-    }),
-  )
+      terminal,
+    })
+  })
 }
 
 function adoptionCandidates(db: Database): VerificationProcessCandidate[] {
   if (!tableExists(db, "runner_adoption_checks")) return []
-  const rows = db
-    .query<
-      {
-        adoption_id: string
-        phase: string
-        check_id: string
-        check_json: string
-        workspace: string
-        created_at: number
-        receipt_path: string
-        receipt: string | null
-      },
-      []
-    >(
-      `SELECT adoption_id,phase,check_id,check_json,workspace,created_at,receipt_path,receipt
-       FROM runner_adoption_checks
-       WHERE state IN ('intended','uncertain')
-          OR (state='completed' AND ${unsettledProcessCleanupSQL("receipt", "check_json")})
-       ORDER BY created_at,adoption_id,phase,check_id
-       LIMIT ${MAX_OPEN_VERIFICATION_CANDIDATES + 1}`,
-    )
-    .all()
-  if (rows.length > MAX_OPEN_VERIFICATION_CANDIDATES)
-    throw new Error("Too many adoption checks to inspect")
+  type AdoptionRow = {
+    adoption_id: string
+    phase: string
+    check_id: string
+    check_json: string
+    workspace: string
+    created_at: number
+    receipt_path: string
+    receipt: string | null
+  }
+  const rows = readKeysetPages<AdoptionRow, RetainedCheckCursor>(
+    (cursor, limit) => {
+      const after = cursor === undefined ? "" : "AND (adoption_id,phase,check_id) > (?,?,?)"
+      const params: (string | number)[] =
+        cursor === undefined ? [limit] : [cursor[0], cursor[1], cursor[2], limit]
+      return db
+        .query<AdoptionRow, (string | number)[]>(
+          `SELECT adoption_id,phase,check_id,check_json,workspace,created_at,receipt_path,receipt
+           FROM runner_adoption_checks
+           WHERE (state IN ('intended','uncertain')
+              OR (state='completed' AND ${unsettledProcessCleanupSQL("receipt", "check_json")}))
+             ${after}
+           ORDER BY adoption_id,phase,check_id LIMIT ?`,
+        )
+        .all(...params)
+    },
+    (row) => [row.adoption_id, row.phase, row.check_id],
+  )
   return rows.map((row) =>
     makeCandidate({
       key: `adoption:${row.adoption_id}/${row.phase}/${row.check_id}`,

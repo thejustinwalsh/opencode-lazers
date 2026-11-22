@@ -150,24 +150,26 @@ export async function observeVerificationProcesses(
   dependencies: ProcessProbeDependencies = defaultProcessProbe(),
 ): Promise<ReloadProcessObservation> {
   try {
-    const candidates = verificationProcessCandidates(db)
+    const candidates = db.transaction(() => verificationProcessCandidates(db)).deferred()
     const observedAt = dependencies.now?.() ?? Date.now()
     const processes = parseProcessList(dependencies.list(), observedAt)
     const processIDs = new Set<number>()
-    const matchedCandidates = new Set<string>()
+    const liveCandidates = new Set<string>()
+    const observedCandidates = new Set<string>()
     const rootCandidates = candidates.filter((candidate) => !candidate.settled)
 
     for (const candidate of rootCandidates) {
       for (const root of processes.filter((process) => phaseRootMatches(candidate, process))) {
         if (processCwd(dependencies.cwd(root.pid), root.pid) !== candidate.workspace) continue
         processIDs.add(root.processGroupID)
-        matchedCandidates.add(candidate.key)
+        liveCandidates.add(candidate.key)
+        observedCandidates.add(candidate.key)
       }
       for (const rootPID of candidate.rootPIDs) {
         const groupMembers = membersOfGroup(rootPID, processes)
         if (groupMembers.length === 0) {
           // A complete process-table observation proves this recorded process group is gone.
-          matchedCandidates.add(candidate.key)
+          observedCandidates.add(candidate.key)
           continue
         }
         let identityFound = false
@@ -181,27 +183,36 @@ export async function observeVerificationProcesses(
         }
         if (identityFound) {
           processIDs.add(rootPID)
-          matchedCandidates.add(candidate.key)
+          liveCandidates.add(candidate.key)
+          observedCandidates.add(candidate.key)
         }
       }
     }
 
-    const unknown = rootCandidates.filter((candidate) => !matchedCandidates.has(candidate.key))
-    if (unknown.length > 0) {
-      const examples = unknown
+    const staleChecks = rootCandidates
+      .filter((candidate) => candidate.terminal && !liveCandidates.has(candidate.key))
+      .map((candidate) => candidate.key)
+    const unknown = rootCandidates.filter((candidate) => !observedCandidates.has(candidate.key))
+    const blockingUnknown = unknown.filter((candidate) => !candidate.terminal)
+    const staleObservation = staleChecks.length > 0 ? { staleChecks } : {}
+    if (blockingUnknown.length > 0) {
+      const examples = blockingUnknown
         .slice(0, 3)
         .map((candidate) =>
           candidate.receiptReason ? `${candidate.key} (${candidate.receiptReason})` : candidate.key,
         )
       const remainder =
-        unknown.length > examples.length ? ` (+${unknown.length - examples.length} more)` : ""
+        blockingUnknown.length > examples.length
+          ? ` (+${blockingUnknown.length - examples.length} more)`
+          : ""
       return {
         kind: "unavailable",
         processIDs: [...processIDs],
         reason: `live verification settlement could not be identified for ${examples.join(", ")}${remainder}`,
+        ...staleObservation,
       }
     }
-    return { kind: "observed", processIDs: [...processIDs] }
+    return { kind: "observed", processIDs: [...processIDs], ...staleObservation }
   } catch (error) {
     return { kind: "unavailable", reason: errorReason(error) }
   }

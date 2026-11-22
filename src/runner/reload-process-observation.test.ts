@@ -4,12 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { observeVerificationProcesses } from "./reload-process-observation.ts"
-import {
-  MAX_OPEN_VERIFICATION_CANDIDATES,
-  MAX_RECENT_TRANSITION_ROWS,
-  RECENT_EFFECT_INTENTS_SQL,
-  verificationProcessCandidates,
-} from "./reload-verification-candidates.ts"
+import { verificationProcessCandidates } from "./reload-verification-candidates.ts"
+import { RELOAD_READ_PAGE_SIZE } from "./reload-pages.ts"
 
 function database() {
   const db = new Database(":memory:")
@@ -46,59 +42,99 @@ function addEffect(
   ])
 }
 
-test("effect start lookup reads one bounded primary-key tail, not correlated JSON history", () => {
+test("effect candidates are read across bounded keyset pages", () => {
   const db = database()
   const workspace = mkdtempSync(join(tmpdir(), "reload-candidate-query-"))
   try {
-    db.run(
-      "INSERT INTO runner_transitions(event,payload,created_at) VALUES('EFFECT_INTENDED',?,1)",
-      [JSON.stringify({ effectID: "verify-bounded" })],
-    )
-    for (let i = 0; i < MAX_RECENT_TRANSITION_ROWS + 10; i++)
-      db.run("INSERT INTO runner_transitions(event,payload,created_at) VALUES('OTHER','{}',?)", [
-        i + 2,
-      ])
-    const recentStartedAt = Date.now()
-    db.run(
-      "INSERT INTO runner_transitions(event,payload,created_at) VALUES('EFFECT_INTENDED',?,?)",
-      [JSON.stringify({ effectID: "verify-recent" }), recentStartedAt],
-    )
-    db.run(
-      "INSERT INTO runner_effects VALUES('verify-recent','p','verify:tests','intended',?,NULL)",
-      [
-        JSON.stringify({
-          check: { id: "quality", command: "bun check" },
-          workspace,
-        }),
-      ],
-    )
+    const count = RELOAD_READ_PAGE_SIZE * 4 + 1
+    const startedAt = Date.now()
+    for (let i = 0; i < count; i++)
+      addEffect(db, {
+        id: `verify-${String(i).padStart(4, "0")}`,
+        command: "bun check",
+        workspace,
+        startedAt,
+      })
+
     const candidates = verificationProcessCandidates(db)
-    expect(candidates.map((candidate) => candidate.key)).toEqual(["verify-recent"])
-    expect(candidates[0]?.startedAt).toBe(recentStartedAt)
-    expect(RECENT_EFFECT_INTENTS_SQL).toContain(
-      `ORDER BY id DESC LIMIT ${MAX_RECENT_TRANSITION_ROWS}`,
-    )
-    expect(RECENT_EFFECT_INTENTS_SQL).not.toMatch(/MIN\s*\(|json_extract/i)
-    const plan = db
-      .query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${RECENT_EFFECT_INTENTS_SQL}`)
-      .all()
-    expect(plan.map((row) => row.detail).join(" ")).not.toContain("TEMP B-TREE")
+    expect(candidates).toHaveLength(count)
+    expect(candidates[0]?.key).toBe("verify-0000")
+    expect(candidates.at(-1)?.key).toBe(`verify-${String(count - 1).padStart(4, "0")}`)
+    expect(candidates.every((candidate) => candidate.startedAt === startedAt)).toBe(true)
   } finally {
     db.close()
     rmSync(workspace, { recursive: true, force: true })
   }
 })
 
-test("an intent outside the bounded evidence tail is unknown, not assumed idle", () => {
+test("required intent evidence is paged past newer history and still detects live work", async () => {
   const db = database()
   const workspace = mkdtempSync(join(tmpdir(), "reload-old-intent-"))
   try {
-    addEffect(db, { id: "old", command: "bun check", workspace, startedAt: 1 })
-    for (let i = 0; i < MAX_RECENT_TRANSITION_ROWS + 1; i++)
-      db.run("INSERT INTO runner_transitions(event,payload,created_at) VALUES('OTHER','{}',?)", [
-        i + 2,
-      ])
-    expect(() => verificationProcessCandidates(db)).toThrow("missing bounded start-time evidence")
+    const startedAt = Date.now() - 1_000
+    addEffect(db, { id: "old", command: "printf reload", workspace, startedAt })
+    for (let i = 0; i < RELOAD_READ_PAGE_SIZE * 20 + 1; i++)
+      db.run(
+        "INSERT INTO runner_transitions(event,payload,created_at) VALUES('EFFECT_INTENDED',?,?)",
+        [JSON.stringify({ effectID: `unrelated-${i}` }), startedAt + i],
+      )
+    const candidates = verificationProcessCandidates(db)
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]?.startedAt).toBe(startedAt)
+    const observed = await observeVerificationProcesses(db, {
+      now: () => Date.now(),
+      list: () => ({ status: 0, stdout: "7654 1 7654 00:01 printf reload\n" }),
+      cwd: (pid) => ({ status: 0, stdout: `p${pid}\nfcwd\nn${workspace}\n` }),
+    })
+    expect(observed).toEqual({ kind: "observed", processIDs: [7654] })
+  } finally {
+    db.close()
+    rmSync(workspace, { recursive: true, force: true })
+  }
+})
+
+test("retained and adoption checks page through tied timestamps without skipping identities", () => {
+  const db = database()
+  const workspace = mkdtempSync(join(tmpdir(), "reload-check-pages-"))
+  try {
+    db.exec(`
+      CREATE TABLE runner_retained_verifications(id TEXT, state TEXT);
+      CREATE TABLE runner_retained_verification_checks(
+        operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+      );
+      CREATE TABLE runner_adoption_checks(
+        adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+      );
+    `)
+    const startedAt = Date.now()
+    const count = RELOAD_READ_PAGE_SIZE * 4 + 1
+    const check = (id: string) => JSON.stringify({ id, command: "bun check" })
+    const retained = db.query(
+      `INSERT INTO runner_retained_verification_checks
+       VALUES(?,?,?, ?,?,?,?,NULL,'completed')`,
+    )
+    const adoption = db.query(
+      `INSERT INTO runner_adoption_checks
+       VALUES(?,?,?, ?,?,?,?,NULL,'completed')`,
+    )
+    db.run("INSERT INTO runner_retained_verifications VALUES('retained','accepted')")
+    for (let i = 0; i < count; i++) {
+      const id = `quality-${String(i).padStart(4, "0")}`
+      const receiptPath = join(workspace, `${id}.json`)
+      retained.run("retained", "task", id, check(id), workspace, startedAt, receiptPath)
+      adoption.run("adoption", "task", id, check(id), workspace, startedAt, receiptPath)
+    }
+
+    const candidates = verificationProcessCandidates(db)
+    expect(candidates).toHaveLength(count * 2)
+    expect(candidates.map((candidate) => candidate.key)).toContain(
+      `retained:retained/task/quality-${String(count - 1).padStart(4, "0")}`,
+    )
+    expect(candidates.map((candidate) => candidate.key)).toContain(
+      `adoption:adoption/task/quality-${String(count - 1).padStart(4, "0")}`,
+    )
   } finally {
     db.close()
     rmSync(workspace, { recursive: true, force: true })
@@ -283,16 +319,20 @@ test("completed checks under terminal operations keep unsettled subprocess group
       list: () => ({ status: 0, stdout: "" }),
       cwd: () => ({ status: 0, stdout: "" }),
     })
-    expect(exited).toEqual({ kind: "observed", processIDs: [] })
+    expect(exited).toEqual({
+      kind: "observed",
+      processIDs: [],
+      staleChecks: ["retained:retained/task/quality"],
+    })
   } finally {
     db.close()
     rmSync(workspace, { recursive: true, force: true })
   }
 })
 
-test("terminal check acquisition is bounded and preserves unknown cleanup identity", async () => {
+test("unknown receipts under terminal retained operations are stale, not observation failures", async () => {
   const db = database()
-  const workspace = mkdtempSync(join(tmpdir(), "reload-terminal-bound-"))
+  const workspace = mkdtempSync(join(tmpdir(), "reload-terminal-unknown-"))
   try {
     db.exec(`
       CREATE TABLE runner_retained_verifications(id TEXT, state TEXT);
@@ -300,85 +340,60 @@ test("terminal check acquisition is bounded and preserves unknown cleanup identi
         operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
         created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
       );
-      CREATE TABLE runner_adoption_checks(
-        adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
-        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
-      );
     `)
     const startedAt = Date.now()
-    const checkJSON = JSON.stringify({ id: "quality", command: "bun run check" })
-    db.run("INSERT INTO runner_retained_verifications VALUES('retained','cancelled')")
-    const insert = db.query(
+    const insertOperation = db.query("INSERT INTO runner_retained_verifications VALUES(?,?)")
+    const insertCheck = db.query(
       `INSERT INTO runner_retained_verification_checks
-       VALUES('retained','task',?,?,?,?,?,?,'completed')`,
+       VALUES(?,?,?,?,?,?,?,?,'completed')`,
     )
-    const unsettled = JSON.stringify({
-      id: "quality",
-      command: "bun run check",
-      cwd: workspace,
-      startedAt,
-      endedAt: startedAt + 1,
-      processCleanup: { state: "uncertain", capability: "process-group", rootPID: 7654 },
-    })
-    for (let i = 0; i < MAX_OPEN_VERIFICATION_CANDIDATES + 1; i++)
-      insert.run(
-        `quality-${i}`,
-        checkJSON,
+    const terminal = [
+      {
+        operationID: "accepted-op",
+        state: "accepted",
+        checkJSON: JSON.stringify({ id: "quality", command: "bun check" }),
+        receipt: null,
+      },
+      {
+        operationID: "cancelled-op",
+        state: "cancelled",
+        checkJSON: JSON.stringify({ id: "quality", command: "bun check" }),
+        receipt: "{ invalid receipt",
+      },
+      {
+        operationID: "failed-op",
+        state: "failed",
+        checkJSON: "invalid check metadata",
+        receipt: null,
+      },
+    ]
+    for (const item of terminal) {
+      insertOperation.run(item.operationID, item.state)
+      insertCheck.run(
+        item.operationID,
+        item.operationID,
+        "quality",
+        item.checkJSON,
         workspace,
         startedAt,
-        join(workspace, `receipt-${i}.json`),
-        unsettled,
+        join(workspace, `${item.operationID}.json`),
+        item.receipt,
       )
-    expect(() => verificationProcessCandidates(db)).toThrow(
-      "Too many retained verification checks to inspect",
-    )
+    }
 
-    db.exec("DELETE FROM runner_retained_verification_checks")
-    db.run(
-      `INSERT INTO runner_adoption_checks
-       VALUES('adoption','task','quality',?,?,?, ?,?,'completed')`,
-      [
-        checkJSON,
-        workspace,
-        startedAt,
-        join(workspace, "unknown-receipt.json"),
-        JSON.stringify({
-          id: "quality",
-          command: "bun run check",
-          cwd: workspace,
-          startedAt,
-          endedAt: startedAt + 1,
-          processCleanup: { state: "uncertain", capability: "direct-child", rootPID: 7654 },
-        }),
-      ],
-    )
-    db.run(
-      `INSERT INTO runner_adoption_checks
-       VALUES('adoption-phase','task','quality',?,?,?, ?,?,'completed')`,
-      [
-        checkJSON,
-        workspace,
-        startedAt,
-        join(workspace, "phase-receipt.json"),
-        JSON.stringify({
-          id: "quality",
-          command: "bun run check",
-          cwd: workspace,
-          startedAt,
-          endedAt: startedAt + 1,
-          phases: [{ command: "bun run check" }],
-        }),
-      ],
-    )
-    const unknown = await observeVerificationProcesses(db, {
+    const observed = await observeVerificationProcesses(db, {
       list: () => ({ status: 0, stdout: "" }),
       cwd: () => ({ status: 0, stdout: "" }),
     })
-    expect(unknown.kind).toBe("unavailable")
-    if (unknown.kind === "unavailable") {
-      expect(unknown.reason).toContain("adoption:adoption/task/quality")
-      expect(unknown.reason).toContain("adoption:adoption-phase/task/quality")
-    }
+    expect(observed).toEqual({
+      kind: "observed",
+      processIDs: [],
+      staleChecks: [
+        "retained:accepted-op/accepted-op/quality",
+        "retained:cancelled-op/cancelled-op/quality",
+        "retained:failed-op/failed-op/quality",
+      ],
+    })
   } finally {
     db.close()
     rmSync(workspace, { recursive: true, force: true })

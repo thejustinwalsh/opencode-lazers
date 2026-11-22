@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite"
+import { readKeysetPages } from "./reload-pages.ts"
 
 /**
  * Whether a plugin or service reload can run without cutting work off. A location reload
@@ -34,6 +35,10 @@ export type ReloadSafety = {
   staleAttempts: Array<{ id: string; sessionID: string; state: string }>
   /** "Stale attempts: <attempt-id> (session <session-id>)", or undefined when none. */
   staleLine: string | undefined
+  /** Terminal retained checks whose historical process identity could not be settled. */
+  staleVerificationChecks: string[]
+  /** "Stale verification checks: <check-key>", or undefined when none. */
+  staleVerificationLine: string | undefined
   /** Explicit reasons why live activity could not be observed. */
   observationErrors: string[]
   /** "2 workers running, 1 verification running, 0 Architect turns in flight, safe to reload: no" */
@@ -44,8 +49,13 @@ export type ReloadObservation =
   { kind: "observed"; sessionIDs: readonly string[] } | { kind: "unavailable"; reason: string }
 
 export type ReloadProcessObservation =
-  | { kind: "observed"; processIDs: readonly number[] }
-  | { kind: "unavailable"; reason: string; processIDs?: readonly number[] }
+  | { kind: "observed"; processIDs: readonly number[]; staleChecks?: readonly string[] }
+  | {
+      kind: "unavailable"
+      reason: string
+      processIDs?: readonly number[]
+      staleChecks?: readonly string[]
+    }
 
 export type ReloadObservations = {
   sessions: ReloadObservation
@@ -56,7 +66,6 @@ export type ReloadObservations = {
 export const ARCHITECT_TURN_STALE_MS = 10 * 60_000
 
 const OPEN_TAKEOVER_STATES = ["notifying", "awaiting-handoff", "stopping"]
-const MAX_RECORDED_ATTEMPTS = 1_000
 
 function isMissingTable(error: unknown) {
   return error instanceof Error && /no such table:/i.test(error.message)
@@ -86,18 +95,23 @@ function ids(db: Database, sql: string): string[] {
 
 function workerAttempts(db: Database) {
   try {
-    const attempts = db
-      .query<{ id: string; session_id: string; state: string }, []>(
-        `SELECT a.id,a.session_id,a.state FROM runner_attempts a
-         JOIN runner_plans p ON p.id=a.plan_id
-         WHERE a.state IN ('preparing','running') AND p.state NOT IN ('cancelled','integrated')
-           AND a.session_id NOT LIKE 'lazers-takeover:%'
-         ORDER BY a.id LIMIT ${MAX_RECORDED_ATTEMPTS + 1}`,
-      )
-      .all()
-    if (attempts.length > MAX_RECORDED_ATTEMPTS)
-      throw new Error("Too many running attempt rows to inspect for reload safety")
-    return attempts
+    type AttemptRow = { id: string; session_id: string; state: string }
+    return readKeysetPages<AttemptRow, string>(
+      (cursor, limit) => {
+        const after = cursor === undefined ? "" : "AND a.id > ?"
+        const params: (string | number)[] = cursor === undefined ? [limit] : [cursor, limit]
+        return db
+          .query<AttemptRow, (string | number)[]>(
+            `SELECT a.id,a.session_id,a.state FROM runner_attempts a
+             JOIN runner_plans p ON p.id=a.plan_id
+             WHERE a.state IN ('preparing','running') AND p.state NOT IN ('cancelled','integrated')
+               AND a.session_id NOT LIKE 'lazers-takeover:%' ${after}
+             ORDER BY a.id LIMIT ?`,
+          )
+          .all(...params)
+      },
+      (attempt) => attempt.id,
+    )
   } catch (error) {
     if (isMissingTable(error)) return []
     throw error
@@ -172,7 +186,7 @@ export function reloadSafety(
     observed.sessions.kind === "observed"
       ? new Set(observed.sessions.sessionIDs)
       : new Set<string>()
-  const attempts = workerAttempts(db)
+  const attempts = db.transaction(() => workerAttempts(db)).deferred()
   const workers =
     observed.sessions.kind === "observed"
       ? attempts.filter((attempt) => activeSessions.has(attempt.session_id)).length
@@ -187,6 +201,7 @@ export function reloadSafety(
             state: attempt.state,
           }))
       : []
+  const staleVerificationChecks = [...new Set(observed.verifications.staleChecks ?? [])]
   const verifications = new Set(observed.verifications.processIDs ?? []).size
   const architectTakeovers = count(
     db,
@@ -236,6 +251,10 @@ export function reloadSafety(
     staleAttempts.length > 0
       ? `Stale attempts: ${staleAttempts.map((attempt) => `${attempt.id} (session ${attempt.sessionID})`).join(", ")}`
       : undefined
+  const staleVerificationLine =
+    staleVerificationChecks.length > 0
+      ? `Stale verification checks: ${staleVerificationChecks.join(", ")}`
+      : undefined
   const observationLine = observationErrors.length > 0 ? `, ${observationErrors.join(", ")}` : ""
   const otherSessionsLine =
     otherHostSessions > 0 ? `, ${noun(otherHostSessions, "other host session")} active` : ""
@@ -254,6 +273,8 @@ export function reloadSafety(
     architectTakeovers,
     staleAttempts,
     staleLine,
+    staleVerificationChecks,
+    staleVerificationLine,
     observationErrors,
     line: `${noun(workers, "worker")} running, ${noun(verifications, "verification")} running, ${noun(architectTurns, "Architect turn")} in flight${open}${finishing}${otherSessionsLine}${observationLine}, safe to reload: ${safe ? "yes" : "no"}`,
   }
