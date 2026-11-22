@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test"
-import { existsSync, rmSync } from "node:fs"
+import { existsSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
 import type { HostSession } from "./host.ts"
 import { RunnerStore } from "./store.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
+import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { getTaskDetail } from "../tasks/stream-query.ts"
 import { taskInstructions } from "../tasks/instructions.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
@@ -419,6 +421,118 @@ test("an edit to an existing file outside the scope does not block: the Architec
   ])
 })
 
+test("an additive scope amendment after preparation and checks continues the same candidate", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "src/change.ts" }],
+    writes: [{ path: "seed.ts", content: "export const seed=1\n" }],
+    checkCommand: "bun fmt --check src/change.ts seed.ts",
+    combinedCheckCommand: "true",
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  await runPlan(f)
+  await drive(f.runtime, 5)
+
+  const blocked = f.store.plan(planID)!
+  const attempt = f.store.attempts(planID)[0]!
+  const preparation = f.store.effects(planID).filter((effect) => effect.kind === "mechanical-fix")
+  const checks = f.store.effects(planID).filter((effect) => effect.kind === "verify:content")
+  expect(blocked.state).toBe("blocked")
+  expect(blocked.reason).toStartWith("Scope divergence needs a decision")
+  expect(attempt.state).toBe("verifying")
+  expect(preparation).toHaveLength(1)
+  expect(preparation[0]!.state).toBe("completed")
+  expect(checks).toHaveLength(1)
+  expect(checks[0]!.state).toBe("completed")
+  const prompts = f.events.filter((event) => event.startsWith("prompt:")).length
+  const workerSessionID = attempt.session_id
+
+  await f.runtime.command(
+    {
+      requestID: "amend-after-verified-candidate",
+      planID,
+      action: "amend-scope",
+      taskID: task.id,
+      scopeAdditions: ["seed.ts"],
+      reason: "The verified seed adjustment is needed by the implementation.",
+    },
+    "owner",
+  )
+  const receiptCheck = (JSON.parse(preparation[0]!.receipt!) as { check: RunnerCheckReceipt }).check
+  const reconciliation = Reflect.get(f.runtime, "effectReconciliation") as EffectReconciliation
+  expect(
+    await reconciliation.checkReceiptMatchesEffect(
+      preparation[0]!,
+      JSON.parse(preparation[0]!.payload),
+      receiptCheck,
+    ),
+  ).toBe(true)
+  await drive(f.runtime, 6)
+
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]!.id).toBe(attempt.id)
+  expect(f.store.effects(planID).filter((effect) => effect.kind === "mechanical-fix")).toHaveLength(
+    1,
+  )
+  expect(f.store.effects(planID).filter((effect) => effect.kind === "verify:content")).toHaveLength(
+    1,
+  )
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)
+  expect(f.store.attempts(planID)[0]!.session_id).toBe(workerSessionID)
+  expect(acceptedScope(f, planID)?.accepted).toEqual([
+    {
+      path: "seed.ts",
+      reason: "The verified seed adjustment is needed by the implementation.",
+    },
+  ])
+})
+
+test("an additive scope amendment rechecks changed candidate input without replaying the worker", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "src/change.ts" }],
+    writes: [{ path: "seed.ts", content: "export const seed=1\n" }],
+    checkCommand: "bun fmt --check src/change.ts seed.ts",
+    combinedCheckCommand: "true",
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  await runPlan(f)
+  await drive(f.runtime, 5)
+  const attempt = f.store.attempts(planID)[0]!
+  expect(f.store.plan(planID)!.state).toBe("blocked")
+  expect(f.store.effects(planID).find((effect) => effect.kind === "mechanical-fix")?.state).toBe(
+    "completed",
+  )
+  expect(f.store.effects(planID).find((effect) => effect.kind === "verify:content")?.state).toBe(
+    "completed",
+  )
+  writeFileSync(join(attempt.workspace, "src/change.ts"), "export const changedAfterCheck = 1\n")
+
+  await f.runtime.command(
+    {
+      requestID: "amend-after-candidate-input-change",
+      planID,
+      action: "amend-scope",
+      taskID: task.id,
+      scopeAdditions: ["seed.ts"],
+      reason: "Accept the seed file, but do not accept changes after its checks.",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 4)
+
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.effects(planID).filter((effect) => effect.kind === "mechanical-fix")).toHaveLength(
+    2,
+  )
+  expect(f.store.effects(planID).filter((effect) => effect.kind === "verify:content")).toHaveLength(
+    2,
+  )
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+})
+
 test("a divergence rides in the one combined repair with the failing check and is cleared when moved back", async () => {
   const marker = join(tmpdir(), `lazers-scope-tries-${crypto.randomUUID()}`)
   cleanup.push(() => rmSync(marker, { force: true }))
@@ -606,7 +720,6 @@ test("scope amendments preserve the specification and recover dependency edits i
   await drive(f.runtime, 2)
   const attempt = f.store.attempts(planID)[0]!
   expect(attempt.state).toBe("running")
-  const version = f.store.plan(planID)!.version
   const command = {
     requestID: "allow-dependency",
     planID,

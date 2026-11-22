@@ -4,6 +4,8 @@ import { SessionMessage } from "@opencode/schema/session-message"
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { git } from "./artifacts.ts"
+import { RuntimeJournal } from "./runtime-journal.ts"
+import { RetainedRepairRecords } from "./retained-repair-records.ts"
 import {
   type LegacyFenceState,
   acceptedAttemptFixture,
@@ -85,6 +87,86 @@ test("retained repair carries an owned captured synthetic terminal input through
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(originalSessionCount)
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
   expect(worker.messages.some((message) => message.id === nativeInputID)).toBe(true)
+})
+
+test("an independent sibling verification hold does not invalidate a retained repair", async () => {
+  const f = fixture({
+    independent: true,
+    commit: true,
+    taskFiles: [
+      { name: "a", path: "a.txt" },
+      { name: "b", path: "b.txt" },
+    ],
+    checkCommand: (name, path) => (name === "b" ? "exit 7" : `test "$(cat ${path})" = "${name}"`),
+    combinedCheckCommand: "true",
+  })
+  const planID = f.receipt.planID
+  await runPlan(f)
+  await f.runtime.tick()
+  const initialAttempts = f.store.attempts(planID)
+  expect(initialAttempts).toHaveLength(2)
+  for (const attempt of initialAttempts) f.completeWorker(attempt.session_id)
+  await drive(f.runtime, 12)
+
+  const [acceptedAttempt, siblingAttempt] = f.store.attempts(planID)
+  expect(acceptedAttempt).toBeDefined()
+  expect(siblingAttempt).toBeDefined()
+  expect(f.store.nodes(planID).map((node) => node.state)).toEqual(["accepted", "failed"])
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  for (const attempt of [acceptedAttempt!, siblingAttempt!]) {
+    Object.assign(f.sessions.get(attempt.session_id)!, {
+      busy: false,
+      pendingInput: false,
+      pendingPermissions: 0,
+      pendingForms: 0,
+      observationUnstable: false,
+    })
+  }
+  const priorPrompts = f.events.filter((event) => event.startsWith("prompt:")).length
+  const requested = (await f.runtime.command(
+    {
+      requestID: "retained-repair-with-sibling-verification-hold",
+      planID,
+      action: "retained-repair",
+      taskID: acceptedAttempt!.task_id,
+      attemptID: acceptedAttempt!.id,
+      artifact: acceptedAttempt!.artifact!,
+      reason: "Repair the accepted task without changing its captured ownership.",
+    },
+    "owner",
+  )) as { status: string }
+  expect(requested.status).toBe("retained-repair-requested")
+
+  const repairRecords = Reflect.get(f.runtime, "repairRecords") as RetainedRepairRecords
+  const journal = Reflect.get(f.runtime, "journal") as RuntimeJournal
+  const preparing = f.store.attempts(planID).find((attempt) => attempt.id === acceptedAttempt!.id)!
+  const repair = repairRecords.retainedRepairForAttempt(preparing)
+  if (!repair) throw new Error("Retained repair record was not available after admission")
+  journal.hold(
+    f.store.plan(planID)!,
+    `Sibling verification for task ${siblingAttempt!.task_id} remains under review`,
+    ["audit", "reconcile", "cancel"],
+  )
+  expect(
+    await repairRecords.retainedRepairPromptCurrent(f.store.plan(planID)!, preparing, repair),
+  ).toBe(true)
+  expect(f.store.plan(planID)?.reason).toContain("Sibling verification")
+  expect(f.store.latestTransition<{ reason: string }>(planID, null, "BLOCKED")?.reason).toContain(
+    "Sibling verification",
+  )
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(priorPrompts)
+
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?")
+      .run(planID),
+  )
+  await f.runtime.tick()
+  expect(f.store.attempts(planID).find((attempt) => attempt.id === preparing.id)?.state).toBe(
+    "running",
+  )
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(priorPrompts + 1)
+  expect(f.store.attempts(planID)).toHaveLength(2)
 })
 
 test("retained repair waits for a project-capacity slot before reusing its worker", async () => {

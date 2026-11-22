@@ -19,6 +19,9 @@ import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
+import { parseProfile } from "../projects/profile.ts"
+import { activateRevision } from "../projects/profile-store.ts"
+import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
@@ -68,6 +71,7 @@ function fixture(
     verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     failRetainedCleanup?: boolean
     retainedDependencyInstaller?: RetainedDependencyInstaller
+    retainedProfileDependency?: boolean
     requestTick?: () => Promise<void>
     successorCount?: number
     failRetainedCheck?: boolean
@@ -136,6 +140,32 @@ function fixture(
     writeFileSync(join(root, "package.json"), `${JSON.stringify(manifest)}\n`)
     writeFileSync(join(root, "bun.lock"), '{"lockfileVersion":1,"workspaces":{}}\n')
   }
+  if (options.retainedProfileDependency) {
+    const manifest = {
+      name: "retained-reverify-fixture",
+      version: "1.0.0",
+      private: true,
+      dependencies: { "pkce-challenge": "1.0.0" },
+    }
+    writeFileSync(join(root, "package.json"), `${JSON.stringify(manifest)}\n`)
+    writeFileSync(
+      join(root, "package-lock.json"),
+      `${JSON.stringify({
+        name: manifest.name,
+        version: manifest.version,
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: manifest.name,
+            version: manifest.version,
+            dependencies: manifest.dependencies,
+          },
+          "node_modules/pkce-challenge": { version: "1.0.0" },
+        },
+      })}\n`,
+    )
+  }
   mkdirSync(join(root, "node_modules"))
   for (const directory of [
     "src/runner",
@@ -152,9 +182,16 @@ function fixture(
     "test/retained-verification",
   ])
     writeFileSync(join(root, directory, ".keep"), "fixture target\n")
+  const dependencyImport = options.retainedProfileDependency
+    ? 'import { marker } from "pkce-challenge"\n'
+    : ""
+  const dependencyAssertion = options.retainedProfileDependency
+    ? '  expect(marker).toBe("profile-installed")\n'
+    : ""
   writeFileSync(
     join(root, "src", "runner", "retained-check.test.ts"),
-    `import { Database } from "bun:sqlite"\n` +
+    dependencyImport +
+      `import { Database } from "bun:sqlite"\n` +
       `import { appendFileSync, existsSync, mkdirSync } from "node:fs"\n` +
       `import { dirname, join } from "node:path"\n` +
       `import { expect, test } from "bun:test"\n` +
@@ -173,6 +210,7 @@ function fixture(
       `  finally { db.close() }\n` +
       `  appendFileSync(sentinel, checkID === "isolated-combined-check" ? "combined\\n" : "task\\n")\n` +
       `  expect(checkID).toMatch(/^isolated-(?:task|combined)-check$/)\n` +
+      dependencyAssertion +
       `})\n`,
   )
   if (options.gatedVerificationTest)
@@ -1841,6 +1879,259 @@ test("owner verifies an exact failed-attempt candidate with zero replacement pro
     expect(receipt.isolation.sqlitePath).toContain("retained-verification-resources")
   }
 })
+
+test.each(["success", "failed check", "failed install", "interruption"] as const)(
+  "retained verification stages native/profile pkce-challenge dependencies with truthful %s outcome",
+  async (outcome) => {
+    const installCommand = "npm ci --ignore-scripts --no-audit --no-fund"
+    const failedCheck = outcome === "failed check"
+    const failedInstall = outcome === "failed install"
+    const interrupted = outcome === "interruption"
+    const setupStarted = deferred()
+    const storeRef: { current?: RunnerStore } = {}
+    let installWorkspace: string | undefined
+    let installCount = 0
+    const installer: RetainedDependencyInstaller = async ({
+      candidateWorkspace,
+      command,
+      signal,
+    }) => {
+      installCount++
+      installWorkspace = candidateWorkspace
+      expect(command).toEqual(["/bin/sh", "-c", installCommand])
+      expect(readFileSync(join(candidateWorkspace, "package-lock.json"), "utf8")).toContain(
+        '"lockfileVersion":3',
+      )
+      const reservation = storeRef.current?.atomic((db) =>
+        db
+          .query<
+            {
+              canonical_path: string
+              device: number
+              inode: number
+              state: string
+            },
+            []
+          >(
+            `SELECT canonical_path,device,inode,state
+             FROM runner_retained_verification_resources
+             WHERE resource_name='dependency-install'`,
+          )
+          .get(),
+      )
+      expect(reservation).toEqual({
+        canonical_path: join(candidateWorkspace, "node_modules"),
+        device: -1,
+        inode: -1,
+        state: "creating",
+      })
+      const packageDirectory = join(candidateWorkspace, "node_modules", "pkce-challenge")
+      mkdirSync(packageDirectory, { recursive: true })
+      writeFileSync(
+        join(packageDirectory, "package.json"),
+        '{"name":"pkce-challenge","version":"1.0.0","type":"module","main":"index.mjs"}\n',
+      )
+      writeFileSync(
+        join(packageDirectory, "index.mjs"),
+        'export const marker = "profile-installed"\n',
+      )
+      if (interrupted) {
+        setupStarted.resolve()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener("abort", () => resolve(), { once: true })
+        })
+        throw new Error("fixture profile install cancelled")
+      }
+      if (failedInstall) throw new Error("fixture profile install failed after writing packages")
+    }
+    const f = await failedFixture({
+      taskCheckCommand: "bun test src/runner/retained-check.test.ts",
+      combinedCheckCommand: "true",
+      retainedDependencyInstaller: installer,
+      retainedProfileDependency: true,
+      failRetainedCheck: failedCheck,
+    })
+    storeRef.current = f.store
+    const originalWorkerDependencies = join(f.attempt.workspace, "node_modules", "pkce-challenge")
+    mkdirSync(originalWorkerDependencies, { recursive: true })
+    writeFileSync(
+      join(originalWorkerDependencies, "package.json"),
+      '{"name":"pkce-challenge","type":"module","main":"index.mjs"}\n',
+    )
+    writeFileSync(
+      join(originalWorkerDependencies, "index.mjs"),
+      'export const marker = "original-worker"\n',
+    )
+    const originalWorktree = f.host.worktree.bind(f.host)
+    f.host.worktree = async (input) => {
+      const workspace = await originalWorktree(input)
+      if (input.directory.includes("retained-")) {
+        const nativePackage = join(workspace, "node_modules", "pkce-challenge")
+        mkdirSync(nativePackage, { recursive: true })
+        writeFileSync(
+          join(nativePackage, "package.json"),
+          '{"name":"pkce-challenge","type":"module","main":"index.mjs"}\n',
+        )
+        writeFileSync(join(nativePackage, "index.mjs"), 'export const marker = "native-startup"\n')
+      }
+      return workspace
+    }
+
+    const registered = await registerProject(f.store.repository, {
+      directory: f.root,
+      opencodeProjectID: "project",
+    })
+    cleanups.push(() => resetProjectAliasCache())
+    const parsed = parseProfile({
+      source: { include: ["src/**"] },
+      toolchains: ["npm"],
+      verify: [{ id: "tests", command: "bun test src/runner/retained-check.test.ts" }],
+      install: installCommand,
+    })
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues))
+    activateRevision(f.store.repository, {
+      projectKey: registered.key,
+      profile: parsed.profile,
+      author: { kind: "architect", sessionID: "owner", agent: "architect" },
+      reason: "Prove the private npm installer for retained verification",
+      proofs: [
+        {
+          key: "install:0",
+          command: installCommand,
+          outcome: "proven",
+          exitCode: 0,
+          timedOut: false,
+          durationMs: 1,
+          stdoutTail: "",
+          stderrTail: "",
+          ranAt: Date.now(),
+        },
+      ],
+    })
+
+    const prompts = [...f.prompts]
+    const result = (await f.runtime.command(
+      retainedVerifyCommand(
+        f,
+        `verify-retained-pkce-native-profile-${outcome.replaceAll(" ", "-")}`,
+      ),
+      "owner",
+    )) as { operationID: string }
+    const expectedState = interrupted
+      ? "cancelled"
+      : failedCheck || failedInstall
+        ? "failed"
+        : "accepted"
+    if (interrupted) {
+      await setupStarted.promise
+      await f.runtime.command(
+        {
+          requestID: "cancel-retained-profile-install",
+          planID: f.planID,
+          action: "cancel",
+          reason: "Stop the profile install before any retained check starts",
+        },
+        "owner",
+      )
+    }
+    await waitForRetainedOperationState(f, result.operationID, [expectedState], "retained outcome")
+    await waitForFixtureCondition(f, "profile dependency resource cleanup", () => {
+      const operation = f.store.atomic((db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_retained_verifications WHERE id=?",
+          )
+          .get(result.operationID),
+      )
+      const resources = f.store.atomic((db) =>
+        db
+          .query<{ state: string }, [string]>(
+            "SELECT state FROM runner_retained_verification_resources WHERE operation_id=?",
+          )
+          .all(result.operationID),
+      )
+      const checks = f.store.atomic((db) =>
+        db
+          .query<{ cleanup_state: string }, [string]>(
+            "SELECT cleanup_state FROM runner_retained_verification_checks WHERE operation_id=?",
+          )
+          .all(result.operationID),
+      )
+      return Boolean(
+        operation &&
+        JSON.parse(operation.payload).cleanupState === "complete" &&
+        resources.length > 0 &&
+        resources.every((resource) => resource.state === "removed") &&
+        (interrupted || failedInstall
+          ? checks.length === 0
+          : checks.length === 1 && checks[0]!.cleanup_state === "complete"),
+      )
+    })
+
+    const operation = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(result.operationID),
+    )!
+    expect(JSON.parse(operation.payload)).toMatchObject({
+      state: expectedState,
+      cleanupState: "complete",
+      artifact: f.artifact,
+    })
+    const checks = f.store.atomic((db) =>
+      db
+        .query<
+          { phase: string; state: string; cleanup_state: string; receipt: string | null },
+          [string]
+        >(
+          "SELECT phase,state,cleanup_state,receipt FROM runner_retained_verification_checks WHERE operation_id=?",
+        )
+        .all(result.operationID),
+    )
+    if (interrupted || failedInstall) {
+      expect(checks).toHaveLength(0)
+    } else {
+      expect(checks).toHaveLength(1)
+      expect(checks[0]).toMatchObject({
+        phase: "task",
+        state: "completed",
+        cleanup_state: "complete",
+      })
+      const receipt = JSON.parse(checks[0]!.receipt!) as RunnerCheckReceipt & {
+        isolation: {
+          resources: Array<{ name: string; realPath: string }>
+        }
+      }
+      expect(receipt.exitCode === 0).toBe(!failedCheck)
+      expect(
+        receipt.isolation.resources.find((resource) => resource.name === "dependencies")?.realPath,
+      ).toContain("retained-verification-resources")
+    }
+    expect(readFileSync(join(originalWorkerDependencies, "index.mjs"), "utf8")).toContain(
+      "original-worker",
+    )
+    expect(installWorkspace).toBeDefined()
+    expect(existsSync(join(installWorkspace!, "node_modules"))).toBe(false)
+    expect(installCount).toBe(1)
+    expect(f.prompts).toEqual(prompts)
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.planID)[0]!.artifact).toBe(f.artifact)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verification_resources WHERE operation_id=? AND state!='removed'",
+            )
+            .get(result.operationID)!.count,
+      ),
+    ).toBe(0)
+  },
+  120_000,
+)
 
 test("failed retained task evidence never accepts the target or releases dependents", async () => {
   const f = await failedFixture({ successorCount: 1, failRetainedCheck: true })
