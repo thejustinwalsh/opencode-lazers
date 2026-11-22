@@ -1,6 +1,19 @@
 import type { Bucket } from "./buckets.ts"
 
 /**
+ * Whether a task is integrated: its node was incorporated, or it was accepted and its plan then
+ * integrated. No writer moves an accepted node on when its plan integrates (the node machine's
+ * `incorporated` is reached only from `queued`), so the plan state carries it, as the detail
+ * pane's progress (`taskProgress`) already reads it.
+ */
+export function integratedOf(facts: { nodeState: string | null; planState: string | null }) {
+  return (
+    facts.nodeState === "incorporated" ||
+    (facts.nodeState === "accepted" && facts.planState === "integrated")
+  )
+}
+
+/**
  * State rank of a task for the list: the `STATE_RANK_SQL` of the old schedule query
  * (`src/tasks/schedule-order.ts`). A cancelled plan or node is cancelled and a blocked plan holds
  * its running node out of Running.
@@ -14,7 +27,7 @@ export function rankOf(facts: {
   const { nodeState: node, planState: plan } = facts
   if (node === "cancelled" || plan === "cancelled") return 5
   if (node === "failed" || node === "exhausted") return 4
-  if (node === "incorporated") return 3
+  if (integratedOf(facts)) return 3
   if (node === "accepted") return 2
   if ((node === "running" || node === "verifying") && plan !== "blocked") return 0
   return 1
@@ -36,7 +49,7 @@ export function bucketOf(facts: {
   if (node === null) return "open"
   if (plan === "cancelled" || node === "cancelled") return "cancelled"
   if (node === "failed" || node === "exhausted") return "failed"
-  if (node === "incorporated") return "integrated"
+  if (integratedOf(facts)) return "integrated"
   if (node === "accepted") return "accepted"
   if (node === "blocked" || plan === "blocked") return "blocked"
   if ((node === "queued" || node === "ready") && facts.paused) return "paused"

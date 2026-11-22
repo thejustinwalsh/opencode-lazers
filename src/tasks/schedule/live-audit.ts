@@ -19,7 +19,7 @@ import { planIs } from "../../runner/identity-read.ts"
 const STATE_RANK_SQL = (node: string, plan: string) => `CASE
   WHEN ${node}.state='cancelled' OR ${plan}.state='cancelled' THEN 5
   WHEN ${node}.state IN ('failed','exhausted') THEN 4
-  WHEN ${node}.state='incorporated' THEN 3
+  WHEN ${node}.state='incorporated' OR (${node}.state='accepted' AND ${plan}.state='integrated') THEN 3
   WHEN ${node}.state='accepted' THEN 2
   WHEN ${node}.state IN ('running','verifying') AND ${plan}.state!='blocked' THEN 0
   ELSE 1
@@ -88,8 +88,10 @@ function taskStatePredicate(state: string, taskAlias: "tasks" | "t"): string {
       WHERE n.task_id=${taskAlias}.id
         AND p.project_directory=${taskAlias}.project_directory AND p.state='cancelled'
     )`
+  // Departure 4 (`parity.fixture.ts`): an accepted task of an integrated plan is integrated.
   const effective = `CASE
     WHEN p.state='cancelled' OR n.state='cancelled' THEN 'cancelled'
+    WHEN n.state='accepted' AND p.state='integrated' THEN 'incorporated'
     WHEN p.state='blocked' AND n.state IN ('queued','ready') THEN 'blocked'
     ELSE n.state
   END`
