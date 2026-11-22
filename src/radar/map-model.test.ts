@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test"
 import type { RadarLive } from "./live-view.ts"
 import { layoutMap } from "./map-layout.ts"
-import { createRadarMap, mapFacts, relatedNodes, MAP_ITEMS_PER_GROUP } from "./map-model.ts"
+import {
+  createRadarMap,
+  emptyGroupNote,
+  mapFacts,
+  relatedNodes,
+  MAP_ITEMS_PER_GROUP,
+} from "./map-model.ts"
 import type { LiveSession } from "./monitor-model.ts"
 
 const TASK = "5f0c2a1e-7b3d-4c8e-9a1f-0d2b3c4e5f60"
@@ -211,4 +217,11 @@ test("workers are siblings on a rail with a tick each, not a chain", () => {
   const ticks = layout.edges.filter((edge) => edge.from === "group:runtime")
   expect(new Set(ticks.map((edge) => rail(edge.d))).size).toBe(1)
   for (const edge of ticks) expect(edge.d).toMatch(/V\d+H[\d.]+$/)
+})
+
+test("an empty Map group says which group is empty", () => {
+  // The Queue node shows while only needs-you tasks exist; its own queued list is then empty.
+  expect(emptyGroupNote("queued")).toBe("Nothing is queued.")
+  expect(emptyGroupNote("needs-you")).toBe("No task needs you.")
+  expect(emptyGroupNote("failed")).toBe("No task has failed.")
 })

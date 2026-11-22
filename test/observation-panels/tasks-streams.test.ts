@@ -575,6 +575,15 @@ test("the first window renders in the stored order, with one start-of-list state
     expect(h.treeHeight()).toBeGreaterThan(ROW * 60)
     expect(h.treeHeight()).toBeLessThan(ROW * order.length)
     expect(h.text()).not.toContain("unknown")
+    // Cut text carries its whole text as a tooltip: each row's title, and the header count,
+    // which gives way before the controls so the count's arrival never wraps the header.
+    const firstTitle = h
+      .row(ids["R1 only"]!)!
+      .querySelector<HTMLElement>(".lazers-tasks-row-title")!
+    expect(firstTitle.title).toBe(firstTitle.textContent!)
+    await until(() => Boolean(h.container.querySelector(".lazers-tasks-count")))
+    const count = h.container.querySelector<HTMLElement>(".lazers-tasks-count")!
+    expect(count.title).toBe(count.textContent!)
     // A single stream per source at rest: the list, the counts, the index, and the selected facts.
     expect(
       h.opens.filter((open) => open.source === "tasks.schedule" && open.window > 1),
@@ -842,6 +851,9 @@ test("the inspector reads the selected task's plan, prerequisites and dependents
     // The plan's title and the step come from the stored plan and row.
     expect(text).toContain("Chain")
     expect(detail.textContent).toContain("Chain")
+    // The details bar cuts the title at narrow widths; its tooltip carries the whole title.
+    const barTitle = h.container.querySelector<HTMLElement>(".lazers-tasks-inspector-title")!
+    expect(barTitle.title).toBe("Chain two")
   })
 })
 
@@ -893,6 +905,27 @@ test("keyboard: Right expands then enters, Left leaves then collapses, Down move
     await until(() => h.row(three)!.getAttribute("aria-expanded") === "false")
     h.key(h.row(three)!, "ArrowDown")
     await until(() => focus()?.dataset.taskId !== three)
+  })
+})
+
+test("keyboard: End and Home go to the ends of the list, not of the window", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.topLevel().length > 0)
+    const order = storedOrder(
+      "retired=0 AND bucket IN ('running','queued','paused','blocked','open')",
+    )
+    const first = order[0]!
+    const last = order.at(-1)!
+    // The first window holds the head of the list; the last task is far beyond it.
+    expect(h.row(last)).toBeNull()
+    const focus = () => h.dom.document.activeElement as unknown as HTMLElement | null
+    h.row(first)!.focus()
+    h.key(h.row(first)!, "End")
+    await until(() => focus()?.dataset.taskId === last)
+    expect(h.row(last)!.getAttribute("aria-selected")).toBe("true")
+    h.key(h.row(last)!, "Home")
+    await until(() => focus()?.dataset.taskId === first)
+    expect(h.row(first)!.getAttribute("aria-selected")).toBe("true")
   })
 })
 

@@ -171,3 +171,13 @@ test("the callout reveals raw detail from its Details link", () => {
   expect(raw.hidden).toBe(false)
   expect(toggle.getAttribute("aria-expanded")).toBe("true")
 })
+
+test("a Rows table is one grid: its rows are subgrids, so the header and every row share columns", () => {
+  // Each row as its own grid sized `auto` and `fr` columns apart: the header of a table whose last
+  // column held a button sat over different columns than its rows.
+  const rule = (selector: string) =>
+    new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(detailsKitStyles)?.[1] ?? ""
+  expect(rule(".lazers-kit-rows")).toContain("grid-template-columns: var(--lazers-kit-columns)")
+  expect(rule(".lazers-kit-row")).toContain("grid-template-columns: subgrid")
+  expect(rule(".lazers-kit-row")).toContain("grid-column: 1 / -1")
+})

@@ -111,9 +111,13 @@ export const detailsKitStyles = `
   .lazers-kit-coverage-note { color: var(--icon-warning-base, var(--text-base)); text-align: right; }
 
   /* Rows */
-  .lazers-kit-rows { display: flex; flex-direction: column; min-width: 0; }
+  /* One grid for the whole table; each row is a subgrid of it, so an \`auto\` or \`fr\` column has one
+     width in the header and in every row (each row as its own grid sized them apart). */
+  .lazers-kit-rows {
+    display: grid; grid-template-columns: var(--lazers-kit-columns); column-gap: 12px; min-width: 0;
+  }
   .lazers-kit-row {
-    display: grid; grid-template-columns: var(--lazers-kit-columns); align-items: center; gap: 12px;
+    grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; gap: 12px;
     min-height: 28px; padding: 0; border: 0; border-bottom: 1px solid var(--border-weak-base);
     background: none; color: var(--text-base); font: inherit; font-size: 12.5px; text-align: left;
     min-width: 0; width: 100%; box-sizing: border-box;

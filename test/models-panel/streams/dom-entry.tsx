@@ -229,6 +229,8 @@ export function harness(
     preferences?: Partial<ModelsPreference>
     /** Models whose reference estimate is partial: a priced subtotal range, total unknown. */
     partial?: string[]
+    /** Answers the opens of these sources only after `answer()`: a slow stream. */
+    lateSources?: string[]
   } = {},
 ) {
   let data = options.data ?? story.initial
@@ -242,6 +244,8 @@ export function harness(
   const known = new Map<string, OpenRecord>()
   let emit: ((type: string, data: unknown) => void) | undefined
   let heldFrames = 0
+  const late = new Set(options.lateSources ?? [])
+  const lateAnswers: (() => void)[] = []
 
   const table = rpc(() => data, {
     overview: (output) => withReferences(output, options.partial),
@@ -270,7 +274,9 @@ export function harness(
       }
       known.set(input.stream, record)
       opens.push(record)
-      return masked(input.stream, inner.open!(input as never))
+      const reply = () => masked(input.stream, inner.open!(input as never))
+      if (!late.has(input.source)) return reply()
+      return new Promise((resolve) => lateAnswers.push(() => resolve(reply())))
     }) as never,
     slide: ((input: { stream: string }) =>
       masked(input.stream, inner.slide!(input as never))) as never,
@@ -352,6 +358,11 @@ export function harness(
     /** From now on, answer the views `matches` selects as backfilling. */
     hold(matches: (view: ViewSelection) => boolean) {
       holding = matches
+    },
+    /** Answer the slow sources' opens now, and every later open at once. */
+    answer() {
+      late.clear()
+      for (const resolve of lateAnswers.splice(0)) resolve()
     },
     /** Every held view is built: re-read what was open. */
     release(next?: ModelsData) {

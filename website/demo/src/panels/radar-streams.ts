@@ -10,7 +10,12 @@ import {
   radarNativeCallColumns,
   radarSchedulerColumns,
   radarWorkloadColumns,
+  radarNodeColumns,
+  radarPlanEventColumns,
+  radarPlanEventDetail,
 } from "../../../../src/streams/sources/radar-ref.ts"
+import { TASK_SOURCES, taskPlanColumns } from "../../../../src/streams/sources/tasks-ref.ts"
+import { taskMachineDefinition } from "../../../../src/runner/task-machine-config.ts"
 import {
   RADAR_SESSIONS_SOURCE,
   radarSessionColumns,
@@ -55,6 +60,93 @@ const SOURCES = {
   [RADAR_SOURCES.nativeCalls]: { columns: radarNativeCallColumns, key: ["id"] },
   [RADAR_FLOW_SOURCES.steps]: { columns: radarStepColumns, key: ["id"] },
   [RADAR_FLOW_SOURCES.transcripts]: { columns: radarTranscriptColumns, key: ["id"] },
+  [TASK_SOURCES.plans]: { columns: taskPlanColumns, key: ["plan_id"] },
+  [RADAR_SOURCES.nodes]: { columns: radarNodeColumns, key: ["task_id"] },
+  [RADAR_SOURCES.planEvents]: {
+    columns: radarPlanEventColumns,
+    key: ["id"],
+    detail: radarPlanEventDetail,
+  },
+}
+
+/** The demo's one plan: every worker's task is a node of it. */
+const PLAN_ID = "00000003-0000-4000-8000-000000000001"
+const MACHINE_VERSION = taskMachineDefinition().version
+
+/** A worker's task as the runner records it: its state, and the machine edges it took to get there. */
+const nodeState = (worker: DemoWorker) =>
+  worker.held ? "blocked" : worker.state === "verifying" ? "verifying" : "running"
+const edgesOf = (worker: DemoWorker): [string, string, string][] => {
+  const path: [string, string, string][] = [
+    ["queued", "READY", "ready"],
+    ["ready", "DISPATCH", "running"],
+  ]
+  if (worker.state === "verifying") path.push(["running", "VERIFY", "verifying"])
+  if (worker.held) path.push([path.at(-1)![2], "BLOCK", "blocked"])
+  return path
+}
+
+function lifecycleRows(data: RadarData, open: Open, ids: RadarIds): DemoRow[] | undefined {
+  const filter = open.filter
+  if (open.source === TASK_SOURCES.plans)
+    return [
+      {
+        plan_id: PLAN_ID,
+        seq: 1,
+        title: "Offline sync",
+        state: "running",
+        reason: null,
+        priority: 1,
+        priority_key: 1,
+        owner_session_id: ids.architect,
+        workspace_mode: "isolated",
+        after_plans: [],
+        after_plans_count: 0,
+        pause: null,
+        plan_revision: 1,
+        node_count: data.workers.length,
+        open_count: data.workers.length,
+      },
+    ]
+  if (open.source === RADAR_SOURCES.nodes)
+    return filter.planID !== PLAN_ID
+      ? []
+      : data.workers.map((worker, ordinal) => ({
+          plan_id: PLAN_ID,
+          task_id: ids.taskID(worker.n),
+          ordinal,
+          state: nodeState(worker),
+          version: edgesOf(worker).length,
+          reason: worker.held ?? null,
+          machine_version: MACHINE_VERSION,
+          snapshot: { status: "active", value: nodeState(worker) },
+        }))
+  if (open.source === RADAR_SOURCES.planEvents) {
+    const worker = data.workers.find((found) => ids.taskID(found.n) === filter.taskID)
+    if (!worker || filter.planID !== PLAN_ID) return []
+    return edgesOf(worker).map(([from, event, to], index) => ({
+      id: worker.n * 100 + index + 1,
+      plan_id: PLAN_ID,
+      task_id: ids.taskID(worker.n),
+      event,
+      from_state: from,
+      to_state: to,
+      attempt_id: index > 0 ? ids.attemptID(worker.n) : null,
+      at: ids.abs(worker.startedAt) - (edgesOf(worker).length - index) * 20_000,
+      detail: {
+        event: {
+          reason:
+            event === "BLOCK"
+              ? (worker.held ?? "held")
+              : event === "DISPATCH"
+                ? `Dispatched to ${worker.model.id}`
+                : `${event.toLowerCase()} recorded`,
+          version: index + 1,
+        },
+      },
+    }))
+  }
+  return undefined
 }
 
 const lastTouch = (calls: DemoCall[], fallback: number) =>
@@ -237,6 +329,8 @@ function attemptRow(worker: DemoWorker, ids: RadarIds): DemoRow {
 }
 
 function rowsOf(data: RadarData, open: Open, ids: RadarIds): DemoRow[] {
+  const lifecycle = lifecycleRows(data, open, ids)
+  if (lifecycle) return lifecycle
   const filter = open.filter
   const worker = (sessionID: unknown) =>
     data.workers.find((candidate) => ids.workerSession(candidate.n) === sessionID)

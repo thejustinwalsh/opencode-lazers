@@ -223,7 +223,15 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
   const [selection, setSelection] = createSignal<Selection | null>(
     input.preferences.target ? null : input.preferences.selection,
   )
-  const [snapshot, setSnapshot] = createSignal<TrajectoryEvent>()
+  // Equal by content: `data()` rebuilds every event object, and the effect below writes the
+  // selected one back here; a fresh but equal object must not re-run `data()` (an endless loop).
+  const [snapshot, setSnapshot] = createSignal<TrajectoryEvent | undefined>(undefined, {
+    equals: (previous, next) =>
+      previous === next ||
+      (previous !== undefined &&
+        next !== undefined &&
+        JSON.stringify(previous) === JSON.stringify(next)),
+  })
   const failure = createMemo(() => targetError(target()))
   const taskID = createMemo(() => (failure() ? undefined : (pinned() ?? undefined)))
 
@@ -504,7 +512,13 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
         count(value?.timeline.after() ?? 0),
       partial: value ? value.timeline.before() !== 0 || value.timeline.after() !== 0 : false,
       loadingTranscript: transcript ? !transcript.loaded() : false,
-      loading: Boolean(id) && !failure() && !(value?.schedule.loaded() && value.attempts.loaded()),
+      // Before a task is chosen the panel is loading until the task choices answer, so it never
+      // says "no tasks" for a list that has not arrived.
+      loading:
+        !failure() &&
+        (id
+          ? !(value?.schedule.loaded() && value.attempts.loaded())
+          : !choices.loaded() && !choices.error()),
       stale: Boolean(error) && Boolean(report),
       error,
       asOf: value?.timeline.loaded() ? Date.now() : null,

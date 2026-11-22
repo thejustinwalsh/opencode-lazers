@@ -4,6 +4,7 @@ import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { withBenchmarks as scored } from "../../website/demo/src/panels/models-references.ts"
 
 /**
  * The Models panel mounted in a DOM over real stream frames: the demo's mock project is turned
@@ -189,6 +190,18 @@ test("first open: a view being built shows the building line, then the chart and
   expect(text(root)).not.toContain("building it from your runs")
   const rows = [...root.querySelectorAll("table tbody tr")].map((row) => row.textContent)
   expect(rows).toHaveLength(5)
+})
+
+test("first open: the chart never says empty while its points are still on the way", async () => {
+  const { host, root } = mount({ lateSources: ["models.points"] })
+  await until(() => host.lastOpen("models.points") !== undefined, "the points stream opened")
+  await settle()
+  // The view row has landed; the points have not. That is loading, not "no accepted tasks".
+  expect(text(root)).not.toContain("No accepted tasks match")
+  expect(pointIDs(root)).toEqual([])
+  host.answer()
+  await until(() => pointIDs(root).length === 4, "the four plotted models")
+  expect(text(root)).not.toContain("No accepted tasks match")
 })
 
 test("switching the persona or the task keeps the last ready view until the new one lands", async () => {
@@ -406,52 +419,6 @@ const scores: Record<string, { coding: number; swe?: number }> = {
   "meta/muse-ember": { coding: 40 },
 }
 /** The comparison's candidates matched to the public benchmarks of `scores`. */
-const scored = (output: Candidates): Candidates => ({
-  ...output,
-  candidates: output.candidates.map((candidate) => {
-    const score = scores[candidate.identity.modelID]
-    if (!score) return candidate
-    const evidence = { records: [], recordCount: 0, truncated: false }
-    return {
-      ...candidate,
-      benchmarkCorrespondence: {
-        status: "exact",
-        basis: "exact-published-catalog-id",
-        evidence,
-      } as never,
-      externalBenchmark: {
-        kind: "openrouter-benchmark",
-        source: "artificial-analysis",
-        taskType: "coding",
-        modelPermaslug: candidate.identity.modelID,
-        displayName: candidate.native.name,
-        effort: null,
-        codingIndex: score.coding,
-        agenticIndex: null,
-        intelligenceIndex: null,
-        prices: null,
-      },
-      publicBenchmarks:
-        score.swe === undefined
-          ? []
-          : [
-              {
-                kind: "epoch-benchmark",
-                benchmarkID: "swe-bench-verified",
-                benchmark: "SWE-bench Verified",
-                origin: "Epoch AI",
-                modelVersion: candidate.identity.modelID,
-                modelKey: candidate.identity.modelID,
-                effort: null,
-                score: score.swe,
-                stderr: null,
-                agent: null,
-                releaseDate: null,
-              },
-            ],
-    }
-  }),
-})
 
 test("benchmark: points come from models.benchmark, left-off models are named", async () => {
   const both = (output: Candidates) => unpriced(["meta/muse-ember"])(scored(output))
@@ -461,6 +428,8 @@ test("benchmark: points come from models.benchmark, left-off models are named", 
   const stream = host.lastOpen("models.benchmark")!
   expect(stream.window).toBe(5)
   expect(text(root)).toContain("4 plotted")
+  // A zero is not a finding: the coverage line names only what was left out.
+  expect(text(root)).not.toMatch(/\b0 loaded catalog/)
   expect(text(root)).toContain("1 scored model has no price in any source")
   expect(text(root)).toContain("Muse Ember \u00b7 no price in any configured source")
   expect(text(root)).toContain("Artificial Analysis Coding Index")

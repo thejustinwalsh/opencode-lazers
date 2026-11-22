@@ -165,6 +165,7 @@ export function RadarFlowCanvas(props: {
                 press(event, () => toggle({ kind: "destination", id: dest().id }))
               }
             >
+              <title>{dest().name}</title>
               <rect
                 x={dest().x - 4}
                 y={dest().y - 5}
@@ -250,6 +251,12 @@ export function RadarFlowCanvas(props: {
                   press(event, () => toggle({ kind: "session", id: session().sessionID }))
                 }
               >
+                {/* The labels are cut to the column; the tooltip carries them whole. */}
+                <title>
+                  {[session().role, session().ref, session().title, session().doing]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </title>
                 <rect
                   class="lazers-radar-flow-hit"
                   x={session().x - 14}

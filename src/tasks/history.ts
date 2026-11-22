@@ -59,3 +59,15 @@ export function eventLabel(event: string) {
   const text = kept.join(" ")
   return text ? `${text[0]!.toUpperCase()}${text.slice(1)}` : event
 }
+
+/**
+ * An event payload as the person reads it: JSON indented over lines, so a long payload wraps by
+ * field instead of running off as one line. Text that is not JSON reads as it was stored.
+ */
+export function eventPayloadText(payload: string) {
+  try {
+    return JSON.stringify(JSON.parse(payload), null, 2)
+  } catch {
+    return payload
+  }
+}

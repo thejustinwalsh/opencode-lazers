@@ -604,9 +604,15 @@ export function createModelsController(props: ModelsProps) {
   )
   const decisionContext = () => viewDetail()?.context as ModelDecisionContext | undefined
   /** The overview the chart and the pane read, rebuilt from the view's configuration rows. */
+  // The view row lands before its points: until the points have answered once the chart is
+  // loading, never "no accepted tasks". Later reopens keep the points they held.
+  const [pointsSeen, setPointsSeen] = createSignal(false)
+  createEffect(() => {
+    if (live()?.points.loaded()) setPointsSeen(true)
+  })
   const overview = createMemo((): ModelDecisionOverview | undefined => {
     const row = viewDetail()
-    if (!row) return undefined
+    if (!row || !pointsSeen()) return undefined
     const rows = pointRows()
     const counts = row.counts as { configurationCount: number; groupCount: number }
     return {
