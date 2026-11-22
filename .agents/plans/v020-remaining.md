@@ -47,7 +47,16 @@ equals the gated tip (`git diff <tip> main --stat` is empty), `git fetch github`
 foreign commits, `git push github <sha>:refs/heads/main`, then
 `git push github refs/notes/lazers:refs/notes/lazers`.
 
-## Step 1: restart on the panel build
+## Step 1: restart on the panel build — DONE except the window reload
+
+Update: restarted 2026-11-22 01:50 UTC on `e8a00d97` (pid 67880). Verified read-only: every
+module at its new generation, every `projection_state` row `ready` with no error, 0 plugin load
+failures in the host log, the stream probe opens (109 ms) and slides, dispatch unpaused. The
+transcript metadata backfill was still draining a minute later (377 sessions queued, falling).
+NOT done: the Desktop window was not reloaded, so it still shows the old GUI bundle. Reload it
+before step 2. The steps below record the procedure.
+
+### Procedure used
 
 One restart installs every schema change: `projects` 3, `model-mappings` 2, `task-schedule` 5,
 and the new modules (projections, task-events, native-call-display, scheduler-status,
