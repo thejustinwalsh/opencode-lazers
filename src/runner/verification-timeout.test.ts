@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { runCheck } from "./artifacts.ts"
 import { fingerprint } from "../identity.ts"
 import {
-  DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
-  DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
   VERIFICATION_TIMING_POLICY_VERSION,
   VerificationTimeoutAmendmentSchema,
   verificationCheckWithDefaults,
@@ -10,6 +12,10 @@ import {
   verificationTimeoutDefaults,
 } from "./verification-timeout.ts"
 import type { VerificationTimeoutTarget } from "./verification-timeout.ts"
+
+/** Deadlines a project chose for itself; the runtime has none of its own. */
+const PROJECT_INACTIVITY_MS = 15 * 60_000
+const PROJECT_HARD_MS = 60 * 60_000
 
 function target(overrides: Partial<VerificationTimeoutTarget> = {}): VerificationTimeoutTarget {
   return {
@@ -27,8 +33,8 @@ function target(overrides: Partial<VerificationTimeoutTarget> = {}): Verificatio
     authoredTimeoutMs: 20_000,
     authoredInactivityTimeoutMs: null,
     authoredHardTimeoutMs: null,
-    defaultInactivityTimeoutMs: DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
-    defaultHardTimeoutMs: DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+    defaultInactivityTimeoutMs: PROJECT_INACTIVITY_MS,
+    defaultHardTimeoutMs: PROJECT_HARD_MS,
     ...overrides,
   }
 }
@@ -62,11 +68,11 @@ function amendment(
     authoredHardTimeoutMs: identity.authoredHardTimeoutMs,
     defaultInactivityTimeoutMs: identity.defaultInactivityTimeoutMs,
     defaultHardTimeoutMs: identity.defaultHardTimeoutMs,
-    previousTimeoutMs: DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+    previousTimeoutMs: PROJECT_HARD_MS,
     effectiveTimeoutMs: 90 * 60_000,
-    previousInactivityTimeoutMs: DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
-    effectiveInactivityTimeoutMs: DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
-    previousHardTimeoutMs: DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+    previousInactivityTimeoutMs: PROJECT_INACTIVITY_MS,
+    effectiveInactivityTimeoutMs: PROJECT_INACTIVITY_MS,
+    previousHardTimeoutMs: PROJECT_HARD_MS,
     effectiveHardTimeoutMs: 90 * 60_000,
     reason: "Continue this exact settled check",
     createdAt: 1,
@@ -74,11 +80,8 @@ function amendment(
   })
 }
 
-test("project verification defaults are generous, validated and applied instead of legacy wall limits", () => {
-  expect(verificationTimeoutDefaults()).toEqual({
-    inactivityTimeoutMs: 15 * 60_000,
-    hardTimeoutMs: 60 * 60_000,
-  })
+test("a check has no deadline unless its author or project set one", () => {
+  expect(verificationTimeoutDefaults()).toEqual({})
   expect(
     verificationTimeoutDefaults({ inactivityTimeoutMs: 5_000, hardTimeoutMs: 10_000 }),
   ).toEqual({ inactivityTimeoutMs: 5_000, hardTimeoutMs: 10_000 })
@@ -87,15 +90,20 @@ test("project verification defaults are generous, validated and applied instead 
   ).toThrow("cannot exceed")
   expect(() => verificationTimeoutDefaults({ hardTimeoutMs: 0 })).toThrow()
 
+  const unbounded = verificationCheckWithDefaults(
+    { id: "legacy", command: "true", timeoutMs: 25 },
+    verificationTimeoutDefaults(),
+  )
+  expect(unbounded as object).toEqual({ id: "legacy", command: "true" })
   expect(
-    verificationCheckWithDefaults(
-      { id: "legacy", command: "true", timeoutMs: 25 },
-      verificationTimeoutDefaults(),
+    verificationDeadline(
+      [],
+      target({ defaultInactivityTimeoutMs: null, defaultHardTimeoutMs: null }),
     ),
   ).toMatchObject({
-    timeoutMs: 60 * 60_000,
-    inactivityTimeoutMs: 15 * 60_000,
-    hardTimeoutMs: 60 * 60_000,
+    effectiveInactivityTimeoutMs: null,
+    effectiveHardTimeoutMs: null,
+    effectiveTimeoutMs: null,
   })
   expect(
     verificationCheckWithDefaults(
@@ -109,6 +117,23 @@ test("project verification defaults are generous, validated and applied instead 
       verificationTimeoutDefaults(),
     ),
   ).toThrow("cannot exceed")
+})
+
+test("a check without a deadline runs to its exit and is not timed out", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lazers-no-deadline-"))
+  try {
+    const receipt = await runCheck(
+      directory,
+      "a".repeat(40),
+      { id: "quiet", command: "sleep 0.3; true" },
+      join(directory, "receipt.json"),
+    )
+    expect(receipt).toMatchObject({ exitCode: 0, timedOut: false, stopCause: null })
+    expect(receipt.inactivityTimeoutMs).toBeUndefined()
+    expect(receipt.hardTimeoutMs).toBeUndefined()
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test("legacy amendments remain historical while versioned timing amendments resolve both limits", () => {

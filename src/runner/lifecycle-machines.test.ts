@@ -57,7 +57,7 @@ test("runner lifecycle graphs have no accidental sink states", () => {
       workspace: ["removed"],
       takeover: ["taken-over", "cancelled"],
       planning: ["tasked", "abandoned"],
-      planningRun: ["reviewed", "failed", "stuck", "cancelled"],
+      planningRun: ["reviewed", "failed", "cancelled"],
       identityKeys: ["text-retired"],
       projection: ["ready"],
       profile: ["superseded"],
@@ -110,7 +110,7 @@ test("a planning state exits to tasked and abandoned, and an edit in ready retur
   expect(() => lifecycleTransition("planning", "tasked", "drafted")).toThrow()
 })
 
-test("a planning run that is stuck stays stuck: a retry is a new run row", () => {
-  expect(lifecycleTransition("planningRun", "running", "stuck")).toBe("stuck")
-  expect(() => lifecycleTransition("planningRun", "stuck", "running")).toThrow()
+test("a planning run has no time-based stuck state: a quiet run keeps running", () => {
+  expect(() => lifecycleTransition("planningRun", "running", "stuck" as never)).toThrow()
+  expect(() => lifecycleTransition("planningRun", "failed", "running")).toThrow()
 })

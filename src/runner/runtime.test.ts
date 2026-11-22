@@ -980,15 +980,15 @@ test("a replay matches a receipt recorded with the legacy expectedVersion", asyn
   ).rejects.toThrow("Request identity conflict")
 })
 
-test("a plan that keeps moving mid-command fails after a bounded re-evaluation with its state", async () => {
+test("a plan that moves mid-command is re-evaluated until the command applies", async () => {
   const f = fixture()
   const planID = f.receipt.planID
   await runPlan(f, planID, "run-moving")
   const original = f.host.session
-  let reads = 0
+  let moves = 0
   f.host.session = async (id, options) => {
-    if (id === "owner") {
-      reads++
+    if (id === "owner" && moves < 5) {
+      moves++
       f.store.atomic((db) =>
         db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(planID),
       )
@@ -997,6 +997,7 @@ test("a plan that keeps moving mid-command fails after a bounded re-evaluation w
   }
   await expect(
     f.runtime.command({ requestID: "moving-pause", planID, action: "pause", reason: "x" }, "owner"),
-  ).rejects.toThrow("changed repeatedly while pause was applied")
-  expect(reads).toBeLessThanOrEqual(6)
+  ).resolves.toBeDefined()
+  expect(moves).toBe(5)
+  expect(f.store.latestTransition(planID, null, "DISPATCH_PAUSED")).toBeDefined()
 })

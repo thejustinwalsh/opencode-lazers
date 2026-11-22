@@ -195,7 +195,7 @@ export type TaskRadarOpener = (session: PanelProps["session"], target: TaskRadar
 
 export function verificationTimingSummary(check: TaskProposal["verification"][number]): string {
   const timing = (value: number | undefined) =>
-    value === undefined ? "project default (not resolved here)" : `${value / 1000}s (authored)`
+    value === undefined ? "none unless the project sets one" : `${value / 1000}s (authored)`
   const parts = [
     `Inactivity allowance: ${timing(check.inactivityTimeoutMs)}`,
     `Hard backstop: ${timing(check.hardTimeoutMs)}`,

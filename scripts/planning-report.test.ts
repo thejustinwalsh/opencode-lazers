@@ -213,7 +213,7 @@ function runs() {
   return { repository, store }
 }
 
-test("reviews: per-agent not-run rate and reasons, and too few runs for the inactivity span", () => {
+test("reviews: per-agent not-run rate and reasons, and the measured quiet gap", () => {
   const { repository } = runs()
   const report = repository.read((db) => reviewsReport(db))
   expect(report.agents.grounding).toMatchObject({
@@ -223,14 +223,10 @@ test("reviews: per-agent not-run rate and reasons, and too few runs for the inac
     reasons: { malformed: 1 },
     tokens: { p50: 1000, p95: 1000 },
   })
-  expect(report.inactivity).toEqual({
-    enough: false,
-    runs: 3,
-    message: "inactivity span: not enough runs (n=3)",
-  })
+  expect(report.gaps.runs).toBe(3)
 })
 
-test("reviews: with enough runs the span is three times the p99 gap, rounded up to a minute", () => {
+test("reviews: the quiet gap is the p99 of reviewed runs' longest gaps", () => {
   const { repository, store } = runs()
   store.createReview({
     id: "many",
@@ -250,8 +246,8 @@ test("reviews: with enough runs the span is three times the p99 gap, rounded up 
       startedAt: 1,
       maxGapMs: n * 1_000,
     })
-  const { inactivity } = repository.read((db) => reviewsReport(db))
-  expect(inactivity).toMatchObject({ enough: true, maxGapP99Ms: 60_000, suggestedMs: 180_000 })
+  const { gaps } = repository.read((db) => reviewsReport(db))
+  expect(gaps.maxGapP99Ms).toBe(60_000)
 })
 
 test("questions: counts by route", () => {

@@ -1,29 +1,37 @@
 import { fingerprint } from "../identity.ts"
 import { z } from "zod"
 
-export const DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS = 15 * 60_000
-export const DEFAULT_VERIFICATION_HARD_TIMEOUT_MS = 60 * 60_000
 export const VERIFICATION_TIMING_POLICY_VERSION = 2
 
 const VerificationTimeoutDefaultsSchema = z.strictObject({
   inactivityTimeoutMs: z.int().positive().optional(),
   hardTimeoutMs: z.int().positive().optional(),
 })
+/**
+ * A project's own deadlines for checks that author none. Absent means none: a check runs until it
+ * exits or is cancelled. The runtime invents no deadline of its own.
+ */
 export type VerificationTimeoutDefaults = {
-  inactivityTimeoutMs: number
-  hardTimeoutMs: number
+  inactivityTimeoutMs?: number
+  hardTimeoutMs?: number
 }
 
 export function verificationTimeoutDefaults(value?: unknown): VerificationTimeoutDefaults {
   const overrides = VerificationTimeoutDefaultsSchema.parse(value ?? {})
-  const defaults = {
-    inactivityTimeoutMs:
-      overrides.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
-    hardTimeoutMs: overrides.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+  const defaults: VerificationTimeoutDefaults = {
+    ...(overrides.inactivityTimeoutMs === undefined
+      ? {}
+      : { inactivityTimeoutMs: overrides.inactivityTimeoutMs }),
+    ...(overrides.hardTimeoutMs === undefined ? {} : { hardTimeoutMs: overrides.hardTimeoutMs }),
   }
-  if (defaults.inactivityTimeoutMs > defaults.hardTimeoutMs)
+  if (exceeds(defaults.inactivityTimeoutMs, defaults.hardTimeoutMs))
     throw new Error("Verification inactivity default cannot exceed its hard timeout default")
   return defaults
+}
+
+/** True only when both deadlines exist and the inactivity one is longer. */
+function exceeds(inactivity: number | null | undefined, hard: number | null | undefined) {
+  return inactivity != null && hard != null && inactivity > hard
 }
 
 export type VerificationTimingCheck = {
@@ -37,8 +45,10 @@ export function invalidVerificationTimings(
   defaults: VerificationTimeoutDefaults,
 ): Array<{ index: number; checkID: string }> {
   return checks.flatMap((check, index) =>
-    (check.inactivityTimeoutMs ?? defaults.inactivityTimeoutMs) >
-    (check.hardTimeoutMs ?? defaults.hardTimeoutMs)
+    exceeds(
+      check.inactivityTimeoutMs ?? defaults.inactivityTimeoutMs,
+      check.hardTimeoutMs ?? defaults.hardTimeoutMs,
+    )
       ? [{ index, checkID: check.id }]
       : [],
   )
@@ -104,20 +114,21 @@ export type VerificationTimeoutTarget = {
   authoredTimeoutMs: number | null
   authoredInactivityTimeoutMs: number | null
   authoredHardTimeoutMs: number | null
-  defaultInactivityTimeoutMs: number
-  defaultHardTimeoutMs: number
+  defaultInactivityTimeoutMs: number | null
+  defaultHardTimeoutMs: number | null
 }
 
 export type VerificationDeadline = {
   authoredTimeoutMs: number | null
   authoredInactivityTimeoutMs: number | null
   authoredHardTimeoutMs: number | null
-  defaultInactivityTimeoutMs: number
-  defaultHardTimeoutMs: number
-  effectiveInactivityTimeoutMs: number
-  effectiveHardTimeoutMs: number
+  defaultInactivityTimeoutMs: number | null
+  defaultHardTimeoutMs: number | null
+  /** Null: no deadline; the check runs until it exits or is cancelled. */
+  effectiveInactivityTimeoutMs: number | null
+  effectiveHardTimeoutMs: number | null
   /** Compatibility alias for the historical single wall-clock timeout. */
-  effectiveTimeoutMs: number
+  effectiveTimeoutMs: number | null
   amendmentID: string | null
   policyRevision: number
   inactivityProvenance: "project-default" | "per-check" | "amendment"
@@ -159,57 +170,57 @@ function sameTargetIdentity(
   )
 }
 
-/** Resolve only a complete, monotonically extended policy chain for this exact check. */
+/**
+ * Resolve only a complete, monotonically extended policy chain for this exact check. A recorded
+ * amendment extends a deadline that existed; where none exists (no authored and no project
+ * deadline) there is nothing to extend and the check has no deadline.
+ */
 export function verificationDeadline(
   amendments: readonly VerificationTimeoutAmendment[],
   target: VerificationTimeoutTarget,
 ): VerificationDeadline {
-  const matching = amendments
-    .filter(
-      (amendment) =>
-        amendment.timingPolicyVersion === VERIFICATION_TIMING_POLICY_VERSION &&
-        amendment.defaultInactivityTimeoutMs === target.defaultInactivityTimeoutMs &&
-        amendment.defaultHardTimeoutMs === target.defaultHardTimeoutMs &&
-        sameTargetIdentity(amendment, target),
-    )
-    .toSorted((left, right) => left.policyRevision - right.policyRevision)
-  let previousInactivityTimeoutMs =
-    target.authoredInactivityTimeoutMs ?? target.defaultInactivityTimeoutMs
-  let previousHardTimeoutMs = target.authoredHardTimeoutMs ?? target.defaultHardTimeoutMs
-  if (previousInactivityTimeoutMs > previousHardTimeoutMs)
+  const initialInactivity = target.authoredInactivityTimeoutMs ?? target.defaultInactivityTimeoutMs
+  const initialHard = target.authoredHardTimeoutMs ?? target.defaultHardTimeoutMs
+  if (exceeds(initialInactivity, initialHard))
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
-  for (let index = 0; index < matching.length; index++) {
-    const amendment = matching[index]!
-    if (
-      amendment.policyRevision !== index + 1 ||
-      amendment.previousInactivityTimeoutMs !== previousInactivityTimeoutMs ||
-      amendment.previousHardTimeoutMs !== previousHardTimeoutMs ||
-      (amendment.effectiveInactivityTimeoutMs ?? 0) < previousInactivityTimeoutMs ||
-      (amendment.effectiveHardTimeoutMs ?? 0) < previousHardTimeoutMs ||
-      (amendment.effectiveInactivityTimeoutMs ?? previousInactivityTimeoutMs) >
-        (amendment.effectiveHardTimeoutMs ?? previousHardTimeoutMs) ||
-      ((amendment.effectiveInactivityTimeoutMs ?? previousInactivityTimeoutMs) ===
-        previousInactivityTimeoutMs &&
-        (amendment.effectiveHardTimeoutMs ?? previousHardTimeoutMs) === previousHardTimeoutMs)
-    )
-      throw new Error("Verification deadline amendment history is inconsistent")
-    previousInactivityTimeoutMs =
-      amendment.effectiveInactivityTimeoutMs ?? previousInactivityTimeoutMs
-    previousHardTimeoutMs = amendment.effectiveHardTimeoutMs ?? previousHardTimeoutMs
-  }
-  const latest = matching.at(-1)
+  const matching =
+    initialInactivity === null || initialHard === null
+      ? []
+      : amendments
+          .filter(
+            (amendment) =>
+              amendment.timingPolicyVersion === VERIFICATION_TIMING_POLICY_VERSION &&
+              amendment.defaultInactivityTimeoutMs === target.defaultInactivityTimeoutMs &&
+              amendment.defaultHardTimeoutMs === target.defaultHardTimeoutMs &&
+              sameTargetIdentity(amendment, target),
+          )
+          .toSorted((left, right) => left.policyRevision - right.policyRevision)
+  let previousInactivityTimeoutMs = initialInactivity
+  let previousHardTimeoutMs = initialHard
   let amendedInactivity = false
   let amendedHardTimeout = false
-  let priorInactivity = target.authoredInactivityTimeoutMs ?? target.defaultInactivityTimeoutMs
-  let priorHardTimeout = target.authoredHardTimeoutMs ?? target.defaultHardTimeoutMs
-  for (const amendment of matching) {
+  for (let index = 0; index < matching.length; index++) {
+    const amendment = matching[index]!
+    const priorInactivity = previousInactivityTimeoutMs ?? 0
+    const priorHard = previousHardTimeoutMs ?? 0
     const nextInactivity = amendment.effectiveInactivityTimeoutMs ?? priorInactivity
-    const nextHardTimeout = amendment.effectiveHardTimeoutMs ?? priorHardTimeout
+    const nextHard = amendment.effectiveHardTimeoutMs ?? priorHard
+    if (
+      amendment.policyRevision !== index + 1 ||
+      amendment.previousInactivityTimeoutMs !== priorInactivity ||
+      amendment.previousHardTimeoutMs !== priorHard ||
+      (amendment.effectiveInactivityTimeoutMs ?? 0) < priorInactivity ||
+      (amendment.effectiveHardTimeoutMs ?? 0) < priorHard ||
+      nextInactivity > nextHard ||
+      (nextInactivity === priorInactivity && nextHard === priorHard)
+    )
+      throw new Error("Verification deadline amendment history is inconsistent")
     amendedInactivity ||= nextInactivity !== priorInactivity
-    amendedHardTimeout ||= nextHardTimeout !== priorHardTimeout
-    priorInactivity = nextInactivity
-    priorHardTimeout = nextHardTimeout
+    amendedHardTimeout ||= nextHard !== priorHard
+    previousInactivityTimeoutMs = nextInactivity
+    previousHardTimeoutMs = nextHard
   }
+  const latest = matching.at(-1)
   const historicalAmendmentIDs = amendments
     .filter(
       (amendment) =>
@@ -241,45 +252,48 @@ export function verificationDeadline(
   }
 }
 
-export function effectiveVerificationCheck<T extends { timeoutMs?: number }>(
+type TimedCheck = { timeoutMs?: number; inactivityTimeoutMs?: number; hardTimeoutMs?: number }
+
+/** The check with exactly the given deadlines; a null deadline leaves its field out. */
+function withDeadlines<T extends TimedCheck>(
+  check: T,
+  inactivity: number | null | undefined,
+  hard: number | null | undefined,
+): T {
+  const {
+    timeoutMs: _timeout,
+    inactivityTimeoutMs: _inactivity,
+    hardTimeoutMs: _hard,
+    ...rest
+  } = check
+  return {
+    ...rest,
+    ...(hard == null ? {} : { timeoutMs: hard, hardTimeoutMs: hard }),
+    ...(inactivity == null ? {} : { inactivityTimeoutMs: inactivity }),
+  } as T
+}
+
+export function effectiveVerificationCheck<T extends TimedCheck>(
   check: T,
   deadline: VerificationDeadline,
 ): T {
-  return check.timeoutMs === deadline.effectiveHardTimeoutMs &&
-    (check as T & { inactivityTimeoutMs?: number }).inactivityTimeoutMs ===
-      deadline.effectiveInactivityTimeoutMs &&
-    (check as T & { hardTimeoutMs?: number }).hardTimeoutMs === deadline.effectiveHardTimeoutMs
+  const hard = deadline.effectiveHardTimeoutMs ?? undefined
+  const inactivity = deadline.effectiveInactivityTimeoutMs ?? undefined
+  return check.timeoutMs === hard &&
+    check.inactivityTimeoutMs === inactivity &&
+    check.hardTimeoutMs === hard
     ? check
-    : {
-        ...check,
-        timeoutMs: deadline.effectiveHardTimeoutMs,
-        inactivityTimeoutMs: deadline.effectiveInactivityTimeoutMs,
-        hardTimeoutMs: deadline.effectiveHardTimeoutMs,
-      }
+    : withDeadlines(check, inactivity, hard)
 }
 
 export function verificationCheckWithDefaults<
-  T extends {
-    id: string
-    command: string
-    timeoutMs?: number
-    inactivityTimeoutMs?: number
-    hardTimeoutMs?: number
-  },
->(
-  check: T,
-  defaults: VerificationTimeoutDefaults,
-): T & { timeoutMs: number; inactivityTimeoutMs: number; hardTimeoutMs: number } {
+  T extends { id: string; command: string } & TimedCheck,
+>(check: T, defaults: VerificationTimeoutDefaults): T {
   const inactivityTimeoutMs = check.inactivityTimeoutMs ?? defaults.inactivityTimeoutMs
   const hardTimeoutMs = check.hardTimeoutMs ?? defaults.hardTimeoutMs
-  if (inactivityTimeoutMs > hardTimeoutMs)
+  if (exceeds(inactivityTimeoutMs, hardTimeoutMs))
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
-  return {
-    ...check,
-    timeoutMs: hardTimeoutMs,
-    inactivityTimeoutMs,
-    hardTimeoutMs,
-  } as T & { timeoutMs: number; inactivityTimeoutMs: number; hardTimeoutMs: number }
+  return withDeadlines(check, inactivityTimeoutMs, hardTimeoutMs)
 }
 
 export function verificationReceiptDeadline(deadline: VerificationDeadline) {

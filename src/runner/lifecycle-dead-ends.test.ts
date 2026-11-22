@@ -137,11 +137,11 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     architect: ["drafted", "in-review", "final-review", "ready", "tasked", "abandoned"],
     terminal: ["tasked", "abandoned"],
   },
-  // One agent's attempt ends by its reply, a failure, the inactivity span, or cancellation.
+  // One agent's attempt ends by its reply, a failure, a lost session, or cancellation.
   planningRun: {
-    observable: ["starting", "running", "reviewed", "failed", "stuck"],
+    observable: ["starting", "running", "reviewed", "failed"],
     architect: ["cancelled"],
-    terminal: ["reviewed", "failed", "stuck", "cancelled"],
+    terminal: ["reviewed", "failed", "cancelled"],
   },
   // The backfill reaches the last row, the integer indexes are built, the text indexes are dropped.
   identityKeys: {

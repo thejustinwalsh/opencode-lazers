@@ -197,16 +197,15 @@ preserves its existing session, workspace and input lineage. It can also recover
 the original attempt only when durable/native evidence proves the specific
 unprompted retained-repair fence failure; this does not recover actual user
 cancellation or unrelated holds. Do not prompt or replace that worker manually.
-Checks default to a 15-minute inactivity allowance, reset only by real stdout or
-stderr progress, and a 60-minute total hard backstop shared across recognized
-phases. Project options `verificationInactivityTimeoutMs` and
-`verificationHardTimeoutMs` and per-check `inactivityTimeoutMs` and `hardTimeoutMs`
-override those defaults. Legacy `timeoutMs` remains readable but is historical
-metadata, not a current execution limit.
+A check has no deadline of the runtime's own: it runs until it exits or is
+cancelled. A deadline exists only when the task authors one (per-check
+`inactivityTimeoutMs`, reset by real stdout or stderr progress, and
+`hardTimeoutMs`, shared across recognized phases) or the project sets
+`verificationInactivityTimeoutMs`/`verificationHardTimeoutMs`. Legacy `timeoutMs`
+remains readable but is historical metadata, not a current execution limit.
 
 A timed-out or interrupted check is a failed check. Inspect its receipt, fix the
-cause (a slow check needs a larger authored `inactivityTimeoutMs`/`hardTimeoutMs`,
-a flaky one a fix), then re-run it: `resume` without a task re-runs a blocked
+cause (an authored deadline that was too short, a flaky check), then re-run it: `resume` without a task re-runs a blocked
 plan's combined check on the current candidate, and `verify-retained` verifies a
 given commit in a temporary worktree and records pass or fail. After a failed
 `verify-retained`, run it again; nothing holds or waits for a continue or cancel.

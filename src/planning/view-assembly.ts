@@ -114,11 +114,9 @@ function agentOf(agent: string, runs: StoredRun[]): ViewAgent {
   const status: ViewAgent["status"] =
     latest.state === "reviewed"
       ? "reviewed"
-      : latest.state === "stuck"
-        ? "stuck"
-        : latest.state === "failed" || latest.state === "cancelled"
-          ? "not-run"
-          : "running"
+      : latest.state === "failed" || latest.state === "cancelled"
+        ? "not-run"
+        : "running"
   const reason = status === "reviewed" || status === "running" ? undefined : latest.reason
   return {
     agent,

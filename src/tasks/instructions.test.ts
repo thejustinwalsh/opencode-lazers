@@ -99,7 +99,7 @@ test("task instructions preserve goal, acceptance, boundaries, guidance, verific
   expect(instructions).toContain("## Implementation guidance (advisory)")
   expect(instructions).toContain("keep advice advisory")
   expect(instructions).toContain(
-    "## Verification\n- tests: bun test (inactivity allowance: project default (resolved by runtime at execution); hard backstop: project default (resolved by runtime at execution); legacy timeout: 60000ms (historical; not used for execution))",
+    "## Verification\n- tests: bun test (inactivity allowance: none unless the project sets one; hard backstop: none unless the project sets one; legacy timeout: 60000ms (historical; not used for execution))",
   )
   expect(instructions).toContain("## Context references\n- README.md (revision abc123)")
   expect(instructions).toContain("## Optional skill suggestions")
@@ -152,7 +152,7 @@ test("task instructions retain readable missing-task and unavailable-revision ou
 test("worker instructions describe authored timing and unresolved project defaults truthfully", () => {
   const omitted = instructionsForVerification([{ id: "tests", command: "bun test" }])
   expect(omitted).toContain(
-    "tests: bun test (inactivity allowance: project default (resolved by runtime at execution); hard backstop: project default (resolved by runtime at execution))",
+    "tests: bun test (inactivity allowance: none unless the project sets one; hard backstop: none unless the project sets one)",
   )
   expect(omitted).not.toMatch(/undefinedms|NaN/)
   expect(omitted).not.toContain("legacy timeout")
@@ -160,10 +160,8 @@ test("worker instructions describe authored timing and unresolved project defaul
   const legacyOnly = instructionsForVerification([
     { id: "tests", command: "bun test", timeoutMs: 12_345 },
   ])
-  expect(legacyOnly).toContain(
-    "inactivity allowance: project default (resolved by runtime at execution)",
-  )
-  expect(legacyOnly).toContain("hard backstop: project default (resolved by runtime at execution)")
+  expect(legacyOnly).toContain("inactivity allowance: none unless the project sets one")
+  expect(legacyOnly).toContain("hard backstop: none unless the project sets one")
   expect(legacyOnly).toContain("legacy timeout: 12345ms (historical; not used for execution)")
 
   const dual = instructionsForVerification([
@@ -183,7 +181,7 @@ test("worker instructions describe authored timing and unresolved project defaul
     { id: "tests", command: "bun test", inactivityTimeoutMs: 30_000 },
   ])
   expect(partial).toContain("inactivity allowance: 30000ms (authored)")
-  expect(partial).toContain("hard backstop: project default (resolved by runtime at execution)")
+  expect(partial).toContain("hard backstop: none unless the project sets one")
   expect(partial).not.toMatch(/undefinedms|NaN/)
 })
 

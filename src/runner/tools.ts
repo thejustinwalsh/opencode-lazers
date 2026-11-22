@@ -42,7 +42,7 @@ export function registerRunnerTools(
       {
         name: "lz-plan-command",
         description:
-          "Use a stable requestID; the plan's state decides what applies and a refusal lists the available actions. Resume without taskID re-runs the combined check on the current candidate. Defaults: 15m inactivity/60m hard; project/per-check timing overrides. retained-repair recovers runtime-fenced retained repair; user cancellation is excluded. verify-retained verifies the given commit in a temporary worktree without an implementation turn and records pass or fail; run it again after a failure; handles startup settlement.",
+          "Use a stable requestID; the plan's state decides what applies and a refusal lists the available actions. Resume without taskID re-runs the combined check on the current candidate. A check has no deadline unless its task or project sets one. retained-repair recovers runtime-fenced retained repair; user cancellation is excluded. verify-retained verifies the given commit in a temporary worktree without an implementation turn and records pass or fail; run it again after a failure; handles startup settlement.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },

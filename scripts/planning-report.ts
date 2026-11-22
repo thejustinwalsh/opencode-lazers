@@ -24,7 +24,7 @@ import { AGENT_ORDER } from "../src/planning/decision/tree.ts"
 import { localDecider } from "../src/planning/decision/deciders.ts"
 import { decide } from "../src/planning/decision/procedure.ts"
 import type { SlicerStrategy } from "../src/planning/decision/slicers.ts"
-import { PLANNING_AGENT_INACTIVITY_MS, runsCost, type RunPrice } from "../src/planning/reviews.ts"
+import { runsCost, type RunPrice } from "../src/planning/reviews.ts"
 import { LocalInference } from "../src/webgpu/rpc.ts"
 import { SystemOneRequest } from "../src/webgpu/system-one.ts"
 
@@ -276,10 +276,6 @@ function text(report: DecisionReport): string {
   ].join("\n")
 }
 
-/** Reviewed runs needed before the inactivity span is suggested from them. */
-const MIN_RUNS_FOR_SPAN = 50
-const SPAN_FLOOR_MS = 120_000
-
 const planningScope = (filter: Filter, alias = "p") => {
   const clauses: string[] = []
   const args: (string | number)[] = []
@@ -325,15 +321,8 @@ export type ReviewsReport = {
     }
   >
   reviewedRuns: number
-  inactivity:
-    | { enough: false; runs: number; message: string }
-    | {
-        enough: true
-        runs: number
-        maxGapP99Ms: number
-        suggestedMs: number
-        currentMs: number
-      }
+  /** Longest quiet stretch of reviewed runs, measured; it decides nothing. */
+  gaps: { runs: number; maxGapP99Ms: number | null }
 }
 
 /** Per agent: the share of reviews it did not complete and why, tokens and time, and the gap evidence. */
@@ -411,24 +400,10 @@ export function reviewsReport(
     .map((run) => run.max_gap_ms!)
     .sort((a, b) => a - b)
   const reviewedRuns = runs.filter((run) => run.state === "reviewed").length
-  const p99 = percentile(gaps, 0.99)
   return {
     agents,
     reviewedRuns,
-    inactivity:
-      reviewedRuns < MIN_RUNS_FOR_SPAN
-        ? {
-            enough: false,
-            runs: reviewedRuns,
-            message: `inactivity span: not enough runs (n=${reviewedRuns})`,
-          }
-        : {
-            enough: true,
-            runs: reviewedRuns,
-            maxGapP99Ms: p99,
-            suggestedMs: Math.max(SPAN_FLOOR_MS, Math.ceil((3 * p99) / 60_000) * 60_000),
-            currentMs: PLANNING_AGENT_INACTIVITY_MS,
-          },
+    gaps: { runs: reviewedRuns, maxGapP99Ms: gaps.length ? percentile(gaps, 0.99) : null },
   }
 }
 
@@ -585,9 +560,7 @@ function sectionsText(db: Database, filter: Filter): string {
             .join(", ") || "none"
         }) · tokens p50 ${v.tokens.p50} p95 ${v.tokens.p95} · ${v.durationMs.p50} ms p50, ${v.durationMs.p95} ms p95`,
     ),
-    reviews.inactivity.enough
-      ? `  inactivity span: p99 gap ${reviews.inactivity.maxGapP99Ms} ms, suggested ${reviews.inactivity.suggestedMs} ms (current ${reviews.inactivity.currentMs} ms)`
-      : `  ${reviews.inactivity.message}`,
+    `  quiet gap: p99 ${reviews.gaps.maxGapP99Ms ?? "none"} ms over ${reviews.gaps.runs} reviewed runs`,
     `questions: ${questions.raised} raised · conversation ${questions.conversation} · owner ${questions.owner} · merged ${questions.merged}`,
     "outcomes:",
     `  planned: ${row(outcomes.planned)}`,

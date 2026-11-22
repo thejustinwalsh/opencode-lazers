@@ -84,7 +84,7 @@ test("a finding on a changed field shows stale (r1) and an unchanged one does no
   expect(planningView(store, "other", "p1")).toBeUndefined()
 })
 
-test("a stuck agent shows stuck, retrying; absent cost shows no cost row", () => {
+test("a failed agent shows not-run; absent cost shows no cost row", () => {
   const store = stored()
   store.createReview({
     id: "rv",
@@ -103,15 +103,15 @@ test("a stuck agent shows stuck, retrying; absent cost shows no cost row", () =>
     startedAt: 1,
   })
   store.moveRun("u1", "starting", "running")
-  store.moveRun("u1", "running", "stuck", {
-    reason: "inactive",
+  store.moveRun("u1", "running", "failed", {
+    reason: "interrupted",
     durationMs: 90_000,
     inputTokens: 1000,
   })
   const view = planningView(store, "proj", "p1")!
   const section = planningViewModel(view).find((s) => s.id === "review-rv")!
   expect(section.rows).toHaveLength(1)
-  expect(section.rows[0]!.text).toContain("grounding: stuck, retrying")
+  expect(section.rows[0]!.text).toContain("grounding: not-run")
   expect(section.rows.some((r) => r.text.startsWith("Cost"))).toBe(false)
   const priced: PlanningView = {
     ...view,

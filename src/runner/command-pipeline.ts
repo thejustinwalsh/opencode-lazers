@@ -19,7 +19,6 @@ import type { HostSession } from "./host.ts"
 import { CommandInput } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
 import {
-  PLAN_MOVED_RETRIES,
   PlanMovedDuringCommand,
   planCommandProblem,
   withoutLegacyVersion,
@@ -215,20 +214,13 @@ export class CommandPipeline {
       throw new Error("Only admission runs without an Architect caller")
     // The runtime samples host and Git facts asynchronously, then commits only
     // against the plan version it read first. A scheduler tick that moved the
-    // plan in between sends the command back through the machine, bounded.
-    for (let attempt = 1; ; attempt++) {
+    // plan in between sends the command back through the machine against the
+    // fresh version, until it applies or the machine itself refuses it.
+    for (;;) {
       try {
         return await this.runCommandOnce(command, caller, admission)
       } catch (error) {
         if (!(error instanceof PlanMovedDuringCommand)) throw error
-        if (attempt < PLAN_MOVED_RETRIES) continue
-        const current = this.store.plan(command.planID)
-        throw new Error(
-          `Plan ${current?.state ?? "unknown"} changed repeatedly while ${command.action} was applied. ${
-            current ? (planCommandProblem(current.state, command) ?? "Retry the command.") : ""
-          }`.trim(),
-          { cause: error },
-        )
       }
     }
   }
