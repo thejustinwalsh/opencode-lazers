@@ -18,7 +18,6 @@ src/planning/store.ts:356 | star | planning_decisions | one row by primary key |
 src/planning/store.ts:366 | star | planning_decision_nodes | one row by request or review key | SELECT * FROM planning_decision_nodes WHERE decision_id=? ORDER BY depth, node_id
 src/planning/store.ts:383 | star | planning_plannings | one row by primary key | SELECT * FROM planning_plannings WHERE id=?
 src/planning/store.ts:394 | star | planning_plannings | plannings and decisions are created by explicit planning requests, at human rate | SELECT * FROM planning_plannings WHERE session_id=?${ open ?
-src/planning/store.ts:407 | star | planning_plannings | plannings and decisions are created by explicit planning requests, at human rate | SELECT * FROM planning_plannings WHERE project_key=? ORDER BY updated_at DESC, id
 src/planning/store.ts:454 | star | planning_revisions | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM planning_revisions WHERE planning_id=? AND revision=?
 src/planning/store.ts:465 | star | planning_revisions | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM planning_revisions WHERE planning_id=? ORDER BY revision
 src/planning/store.ts:505 | star | planning_reviews | one row by primary key | SELECT * FROM planning_reviews WHERE id=?

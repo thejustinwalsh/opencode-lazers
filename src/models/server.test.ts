@@ -1535,13 +1535,20 @@ test("price-source RPCs authorize the live project session before storage or hos
   try {
     for (const invalidActor of [
       null,
-      { id: "ses-native", projectID, agent: "desktop-settings-user", time: { archived: 10 } },
       { id: "ses-native", projectID: "foreign-project", agent: "desktop-settings-user", time: {} },
     ]) {
       harness.setActor(invalidActor)
       expect(await rejects(read())).toBeInstanceOf(Error)
       expect(await rejects(write())).toBeInstanceOf(Error)
     }
+    // An archived session writes nothing (its read is covered by the archived-session test).
+    harness.setActor({
+      id: "ses-native",
+      projectID,
+      agent: "desktop-settings-user",
+      time: { archived: 10 },
+    })
+    expect(await rejects(write())).toBeInstanceOf(Error)
 
     harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
     denied = true
@@ -1749,6 +1756,52 @@ test("Models source refresh fetches without credentials and only after authoriza
     expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
       "lz-refresh-model-evidence",
     ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("an archived session of this project may read Models (streams, price sources, a timed refresh) but not write", async () => {
+  // Live 2026-11-22: the Architect's renewals archive its session while the Models panel stays
+  // open on it, and every read failed with "Models scope is unavailable".
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const harness = await register(repository)
+  repository.close()
+  const archived = { id: "ses-native", projectID, agent: "architect", time: { archived: 10 } }
+  const authorize = (action: string) =>
+    authorizeModels(
+      harness.context as never,
+      "ses-native",
+      projectID,
+      action,
+      [projectDirectory],
+      new AbortController().signal,
+    )
+  try {
+    harness.setActor(archived)
+    // The stream sources' checks (`assertAction` in src/index.ts).
+    for (const action of [
+      "lz-read-model-decision",
+      "lz-read-model-comparison",
+      "lz-get-model-settings",
+    ])
+      expect(await authorize(action)).toMatchObject({ id: "ses-native" })
+    const methods = harness.methods()
+    expect(await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" }))).toBeDefined()
+    expect(
+      await Effect.runPromise(methods.refreshSources({ sessionID: "ses-native" })),
+    ).toBeDefined()
+    expect(
+      await rejects(methods.refreshSources({ sessionID: "ses-native", force: true })),
+    ).toMatchObject({
+      message: "Models scope is unavailable",
+    })
+    await expect(authorize("lz-configure-models")).rejects.toThrow("Models scope is unavailable")
+    // A session of another project, or one without an agent, still reads nothing.
+    harness.setActor({ ...archived, projectID: "foreign-project" })
+    await expect(authorize("lz-read-model-decision")).rejects.toThrow("Models scope is unavailable")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

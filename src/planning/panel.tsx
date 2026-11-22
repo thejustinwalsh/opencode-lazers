@@ -1,10 +1,23 @@
 import { Command, LinkHandler, MenuItem, Panel, Style, bindPlugin } from "@opencode/plugin/gui"
 import { linkSignal, linkedSession } from "../link-host.ts"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
-import { For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js"
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js"
 import { createPlanLinkHandler } from "./links.ts"
 import css from "./panel.css?inline"
 import { PlanningRpc } from "./rpc-contract.ts"
+import { Streams } from "../streams/contract.ts"
+import { createStream, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import { planningRefs } from "../streams/sources/planning-ref.ts"
+import { planningViewOfRow } from "./view-assembly.ts"
 import { planningViewModel } from "./view-model.ts"
 import type { PlanningView } from "./view-model.ts"
 
@@ -15,48 +28,83 @@ const [selected, setSelected] = createSignal<Record<string, string>>({})
 const sessionKey = (session: { id: string; server: { id: string } }) =>
   `${session.server.id}\u0000${session.id}`
 
-const REFRESH_MS = 3_000
-
+/**
+ * The Plan tab: the session's newest plan (or the one a link selected), read through two streams
+ * (`planning.list` at window 1, `planning.detail` at window 1), so a stored change shows when it
+ * is written and an idle tab reads nothing.
+ */
 function PlanPanel(props: PanelProps & { ctx: PlanningContext }) {
   const ctx = props.ctx
-  const [view, setView] = createSignal<PlanningView | null | undefined>(undefined)
-  const [error, setError] = createSignal("")
+  const connection = createMemo(
+    () => {
+      const session = props.session
+      const server = ctx.servers.get(session.server.id)
+      if (!server?.connected || !session.location || !session.directory) return undefined
+      return { client: server.client, directory: session.directory }
+    },
+    undefined,
+    {
+      equals: (previous, next) =>
+        previous?.client === next?.client && previous?.directory === next?.directory,
+    },
+  )
+  return (
+    <Show
+      when={connection()}
+      keyed
+      fallback={<PlanBody view={undefined} error="The session is offline." />}
+    >
+      {(value) => {
+        const abort = new AbortController()
+        onCleanup(() => abort.abort())
+        const transport = rpcStreamsTransport(
+          () => value.client.rpc(Streams) as unknown as StreamsRpc,
+          abort.signal,
+          { location: { directory: value.directory } },
+        )
+        const plans = createStream(transport, planningRefs.list, () => ({
+          filter: { sessionID: props.session.id },
+          order: "newest",
+          window: 1,
+        }))
+        const planningID = createMemo(
+          () => selected()[sessionKey(props.session)] ?? plans.items()[0]?.id,
+        )
+        const [view, setView] = createSignal<PlanningView | null | undefined>(undefined)
+        const [detailError, setDetailError] = createSignal("")
+        createEffect(() => {
+          if (!plans.loaded()) return
+          if (!planningID()) setView(null)
+        })
+        return (
+          <>
+            <Show when={planningID()} keyed>
+              {(id) => {
+                const detail = createStream(transport, planningRefs.detail, () => ({
+                  filter: { planningID: id },
+                  order: "key",
+                  window: 1,
+                }))
+                createEffect(() => {
+                  setDetailError(detail.error()?.message ?? "")
+                  if (!detail.loaded()) return
+                  const row = detail.items()[0]
+                  setView(row ? planningViewOfRow(row) : null)
+                })
+                return null
+              }}
+            </Show>
+            <PlanBody view={view()} error={plans.error()?.message ?? detailError()} />
+          </>
+        )
+      }}
+    </Show>
+  )
+}
 
-  const load = async (signal: AbortSignal) => {
-    const session = props.session
-    const server = ctx.servers.get(session.server.id)
-    if (!server?.connected || !session.location) {
-      setError("The session is offline.")
-      return
-    }
-    const rpc = server.client.rpc(PlanningRpc)
-    const options = { location: session.location, signal }
-    try {
-      let planningID = selected()[sessionKey(session)]
-      if (!planningID) {
-        const plans = await rpc.list({ sessionID: session.id }, options)
-        planningID = plans[0]?.id
-      }
-      if (!planningID) return setView(null)
-      setView(await rpc.get({ planningID }, options))
-      setError("")
-    } catch (cause) {
-      if (!signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
-
-  createEffect(() => {
-    // Re-run when the selected plan changes; refresh while the tab is open.
-    selected()
-    const controller = new AbortController()
-    void load(controller.signal)
-    const timer = setInterval(() => void load(controller.signal), REFRESH_MS)
-    onCleanup(() => {
-      clearInterval(timer)
-      controller.abort()
-    })
-  })
-
+function PlanBody(props: { view: PlanningView | null | undefined; error: string }) {
+  const view = () => props.view
+  const error = () => props.error
   return (
     <div class="lz-plan" data-component="lz-plan">
       <Switch>

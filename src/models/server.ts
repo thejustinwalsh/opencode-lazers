@@ -65,12 +65,28 @@ function isSessionNotFound(error: unknown): boolean {
   )
 }
 
-/** The caller's session: it exists, is not archived, belongs to this project and has an agent. */
+/**
+ * The Models actions that only read. An archived session of this project may still read: the
+ * Architect's renewals archive its session every few minutes, and the panel stays open on it
+ * (2026-11-22, live: every Models read refused with "Models scope is unavailable"). Writes
+ * (`lz-configure-models`) and a forced refresh still need a live session.
+ */
+const READ_ACTIONS: ReadonlySet<string> = new Set([
+  "lz-read-model-decision",
+  "lz-read-model-comparison",
+  "lz-get-model-settings",
+])
+
+/**
+ * The caller's session: it exists, belongs to this project and has an agent; unless the caller
+ * only reads, it is not archived.
+ */
 async function eligibleSession(
   ctx: ModelsContext,
   sessionID: string,
   projectID: string,
   signal: AbortSignal,
+  reading: boolean,
 ) {
   const session = await Effect.runPromise(
     ctx.session
@@ -86,7 +102,7 @@ async function eligibleSession(
     !session ||
     String(session.id) !== sessionID ||
     session.projectID !== projectID ||
-    session.time.archived !== undefined ||
+    (!reading && session.time.archived !== undefined) ||
     !session.agent
   )
     throw new Error("Models scope is unavailable")
@@ -100,8 +116,10 @@ export async function authorizeModels(
   action: string,
   resources: string[],
   signal: AbortSignal,
+  options: { reading?: boolean } = {},
 ) {
-  const readEligibleSession = () => eligibleSession(ctx, sessionID, projectID, signal)
+  const reading = options.reading ?? READ_ACTIONS.has(action)
+  const readEligibleSession = () => eligibleSession(ctx, sessionID, projectID, signal, reading)
 
   const eligible = await readEligibleSession()
 
@@ -456,6 +474,10 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelSourceRefreshRPCInputSchema.parse(input)
+            // The stored snapshots are served at once. Only sources past their TTL are fetched,
+            // in the background and once at a time; a forced refresh (the header button) waits.
+            // The panel's open (not forced) reads, so an archived session may send it.
+            const force = request.force === true
             await authorizeModels(
               ctx,
               request.sessionID,
@@ -463,11 +485,9 @@ export function registerModelsServer(
               "lz-refresh-model-evidence",
               [projectDirectory],
               signal,
+              { reading: !force },
             )
             signal.throwIfAborted()
-            // The stored snapshots are served at once. Only sources past their TTL are fetched,
-            // in the background and once at a time; a forced refresh (the header button) waits.
-            const force = request.force === true
             if (force) await refreshGate.wait()
             if (!refreshGate.busy) {
               const plan = await withEvidenceStoreAsync(async (store) =>
