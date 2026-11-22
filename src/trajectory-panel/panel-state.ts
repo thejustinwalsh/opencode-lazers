@@ -223,7 +223,15 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
   const [selection, setSelection] = createSignal<Selection | null>(
     input.preferences.target ? null : input.preferences.selection,
   )
-  const [snapshot, setSnapshot] = createSignal<TrajectoryEvent>()
+  // Equal by content: `data()` rebuilds every event object, and the effect below writes the
+  // selected one back here; a fresh but equal object must not re-run `data()` (an endless loop).
+  const [snapshot, setSnapshot] = createSignal<TrajectoryEvent | undefined>(undefined, {
+    equals: (previous, next) =>
+      previous === next ||
+      (previous !== undefined &&
+        next !== undefined &&
+        JSON.stringify(previous) === JSON.stringify(next)),
+  })
   const failure = createMemo(() => targetError(target()))
   const taskID = createMemo(() => (failure() ? undefined : (pinned() ?? undefined)))
 
