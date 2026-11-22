@@ -943,14 +943,16 @@ export class RetainedVerificationExecution {
         initial.id,
         phase,
         check.id,
-        "A retained check intent has no conclusive isolated receipt; it will not be replayed",
+        "A retained check intent has no conclusive isolated receipt",
       ),
     )
+    // Running it again would reuse an isolated context whose relocated dependencies are not
+    // proven to be ours to move or delete, so this request ends; a new request gets its own.
     await this.failRetainedVerification(
       initial,
       activity?.state === "failed"
-        ? `Retained verification check ${phase}:${check.id} is uncertain: ${errorText(activity.error)}`
-        : `Retained verification check ${phase}:${check.id} is uncertain and was not replayed`,
+        ? `Retained verification check ${phase}:${check.id} stopped without a receipt (${errorText(activity.error)}); request retained verification again`
+        : `Retained verification check ${phase}:${check.id} was interrupted before it reported; request retained verification again`,
       run.fence,
     )
     this.forgetRetainedCheckActivity(run, activityIdentity)

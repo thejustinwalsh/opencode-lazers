@@ -214,6 +214,17 @@ export interface RunnerHost {
   }): Promise<void>
   interrupt(id: string): Promise<void>
   /**
+   * Cancel the inbox entries of the attempt's own idle worker session: input the host queued for
+   * a session that is not running and will not run it (a shell notice queued across a restart).
+   * Refuses unless the session is the attempt's worker, not active, with no running shell.
+   * Returns the cancelled entry IDs.
+   */
+  cancelStrandedInput?(input: {
+    sessionID: string
+    attemptID: string
+    directory: string
+  }): Promise<string[]>
+  /**
    * Steer one message into a running worker's current turn (consumed at its next step). Only the
    * attempt's own worker session; never resumes an idle worker.
    */

@@ -1534,12 +1534,18 @@ export async function prepareInterruptedCombinedCheck(
   rmSync(join(payload.workspace, ".lazers-combined-release"), { force: true })
 
   const reopened = reopenRuntime(f, options.reopenTimeoutDefaults, options.wakeScheduler)
-  await drive(reopened.runtime, 4)
-  const interrupted = reopened.store
+  // The interrupted run has no settled receipt: reopening supersedes it so the check runs again.
+  let interrupted = reopened.store
     .effects(f.receipt.planID)
     .find((candidate) => candidate.id === interruptedEffect.id)!
-  if (interrupted.state !== "uncertain")
-    throw new Error("Combined interruption was not durably reconciled as uncertain")
+  for (let tick = 0; tick < 20 && interrupted.state !== "failed"; tick++) {
+    await reopened.runtime.tick()
+    interrupted = reopened.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.id === interruptedEffect.id)!
+  }
+  if (interrupted.state !== "failed")
+    throw new Error("Combined interruption was not superseded on reopen")
   return {
     f,
     reopened,

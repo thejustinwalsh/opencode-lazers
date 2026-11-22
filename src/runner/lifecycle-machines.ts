@@ -169,10 +169,11 @@ const verificationResourceMachine = defineLifecycle("runner-verification-resourc
   uncertain: ["active", "removed"],
   removed: ["creating"],
 })
+/** A check reads its candidate: an uncertain or outdated run is begun again (`intended`). */
 const verificationCheckMachine = defineLifecycle("runner-verification-check", "intended", {
   intended: ["completed", "uncertain"],
-  uncertain: ["completed"],
-  completed: ["uncertain"],
+  uncertain: ["completed", "intended"],
+  completed: ["uncertain", "intended"],
 })
 const verificationCleanupMachine = defineLifecycle("runner-verification-cleanup", "pending", {
   pending: ["complete", "failed"],

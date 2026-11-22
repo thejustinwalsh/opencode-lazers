@@ -1723,3 +1723,30 @@ test("successful mutating checks retain their result and require authorized cand
     JSON.parse(f.store.adoptionChecks(requested.adoptionID, "task")[0]!.receipt!).unchanged,
   ).toBeUndefined()
 })
+
+test("an adoption check whose run never reported is run again and the adoption is accepted", async () => {
+  const f = fixture("failed-task")
+  const { node, attempt } = await strand(f)
+  const candidate = landCandidate(f, node.artifact!)
+  const activities = Reflect.get(f.runtime, "checkActivities") as {
+    startCheckActivity: (input: { metadata?: Record<string, unknown> }) => unknown
+  }
+  const start = activities.startCheckActivity.bind(activities)
+  let lost = 0
+  activities.startCheckActivity = (input) => {
+    // The first task-phase check run dies with the service before it reports.
+    if (input.metadata?.kind === "adoption" && input.metadata.phase === "task" && !lost++)
+      return undefined
+    return start(input as never)
+  }
+  const requested = (await f.runtime.command(
+    adoptionCommand(f, attempt.id, node.artifact!, candidate),
+    "owner",
+  )) as { adoptionID: string }
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
+  expect(lost).toBeGreaterThan(1)
+  expect(f.store.plan(f.planID)?.reason ?? "").not.toContain("not replayed")
+  expect(
+    f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
+  ).toBe(true)
+})
