@@ -130,3 +130,28 @@ rerun.
 - `.cache/parked/git-hardening-9337fab3.patch`: the dropped git-hardening work. Delete on the
   owner's word.
 - `.cache/driver/claude-state-20261117.ts` calls a deleted RPC; it is a dated one-off.
+
+## On-screen check, first pass (2026-11-22 02:05 UTC, build `e8a00d97`, window reloaded)
+
+Driven with computer use on OpenCode Desktop. No worker was running, so every "running" state
+is still unchecked.
+
+| Panel                                  | Seen                                                                                                   | Result                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Tasks, session scope                   | "No open tasks in this session" after a short loading state                                            | Renders                                              |
+| Tasks, project scope                   | 4 rows (LZ-228 to LZ-231), inspector with title, plan step, pause note, progress steps, age, done-when | Renders                                              |
+| Tasks, state filter (LZ-216)           | Menu with counts; "All" lists 204 rows                                                                 | Renders; counts disagree with the stored rows, below |
+| Radar Monitor, Map, Flow               | Empty states: "Nothing is running", "You · session", "Nothing is flowing"                              | Renders                                              |
+| Models, Projects, Trajectory, Planning | Not opened                                                                                             | Unchecked                                            |
+
+**Defect to investigate first: the Tasks state counts do not match `task_schedule`.** For
+project `opencode-lazers` the stored buckets are open 9, paused 4, accepted 162, cancelled 81
+(256 rows). The panel's menu shows Open 4, Queued 0, Paused 4, Completed 162, Accepted 162,
+Integrated 0, Cancelled 38, All 204. So 52 rows are missing from the panel: all 9 `open` rows
+and 43 `cancelled` rows. Also "Integrated 0" although 160 of the 162 accepted tasks sit on
+plans in state `integrated`. Start in `bucketsForSelection` (`src/tasks/state-selection.ts`,
+from LZ-216), the stored bucket counters behind `tasks.bucketCounts`, and how a task with no
+plan is bucketed. Before LZ-216 landed, project scope showed "8 open" with 8 rows.
+
+Minor: a background click on a task row did not change the selected row; not confirmed as a
+product defect (it may be the automation's background click).
