@@ -274,6 +274,15 @@ export function createTaskList(input: TaskListInput) {
     /** Ask for the move that failed again. */
     retry: () => slide(last),
     /**
+     * Bring the window to the list's first or last rows. Home and End go to the ends of the list,
+     * not of the window; a window already at that end stays. True when the window moves.
+     */
+    toEdge: (edge: "head" | "tail") => {
+      if ((edge === "head" ? schedule.before() : schedule.after()) === 0) return false
+      schedule.seek(edge)
+      return true
+    },
+    /**
      * Bring the window around a task. Only a task the list's filter selects has a place in it:
      * another chip's task, or any task while a search narrows the list, stays where it is.
      */

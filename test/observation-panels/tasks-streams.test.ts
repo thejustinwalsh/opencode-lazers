@@ -908,6 +908,27 @@ test("keyboard: Right expands then enters, Left leaves then collapses, Down move
   })
 })
 
+test("keyboard: End and Home go to the ends of the list, not of the window", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.topLevel().length > 0)
+    const order = storedOrder(
+      "retired=0 AND bucket IN ('running','queued','paused','blocked','open')",
+    )
+    const first = order[0]!
+    const last = order.at(-1)!
+    // The first window holds the head of the list; the last task is far beyond it.
+    expect(h.row(last)).toBeNull()
+    const focus = () => h.dom.document.activeElement as unknown as HTMLElement | null
+    h.row(first)!.focus()
+    h.key(h.row(first)!, "End")
+    await until(() => focus()?.dataset.taskId === last)
+    expect(h.row(last)!.getAttribute("aria-selected")).toBe("true")
+    h.key(h.row(last)!, "Home")
+    await until(() => focus()?.dataset.taskId === first)
+    expect(h.row(first)!.getAttribute("aria-selected")).toBe("true")
+  })
+})
+
 test("the state menu marks the current chip and shows the stored counts", async () => {
   await withPanel(async (h) => {
     await until(() => h.topLevel().length > 0)

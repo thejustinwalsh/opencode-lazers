@@ -1419,6 +1419,20 @@ function TaskPanel(
     selectTask(target.row.taskID)
     focusItem(target.key)
   }
+  /**
+   * Home or End pressed while the window holds the middle of the list: the window moves to that
+   * end, and the end row takes focus and selection once its frame lands.
+   */
+  const [edgeKey, setEdgeKey] = createSignal<"Home" | "End">()
+  createEffect(() => {
+    const key = edgeKey()
+    const list = taskList()
+    if (!key || !list) return
+    if ((key === "Home" ? list.before() : list.after()) !== 0) return
+    const tree = taskItems(items())
+    setEdgeKey(undefined)
+    goTo(key === "Home" ? tree[0] : tree.at(-1))
+  })
   const rowKey = (
     event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
     item: VirtualTaskItem,
@@ -1429,10 +1443,14 @@ function TaskPanel(
     const taskID = item.row.taskID
     const go = (key: NavigationKey) => goTo(navigationTarget(items(), item.key, key))
     switch (event.key) {
-      case "ArrowUp":
-      case "ArrowDown":
       case "Home":
       case "End":
+        event.preventDefault()
+        if (taskList()?.toEdge(event.key === "Home" ? "head" : "tail")) setEdgeKey(event.key)
+        else go(event.key)
+        return
+      case "ArrowUp":
+      case "ArrowDown":
         event.preventDefault()
         go(event.key)
         return
