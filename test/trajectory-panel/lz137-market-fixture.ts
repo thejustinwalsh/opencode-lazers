@@ -11,7 +11,7 @@ import type { makeFixture } from "../trajectory/fixture.ts"
 import { createTaskValuationReader } from "../../src/models/task-valuation.ts"
 import { nativeMillionTokenIndex } from "../models-valuation/fixtures/current-indexes.ts"
 
-export const lz137Route = {
+const lz137Route = {
   providerID: "openai",
   modelID: "gpt-6-luna",
   variant: "max",

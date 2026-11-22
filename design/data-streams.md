@@ -33,6 +33,9 @@ items, served by read workers, with caching inside the stream.
 ## Anti-goals
 
 - A second read path beside streams for "small" or "quick" reads that show data.
+  `scripts/check-show-reads.ts` (run by `bun run verify`) enforces it: GUI code calls only the
+  plugin RPC methods in its `ALLOWED` list (writes, commands, transports and small settings or
+  status reads, each with its reason); everything else it shows comes through a stream.
 - A cap that refuses or truncates a read. A window slides; nothing is refused.
 - A consumer that holds rows outside its stream.
 

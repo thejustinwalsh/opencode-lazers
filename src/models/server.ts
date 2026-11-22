@@ -1,41 +1,31 @@
+import { routedModels } from "./catalog-inputs.ts"
+import { registerDecisionViewOpener } from "./decision-view-registry.ts"
+import { DecisionViewRequestSchema } from "./decision-view-build.ts"
 import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Integration } from "@opencode/schema/integration"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
-import { nativeWorkerOptions } from "../runner/catalog.ts"
 import { TaskRepository } from "../storage.ts"
 import {
-  ModelCatalogOutputSchema,
-  ModelComparisonRPCInputSchema,
   ModelConfigureRPCInputSchema,
-  ModelEvidenceRPCInputSchema,
   ModelPriceSourceConfigureRPCInputSchema,
   ModelPriceSourceSettingsRPCInputSchema,
   ModelMappingWriteOutputSchema,
   ModelSourceRefreshRPCInputSchema,
   ModelSettingsOutputSchema,
-  ModelSettingsRPCInputSchema,
-  ModelCatalogRPCInputSchema,
   Models,
-  ModelConfigurationsRPCInputSchema,
-  ModelGroupsRPCInputSchema,
 } from "./contract.ts"
-import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
-import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
-import { readAgentRoutes } from "./agent-routes.ts"
+import { readAgentRoutes, readHostAgentFacts } from "./agent-routes.ts"
+import { writeHostAgentFacts } from "./assignment-view.ts"
 import { LAZERS_AGENTS, isAgentSubject } from "./agent-ids.ts"
 import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 
 /** A background refresh gives up after this long. */
 const BACKGROUND_REFRESH_TIMEOUT_MS = 120_000
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
-import { readModelComparison } from "./comparison-read.ts"
-import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
-import { buildCurrentPriceIndex } from "./current-price-index.ts"
-import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
 import type { TaskValuationIndexReader, TaskValuationProvider } from "./task-valuation.ts"
 import { acquireDecisionWorker } from "./decision-worker-registry.ts"
@@ -44,26 +34,8 @@ import type { PriceInputs } from "./price-state.ts"
 import {
   MODELS_DECISION_CONTRACT_VERSION,
   ModelDecisionReadInputSchema,
-  ModelsDecision,
-  ModelDecisionConfigurationsOutputSchema,
-  ModelDecisionConfigurationsRPCInputSchema,
-  ModelDecisionInspectOutputSchema,
-  ModelDecisionInspectRPCInputSchema,
-  ModelDecisionOverviewAllOutputSchema,
-  ModelDecisionOverviewAllRPCInputSchema,
-  ModelDecisionOverviewOutputSchema,
-  ModelDecisionOverviewRPCInputSchema,
-  ModelDecisionRowsAllOutputSchema,
-  ModelDecisionRowsAllRPCInputSchema,
-  ModelDecisionRowsOutputSchema,
-  ModelDecisionRowsRPCInputSchema,
 } from "./decision-contract.ts"
-import { loadedProjectDirectories } from "../core/registry.ts"
-import { canonicalPath, pickUnit, projectUnits, unitToken } from "../projects/scope.ts"
-import type { ProjectUnit } from "../projects/scope.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
-import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
-import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import { ModelSettingsService } from "./service.ts"
 import {
   ModelPriceSourceSettingsSchema,
@@ -72,11 +44,7 @@ import {
 } from "./price-source-settings.ts"
 import { createManagedUsagePriceProvider } from "./managed-usage-valuation.ts"
 import type { ManagedUsageIndexReader } from "./managed-usage-valuation.ts"
-import type {
-  ModelPriceSource,
-  ModelPriceSourcePolicy,
-  ModelPriceSourceSettings,
-} from "./price-source-settings.ts"
+import type { ModelPriceSource } from "./price-source-settings.ts"
 
 type ModelsContext = Pick<
   Plugin.Context,
@@ -125,7 +93,7 @@ async function eligibleSession(
   return { session, agent: session.agent }
 }
 
-async function authorize(
+export async function authorizeModels(
   ctx: ModelsContext,
   sessionID: string,
   projectID: string,
@@ -153,7 +121,11 @@ async function authorize(
   return currentSession.session
 }
 
-async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, signal: AbortSignal) {
+export async function configuredAccess(
+  ctx: ModelsContext,
+  source: ModelPriceSource,
+  signal: AbortSignal,
+) {
   try {
     const connection = await Effect.runPromise(
       ctx.integration.connection.active(Integration.ID.make(source)),
@@ -170,7 +142,7 @@ async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, si
   }
 }
 
-function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: string) {
+export function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: string) {
   return new ModelPriceSourceSettingsStore(
     {
       get: (key, signal) =>
@@ -213,27 +185,13 @@ function createModelsPriceIndexReader(
   }
 }
 
-async function authorizeDecisionRead(
-  ctx: ModelsContext,
-  request: { scope: { projectDirectory: string }; sessionID: string },
-  projectDirectory: string,
-  projectID: string,
-  signal: AbortSignal,
-) {
-  if (request.scope.projectDirectory !== projectDirectory)
-    throw new Error("Models scope is unavailable")
-  await authorize(
-    ctx,
-    request.sessionID,
-    projectID,
-    "lz-read-model-decision",
-    [projectDirectory],
-    signal,
-  )
-  signal.throwIfAborted()
-}
-
-/** Read-only Models-owned task valuation provider using the same configured cached price path. */
+/**
+ * Read-only Models-owned task valuation provider using the same configured cached price path.
+ *
+ * Test oracle: the service values task effort with `storedPriceProvider` (`trajectory/
+ * effort-compute.ts`), which mirrors this off the main thread; the cost-basis contract test
+ * (`server.test.ts`) reads this one. Nothing in the service calls it.
+ */
 export function createModelsTaskValuationProvider(
   ctx: ModelsContext,
   repository: TaskRepository,
@@ -270,7 +228,7 @@ export function registerModelsServer(
   fetcher?: ModelEvidenceFetcher,
   evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
     new ModelEvidenceReadStore(databasePath, directory),
-  options: { prewarmDecision?: boolean; loaded?: () => Iterable<string> } = {},
+  options: { prewarmDecision?: boolean } = {},
 ) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
@@ -282,14 +240,6 @@ export function registerModelsServer(
       return run(new ModelSettingsService(connection))
     } finally {
       connection.close()
-    }
-  }
-  const withEvidenceStore = <T>(run: (store: ModelEvidenceStore) => T): T => {
-    const store = new ModelEvidenceStore(path, projectDirectory)
-    try {
-      return run(store)
-    } finally {
-      store.close()
     }
   }
   /** The one source refresh in flight for this project; every panel and request shares it. */
@@ -329,29 +279,69 @@ export function registerModelsServer(
     return { policy, openrouter }
   }
 
+  /** The saved model settings of the project (or one task), with the agents' host routes. */
+  const readSettings = async (taskID: string | undefined, signal: AbortSignal) => {
+    const output = withService((service) => service.settings({ taskID }))
+    // The agents' LAZERS routes: the effective model is read back from the host (after the
+    // transform applied it), and the source word says whose route it is.
+    const set = new Map(
+      withService((service) =>
+        LAZERS_AGENTS.map((agent) => agent.agentID).flatMap((id) => {
+          const route = service.mappings.agentRoute(id)
+          return route ? [[id, route] as const] : []
+        }),
+      ),
+    )
+    const agents = await readAgentRoutes(ctx, signal, (id: string) => set.get(id as never) ?? null)
+    return ModelSettingsOutputSchema.parse({ ...output, agents })
+  }
+
+  /**
+   * What the host resolves for each agent, stored for the assignments stream. One read at a time;
+   * a request during a read runs once more after it, so the last open sees the last state.
+   */
+  let hostRead: Promise<void> | undefined
+  let hostAgain = false
+  const refreshHostAgents = (): Promise<void> => {
+    if (hostRead) {
+      hostAgain = true
+      return hostRead
+    }
+    hostRead = (async () => {
+      try {
+        do {
+          hostAgain = false
+          const facts = await readHostAgentFacts(ctx)
+          withService((service) => writeHostAgentFacts(service.repository, facts))
+        } while (hostAgain)
+      } catch {
+        // The next open reads again; the stored rows stay as they were.
+      } finally {
+        hostRead = undefined
+      }
+    })()
+    return hostRead
+  }
+
   return Effect.gen(function* () {
     // One decision worker per database per process, shared by every location's registration.
     const lease = acquireDecisionWorker({ path, readPriceInputs })
     yield* Effect.addFinalizer(() => Effect.sync(() => lease.release()))
+    // The comparison candidates (schema installed by the project core): built in the decision
+    // worker, written here a page at a time.
+    lease.ensureCandidates(projectDirectory)
+    // Stored decision views: the routes the panel counts as routed come from this location's
+    // settings read, and a Models stream opens a view through the registered opener.
+    lease.provideRouted(projectDirectory, async (taskID, signal) =>
+      routedModels(await readSettings(taskID ?? undefined, signal ?? new AbortController().signal)),
+    )
+    const releaseOpener = registerDecisionViewOpener(projectDirectory, {
+      open: (request) => lease.openView(projectDirectory, DecisionViewRequestSchema.parse(request)),
+      release: (viewID) => lease.releaseView(viewID),
+      refreshHostAgents: () => void refreshHostAgents(),
+    })
+    yield* Effect.addFinalizer(() => Effect.sync(releaseOpener))
     const decisionReader = lease.reader(projectDirectory)
-    const readerFor = (unit: ProjectUnit) => {
-      if (canonicalPath(unit.directory) === canonicalPath(projectDirectory))
-        return { reader: decisionReader, directory: projectDirectory }
-      return { reader: lease.reader(unit.directory), directory: unit.directory }
-    }
-    /**
-     * The all-projects Models reads: the caller's session is checked, and no permission is
-     * asserted, so the owner is never prompted for looking at their own projects in a panel.
-     */
-    const decisionAccess = async (sessionID: string, signal: AbortSignal) => {
-      await eligibleSession(ctx, sessionID, projectID, signal)
-      const registry = new TaskRepository(path, projectDirectory)
-      try {
-        return { units: projectUnits(registry, options.loaded ?? loadedProjectDirectories) }
-      } finally {
-        registry.close()
-      }
-    }
     if (options.prewarmDecision && lease.claimPrewarm(projectDirectory)) {
       // Build the default snapshot once the service has settled, so the first open after a
       // start or reload reads a cached one. The worker keeps it current from then on.
@@ -369,46 +359,13 @@ export function registerModelsServer(
       prewarm.unref()
     }
     yield* timedRpc(ctx.rpc).register(Models, {
-      settings: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelSettingsRPCInputSchema.parse(input)
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-get-model-settings",
-              [request.taskID ?? projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            const output = withService((service) => service.settings({ taskID: request.taskID }))
-            // The agents' LAZERS routes: the effective model is read back from the host (after the
-            // transform applied it), and the source word says whose route it is.
-            const set = new Map(
-              withService((service) =>
-                LAZERS_AGENTS.map((agent) => agent.agentID).flatMap((id) => {
-                  const route = service.mappings.agentRoute(id)
-                  return route ? [[id, route] as const] : []
-                }),
-              ),
-            )
-            const agents = await readAgentRoutes(
-              ctx,
-              signal,
-              (id: string) => set.get(id as never) ?? null,
-            )
-            return ModelSettingsOutputSchema.parse({ ...output, agents })
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
       configure: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelConfigureRPCInputSchema.parse(input)
             const resource =
               request.target.scope === "task" ? request.target.taskID : projectDirectory
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -428,8 +385,10 @@ export function registerModelsServer(
             )
             // An agent's route is applied by its transform: run the transforms again so OpenCode
             // starts the next session of that agent on the new model, without a restart.
-            if (written.status === "updated" && isAgentSubject(update.persona))
+            if (written.status === "updated" && isAgentSubject(update.persona)) {
               await Effect.runPromise(ctx.agent.reload(), { signal })
+              await refreshHostAgents()
+            }
             return written
           },
           catch: failure,
@@ -438,7 +397,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelPriceSourceSettingsRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -454,7 +413,11 @@ export function registerModelsServer(
             signal.throwIfAborted()
             const opencode = withEvidenceReadStore((store) => {
               signal.throwIfAborted()
-              const sources = store.readComparisonSources()
+              // The native snapshot's stamp decides access; its records are never read here.
+              const sources = store.readComparisonSources(undefined, {
+                stampOnly: true,
+                sources: ["native-catalog"],
+              })
               signal.throwIfAborted()
               return nativeCatalogAccess(
                 sources.find((source) => source.source === "native-catalog"),
@@ -472,7 +435,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelPriceSourceConfigureRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -489,136 +452,11 @@ export function registerModelsServer(
           },
           catch: failure,
         }).pipe(Effect.orDie),
-      catalog: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelCatalogRPCInputSchema.parse(input)
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-models-catalog",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            return ModelCatalogOutputSchema.parse(await nativeWorkerOptions(ctx))
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      sourceEvidence: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelEvidenceRPCInputSchema.parse(input)
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-evidence",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            return ModelEvidenceOutputSchema.parse(
-              withEvidenceStore((store) =>
-                store.read({
-                  snapshotID: request.snapshotID,
-                  cursor: request.cursor,
-                  limit: request.limit,
-                }),
-              ),
-            )
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      comparison: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelComparisonRPCInputSchema.parse(input)
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-comparison",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            const result = withEvidenceReadStore((store) =>
-              readModelComparison(store, {
-                cursor: request.cursor,
-                filters: request.filters,
-                limit: request.limit,
-              }),
-            )
-            signal.throwIfAborted()
-            const output = ModelComparisonOutputSchema.parse(result)
-            signal.throwIfAborted()
-            return output
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      modelGroups: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelGroupsRPCInputSchema.parse(input)
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-groups",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            const result = withEvidenceReadStore((store) =>
-              readModelGroups(store, {
-                cursor: request.cursor,
-                filters: request.filters,
-                limit: request.limit,
-              }),
-            )
-            signal.throwIfAborted()
-            const output = ModelGroupsOutputSchema.parse(result)
-            signal.throwIfAborted()
-            return output
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      modelConfigurations: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelConfigurationsRPCInputSchema.parse(input)
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-configurations",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            const result = withEvidenceReadStore((store) =>
-              readModelConfigurations(store, {
-                groupID: request.groupID,
-                context: request.context,
-                cursor: request.cursor,
-                filters: request.filters,
-                limit: request.limit,
-              }),
-            )
-            signal.throwIfAborted()
-            const output = ModelConfigurationsOutputSchema.parse(result)
-            signal.throwIfAborted()
-            return output
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
       refreshSources: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelSourceRefreshRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -653,148 +491,6 @@ export function registerModelsServer(
                 store.read({}, { endpointPricing: false }),
               ),
             )
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-    })
-
-    yield* timedRpc(ctx.rpc).register(ModelsDecision, {
-      overview: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionOverviewRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.overview(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionOverviewOutputSchema.parse(output)
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      rows: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionRowsRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.rows(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                cursor: request.cursor,
-                limit: request.limit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionRowsOutputSchema.parse(output)
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      overviewAll: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionOverviewAllRPCInputSchema.parse(input)
-            const access = await decisionAccess(request.sessionID, signal)
-            const picked = pickUnit(access.units, request.cursor)
-            if (!picked) throw new Error("No project is readable in this scope")
-            signal.throwIfAborted()
-            const target = readerFor(picked.unit)
-            const overview = await target.reader.overview(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: { projectDirectory: target.directory },
-                filters: request.filters,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionOverviewAllOutputSchema.parse({
-              project: picked.unit.project,
-              unit: unitToken(picked.unit.directory),
-              nextCursor: picked.nextCursor,
-              overview,
-            })
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      rowsAll: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionRowsAllRPCInputSchema.parse(input)
-            const access = await decisionAccess(request.sessionID, signal)
-            const unit = access.units.find((item) => unitToken(item.directory) === request.unit)
-            if (!unit) throw new Error("Models scope is unavailable")
-            signal.throwIfAborted()
-            const target = readerFor(unit)
-            const rows = await target.reader.rows(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: { projectDirectory: target.directory },
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                cursor: request.cursor,
-                limit: request.limit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionRowsAllOutputSchema.parse({
-              project: unit.project,
-              unit: request.unit,
-              rows,
-            })
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      configurations: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionConfigurationsRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.configurations(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                cursor: request.cursor,
-                limit: request.limit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionConfigurationsOutputSchema.parse(output)
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      inspect: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionInspectRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.inspect(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                configurationID: request.configurationID,
-                selectedTaskID: request.selectedTaskID,
-                contributorCursor: request.contributorCursor,
-                contributorLimit: request.contributorLimit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionInspectOutputSchema.parse(output)
           },
           catch: failure,
         }).pipe(Effect.orDie),

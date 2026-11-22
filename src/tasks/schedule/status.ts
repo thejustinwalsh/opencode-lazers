@@ -39,8 +39,8 @@ export type EffectiveStatus = {
 }
 
 /**
- * What the list shows for a task: `RunnerStore.execution` then `TaskReads.effectiveExecution`
- * (`src/tasks/read.ts`), as a function of stored facts. A plan body that fails to parse is no
+ * What the list and the detail show for a task: what `RunnerStore.execution` then the deleted
+ * `TaskReads.effectiveExecution` showed, as a function of stored facts. A plan body that fails to parse is no
  * longer reported as "prerequisite plan facts are incomplete": prerequisites are stored whole.
  */
 export function effectiveStatus(facts: StatusFacts): EffectiveStatus {

@@ -4,8 +4,10 @@ import { timedRpc } from "../diagnostics/stall-probe.ts"
 import { openStream, type Stream } from "./client.ts"
 import { STREAM_LEASE_MS, Streams, type StreamAnchorInput, type StreamFrame } from "./contract.ts"
 import { acquireReaderPool, type ReaderPool } from "./pool.ts"
+import { findHostSource, hostRuntime, openHostStream } from "./host-source.ts"
 import { findSource, type StreamContext } from "./source.ts"
 import "./sources/index.ts"
+import "./sources/host-index.ts"
 import type { Columns } from "./frame.ts"
 
 /**
@@ -35,6 +37,8 @@ type Entry = {
   busy: number
   lease: ReturnType<typeof setTimeout> | undefined
   off(): void
+  /** The source's `release` for the filter its `authorize` returned; once, when dropped. */
+  release?: () => void
 }
 
 export type StreamsService = ReturnType<typeof createStreamsService>
@@ -60,6 +64,11 @@ export function createStreamsService(options: {
     clearTimeout(entry.lease)
     entry.off()
     entry.stream.close()
+    try {
+      entry.release?.()
+    } catch {
+      // A source's bookkeeping never fails a close.
+    }
     return true
   }
   const renew = (id: string, entry: Entry) => {
@@ -100,7 +109,7 @@ export function createStreamsService(options: {
       anchor?: StreamAnchorInput
     }) {
       drop(input.stream)
-      const source = findSource(input.source)
+      const source = findSource(input.source) ?? findHostSource(input.source)
       if (!source) throw new StreamFailedError(input.stream, `Unknown source ${input.source}`)
       let filter = input.filter
       if (source.authorize) {
@@ -114,14 +123,41 @@ export function createStreamsService(options: {
           )
         }
       }
-      const stream = openStream(options.pool, source, {
-        filter: filter as never,
-        order: input.order,
-        window: input.window,
-        transport: "copy",
-        ...(input.anchor ? { anchor: input.anchor as never } : {}),
-      })
-      const entry: Entry = { stream, seq: 0, busy: 1, lease: undefined, off: () => {} }
+      const admitted = filter
+      const release =
+        source.authorize && source.release ? () => source.release!(admitted as never) : undefined
+      let stream: Stream<Columns>
+      try {
+        const anchor = input.anchor ? { anchor: input.anchor as never } : {}
+        if ("kind" in source) {
+          const runtime = hostRuntime(options.context?.projectDirectory ?? "")
+          if (!runtime) throw new Error("The host is unavailable for this project")
+          stream = openHostStream(source, {
+            filter: filter as never,
+            window: input.window,
+            runtime: runtime as never,
+            ...anchor,
+          })
+        } else
+          stream = openStream(options.pool, source, {
+            filter: filter as never,
+            order: input.order,
+            window: input.window,
+            transport: "copy",
+            ...anchor,
+          })
+      } catch (error) {
+        release?.()
+        throw error
+      }
+      const entry: Entry = {
+        stream,
+        seq: 0,
+        busy: 1,
+        lease: undefined,
+        off: () => {},
+        ...(release ? { release } : {}),
+      }
       entry.off = stream.on("change", () => {
         entry.seq++
         if (entry.busy === 0) options.changed(input.stream, entry.seq)

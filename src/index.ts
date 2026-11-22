@@ -48,7 +48,7 @@ import { registerProfileTools } from "./projects/profile-tools.ts"
 import { ensureArchitectProfileGuidance, ensureSetupPointer } from "./projects/profile-guidance.ts"
 import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
-import { authorize as authorizeRead, registerObservability } from "./observability/rpc.ts"
+import { authorize as authorizeRead } from "./observability/rpc.ts"
 import { projectIdsFor } from "./project-key.ts"
 import { registerProgress } from "./progress/native.ts"
 import { registerRecoveryTools } from "./recovery/tools.ts"
@@ -57,14 +57,25 @@ import { registerToolResults } from "./tool-results.ts"
 import { registerToolSignatures } from "./tool-signature.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { registerModelTools } from "./models/tools.ts"
-import { createModelsManagedUsagePriceProvider, registerModelsServer } from "./models/server.ts"
+import {
+  authorizeModels,
+  createModelsManagedUsagePriceProvider,
+  registerModelsServer,
+} from "./models/server.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
-import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
-import { acquireLazersCore } from "./core/core.ts"
+import {
+  section,
+  sectionAsync,
+  sectionEffect,
+  stallProbe,
+  timedHooks,
+} from "./diagnostics/stall-probe.ts"
+import { loadLazersCore } from "./core/load.ts"
 import { nativeEventSubscriptions } from "./core/event-hub.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
 import { registerProjects } from "./projects/rpc.ts"
+import { projectsDefaultsOf } from "./projects/overview-store.ts"
 import { taskDatabasePath } from "./storage.ts"
 
 /**
@@ -100,9 +111,9 @@ export default Plugin.define({
         cores: () => coreSnapshot().length,
       })
       const handle = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          section("core:acquire", () =>
-            acquireLazersCore(ctx, {
+        Effect.promise(() =>
+          sectionAsync("core:acquire", () =>
+            loadLazersCore(ctx, {
               ...(dataDirectory !== undefined ? { dataDirectory } : {}),
               projectID: ctx.location.project.id,
               projectDirectory: ctx.location.project.canonical,
@@ -212,11 +223,11 @@ export default Plugin.define({
         }),
       )
       yield* sectionEffect("setup:TaskReads", () =>
-        registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
+        registerTaskReads(ctx, repository, runtime).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Streams", () =>
         registerStreams(ctx, {
-          databasePath: core.taskReads.repository.path,
+          databasePath: repository.path,
           context: {
             projectID,
             projectDirectory: repository.projectDirectory,
@@ -229,6 +240,29 @@ export default Plugin.define({
                 projectID,
                 repository.projectDirectory,
                 "read",
+              )
+            },
+            // The Models sources carry over their RPC's check: an eligible session and the
+            // RPC's own permission on this project (`src/models/server.ts`); the Trajectory
+            // sources carry over the observability RPC's (`authorize`, resources `["*"]`).
+            assertAction: async (sessionID, action) => {
+              if (action === "lz-inspect-trajectory") {
+                await authorizeRead(
+                  ctx,
+                  { sessionID },
+                  projectID,
+                  repository.projectDirectory,
+                  action,
+                )
+                return
+              }
+              await authorizeModels(
+                ctx,
+                sessionID,
+                projectID,
+                action,
+                [repository.projectDirectory],
+                new AbortController().signal,
               )
             },
           },
@@ -339,9 +373,6 @@ export default Plugin.define({
                   id: session.id,
                   archived: session.archived,
                   ...(session.agent ? { agent: session.agent } : {}),
-                  ...(session.pendingForms !== undefined
-                    ? { pendingForms: session.pendingForms }
-                    : {}),
                 }
               : null
           },
@@ -356,17 +387,7 @@ export default Plugin.define({
               }),
             remove: (directory) => runtime.host.removeWorktree(directory),
           },
-          defaults: {
-            global:
-              typeof ctx.options.historyCacheMB === "number"
-                ? { historyCacheMB: ctx.options.historyCacheMB }
-                : {},
-            project:
-              typeof ctx.options.workerSpendCeilingTokens === "number" &&
-              ctx.options.workerSpendCeilingTokens > 0
-                ? { spendCeilingTokens: ctx.options.workerSpendCeilingTokens }
-                : {},
-          },
+          defaults: projectsDefaultsOf(ctx.options),
         }).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:RunnerTools", () =>
@@ -385,16 +406,7 @@ export default Plugin.define({
         ),
       )
       yield* sectionEffect("setup:TrajectoryTools", () =>
-        registerTrajectoryTools(
-          ctx,
-          runtime.store,
-          core.trajectoryHost,
-          projectID,
-          core.taskValuationProvider,
-        ),
-      )
-      yield* sectionEffect("setup:Observability", () =>
-        registerObservability(ctx, core.reads, projectID).pipe(Effect.orDie),
+        registerTrajectoryTools(ctx, runtime.store),
       )
       yield* sectionEffect("setup:LocalInference", () =>
         registerLocalInference(ctx, undefined, core.inferenceBroker).pipe(Effect.orDie),

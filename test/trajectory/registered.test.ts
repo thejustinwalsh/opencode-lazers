@@ -5,7 +5,9 @@ import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Effect, Schema } from "effect"
 import { registerTrajectoryTools } from "../../src/trajectory/tools.ts"
-import type { TrajectoryHost } from "../../src/trajectory/native.ts"
+import { taskEventsProjection } from "../../src/events/task-events-refresh.ts"
+import { startProjection } from "../../src/projections/owner.ts"
+import { ensureTranscriptMetaSchema } from "../../src/transcript-meta/schema.ts"
 import { TaskRepository } from "../../src/storage.ts"
 import { firstAttemptID, makeFixture, taskID } from "./fixture.ts"
 
@@ -21,8 +23,18 @@ const context = {
   progress: () => Effect.void,
 } satisfies Parameters<RegisteredTool["execute"]>[1]
 
-async function setup(options: { deny?: boolean; host?: TrajectoryHost } = {}) {
+async function setup(options: { deny?: boolean } = {}) {
   const fixture = makeFixture()
+  ensureTranscriptMetaSchema(fixture.repository)
+  const lease = startProjection(fixture.repository.path, fixture.directory, taskEventsProjection, {
+    pacing: {
+      startMs: 60_000,
+      quiet: { sliceMs: 1, waitMs: 1 },
+      busy: { sliceMs: 1, waitMs: 1 },
+      retryMs: 60_000,
+    },
+  })
+  await lease.owner.settle()
   const tools = new Map<string, RegisteredTool>()
   const editor: ToolEditor = {
     add: (tool) => tools.set(tool.name, tool),
@@ -47,12 +59,12 @@ async function setup(options: { deny?: boolean; host?: TrajectoryHost } = {}) {
     },
     tool: { transform },
   } as unknown as Pick<Plugin.Context, "permission" | "tool">
-  await Effect.runPromise(
-    Effect.scoped(
-      registerTrajectoryTools(fakeContext, fixture.store, options.host ?? fixture.host, "project"),
-    ),
-  )
-  return { ...fixture, tools, permissionOrder }
+  await Effect.runPromise(Effect.scoped(registerTrajectoryTools(fakeContext, fixture.store)))
+  const close = () => {
+    lease.release()
+    fixture.close()
+  }
+  return { ...fixture, close, tools, permissionOrder }
 }
 
 test("registered trajectory tool is permission-first, structured, and pages exact stable events", async () => {
@@ -91,17 +103,8 @@ test("registered trajectory tool is permission-first, structured, and pages exac
   }
 })
 
-test("permission denial precedes input validation, database reopen, and native session reads", async () => {
-  let sessionReads = 0
-  const fixture = await setup({
-    deny: true,
-    host: {
-      session: async () => {
-        sessionReads++
-        return null
-      },
-    },
-  })
+test("permission denial precedes input validation, and database reopen", async () => {
+  const fixture = await setup({ deny: true })
   fixture.repository.close()
   renameSync(fixture.repository.path, `${fixture.repository.path}.unavailable`)
   try {
@@ -111,7 +114,6 @@ test("permission denial precedes input validation, database reopen, and native s
         "Permission denied",
       )
     expect(fixture.permissionOrder).toEqual(["lz-inspect-trajectory", "lz-inspect-trajectory"])
-    expect(sessionReads).toBe(0)
   } finally {
     fixture.close()
   }
@@ -131,17 +133,19 @@ test("Architect, implementor, and another permitted agent can read owned reports
         tool.execute(caller.input, { ...context, agent: caller.agent }),
       )
       const report = result.output as {
-        task: { id: string }
+        taskID: string
         focusedAttemptID: string | null
-        attempts: Array<{ id: string; state: string }>
+        trajectory: { events: Array<{ attempt_id: string | null }> }
       }
-      expect(report.task.id).toBe(taskID)
+      expect(report.taskID).toBe(taskID)
       expect(report).toEqual(JSON.parse(String(result.content)))
       if (caller.agent === "lazers-implementor") {
         expect(report.focusedAttemptID).toBe(firstAttemptID)
-        expect(report.attempts.map(({ id, state }) => ({ id, state }))).toEqual([
-          { id: firstAttemptID, state: "failed" },
-        ])
+        expect(
+          report.trajectory.events.every(
+            (event) => event.attempt_id === firstAttemptID || event.attempt_id === null,
+          ),
+        ).toBe(true)
       }
     }
     expect(fixture.permissionOrder).toEqual([
@@ -170,7 +174,7 @@ test("retained callback survives setup connection disposal without changing dura
     const result = await Effect.runPromise(
       fixture.tools.get("lz-inspect-trajectory")!.execute({ taskID }, context),
     )
-    expect(JSON.parse(String(result.content)).task.id).toBe(taskID)
+    expect(JSON.parse(String(result.content)).taskID).toBe(taskID)
     const reopened = new TaskRepository(
       fixture.repository.path,
       fixture.repository.projectDirectory,

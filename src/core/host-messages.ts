@@ -250,34 +250,3 @@ export async function precedesInSession(
     cursor = next
   }
 }
-
-/**
- * The first `limit` messages of a session, oldest first, handed to `visit` one page at a time.
- * Nothing is kept between pages: a caller that folds the transcript into a result holds at most
- * `pageSize` messages. Returns how many messages were visited.
- */
-export async function eachMessagePage(
-  client: HostMessageClient,
-  sessionID: string,
-  limit: number,
-  visit: (page: HostMessage[]) => void,
-  pageSize = HOST_MESSAGE_PAGE_SIZE,
-): Promise<number> {
-  const seen = new Set<string>()
-  let cursor: string | undefined
-  let visited = 0
-  while (visited < limit) {
-    const page = await client.message.list({
-      sessionID: sessionID as never,
-      limit: Math.min(pageSize, limit - visited),
-      ...hostPage("asc", cursor),
-    })
-    visit(page.data)
-    visited += page.data.length
-    const next = page.cursor.next
-    if (!next || seen.has(next)) break
-    seen.add(next)
-    cursor = next
-  }
-  return visited
-}

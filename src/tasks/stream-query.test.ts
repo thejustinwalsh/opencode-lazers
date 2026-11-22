@@ -1,10 +1,11 @@
 import { afterEach, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { RecoveryDetector } from "../recovery/detector.ts"
+import { RecoveryDetector, openConcerns } from "../recovery/detector.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 import { insertTask, openFixture, submitPlan, type Fixture } from "./schedule/fixture.ts"
 import { TaskScheduleOwner } from "./schedule/owner.ts"
 import { queryTaskPage } from "./stream-query.ts"
+import { concernRecommendation } from "./task-row.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -159,6 +160,28 @@ test("a process with no schedule owner indexes the project before answering", as
   const id = insertTask(f.repository, "existing")
   const page = await queryTaskPage(f.repository, { limit: 10 })
   expect(page.tasks.map((task) => task.taskID)).toEqual([id])
+})
+
+test("the stored concern keeps the rule's recommended action and reason beside its line", async () => {
+  const { f, grind } = await project()
+  const [open] = f.repository.read((db) =>
+    openConcerns(db, f.repository.projectDirectory, { taskID: grind }),
+  )
+  expect(open?.advice).toBeDefined()
+  const row = f.repository.read((db) =>
+    db
+      .query<{ concern: string; concern_action: string; concern_because: string }, [string]>(
+        "SELECT concern,concern_action,concern_because FROM task_schedule WHERE task_id=?",
+      )
+      .get(grind),
+  )!
+  expect(JSON.parse(row.concern).line).toContain(open!.reason)
+  expect(row.concern_action).toBe(open!.advice!.action)
+  expect(row.concern_because).toBe(open!.advice!.because.slice(0, 600))
+  // The Tasks row and the worker pane word it the same way.
+  expect(concernRecommendation(row.concern_action, row.concern_because)).toBe(
+    `Recommended: ${open!.advice!.action}. ${open!.advice!.because}`,
+  )
 })
 
 test("explicit state unions deduplicate counts and pages and bind continuation to the normalized query", async () => {

@@ -15,7 +15,7 @@ import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { RunnerStore } from "../runner/store.ts"
-import { TaskReads } from "../tasks/read.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import { taskInstructions } from "../tasks/instructions.ts"
 import { AuditHistory } from "./history.ts"
 import { importAudit, fallowReport } from "./report.ts"
@@ -251,7 +251,7 @@ test("audit history, pairing and finding decisions survive checkout/export delet
     },
     { sessionID: "architect", agent: "architect" },
   )
-  const task = new TaskReads(f.repository).get({ taskID: f.task.id })
+  const task = await getTaskDetail(f.repository, { taskID: f.task.id })
   expect(task).toMatchObject({ auditHistory: { runCount: 2, latestRunID: after.run.runID } })
   expect(taskInstructions(task)).toContain("lz-query-audits")
   expect(new RunnerStore(f.repository).attempts(f.planID)[0]!.state).toBe("running")

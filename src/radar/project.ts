@@ -10,13 +10,6 @@ export type LoadedLocations = {
   debug?: { location?: { list?: () => Promise<readonly { directory: string }[]> } }
 }
 
-export class RadarLocationNotLoadedError extends Error {
-  constructor(readonly directory: string) {
-    super(`The OpenCode location ${directory} is not loaded; Radar does not boot locations.`)
-    this.name = "RadarLocationNotLoadedError"
-  }
-}
-
 const trimSlash = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path)
 
 /**

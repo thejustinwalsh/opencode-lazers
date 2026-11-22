@@ -6,9 +6,8 @@ import type { ProgressRow } from "../runner/store.ts"
  * What the live history list shows of one progress row, as a pure function of the stored row.
  * The writer stores its result beside the row (`runner_progress_display`), so a reader of that
  * table sees exactly what the read-time projection produced; both call {@link progressDisplay}.
- * The helpers here also serve the Radar live read, which owns the same privacy rules.
  */
-export type JsonObject = Record<string, unknown>
+type JsonObject = Record<string, unknown>
 const TRUNCATION_SUFFIX = "…[truncated]"
 
 /**
@@ -36,13 +35,13 @@ export function contractText(
   return `${body}${TRUNCATION_SUFFIX}`
 }
 
-export function object(value: unknown): JsonObject | null {
+function object(value: unknown): JsonObject | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
     : null
 }
 
-export function safeRoute(value: unknown, stats: ReturnType<typeof privacyStats>) {
+function safeRoute(value: unknown, stats: ReturnType<typeof privacyStats>) {
   const model = object(value)
   const modelID = typeof model?.modelID === "string" ? model.modelID : model?.id
   if (typeof model?.providerID !== "string" || typeof modelID !== "string") return null
@@ -78,15 +77,15 @@ export function safeRoute(value: unknown, stats: ReturnType<typeof privacyStats>
   }
 }
 
-export function numeric(value: unknown) {
+function numeric(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-export function text(value: unknown, maximum: number, stats: ReturnType<typeof privacyStats>) {
+function text(value: unknown, maximum: number, stats: ReturnType<typeof privacyStats>) {
   return typeof value === "string" ? contractText(value, stats, maximum) : null
 }
 
-export function observationList(value: unknown) {
+function observationList(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
     const observation = object(item)
@@ -95,7 +94,7 @@ export function observationList(value: unknown) {
   })
 }
 
-export function fileTargets(value: unknown):
+function fileTargets(value: unknown):
   | {
       coverage: "observed" | "partial" | "omitted"
       operation: "read" | "edit" | "patch" | null
@@ -158,7 +157,7 @@ export type DisplayRow = {
 }
 
 /** The parsed fact of a row, through the same projection the trajectory and reports use. */
-export function factFor(row: DisplayRow) {
+function factFor(row: DisplayRow) {
   const progress: ProgressRow = {
     seq: row.seq,
     project_directory: "",

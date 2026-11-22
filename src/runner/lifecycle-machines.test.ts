@@ -59,6 +59,7 @@ test("runner lifecycle graphs have no accidental sink states", () => {
       planning: ["tasked", "abandoned"],
       planningRun: ["reviewed", "failed", "stuck", "cancelled"],
       identityKeys: ["text-retired"],
+      projection: ["ready"],
       profile: ["superseded"],
     }
     for (const start of Object.keys(machine.config.states ?? {})) {

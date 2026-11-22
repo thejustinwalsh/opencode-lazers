@@ -4,7 +4,7 @@ import { readFrame } from "./frame.ts"
 import { base64ToBytes } from "./gui.ts"
 import { createStreamsService, registerStreams, UnknownStreamError } from "./rpc.ts"
 import { Streams } from "./contract.ts"
-import { itemColumns } from "./test-source.ts"
+import { heldReleases, itemColumns } from "./test-source.ts"
 import { seedItems, testPool, type SeededDatabase } from "./test-harness.ts"
 import type { ReaderPool } from "./pool.ts"
 
@@ -173,4 +173,38 @@ test("a source that authorizes an open can refuse it or narrow its filter, on th
   expect(decode(await bare.open({ stream: "c", ...open })).ids).toEqual(range(1, 50))
   service.dispose()
   bare.dispose()
+})
+
+test("a source's release runs once per admitted stream when it closes, expires or is disposed", async () => {
+  const released = heldReleases
+  const context = {
+    projectID: "p",
+    projectDirectory: "/p",
+    projectIds: (id: string) => [id],
+    assertRead: async () => {},
+  }
+  const service = createStreamsService({ pool, changed: () => {}, context, leaseMs: 40 })
+  const held = { source: "test.items.held", filter: { group: "g1" }, order: "id", window: 5 }
+  await service.open({ stream: "closed", ...held })
+  expect(released).toEqual([])
+  service.close({ stream: "closed" })
+  service.close({ stream: "closed" })
+  expect(released).toEqual([{ group: "g1", holder: "h" }])
+  // A renewed lease keeps the stream held; an unrenewed one releases it.
+  await service.open({ stream: "expired", ...held })
+  await Bun.sleep(25)
+  service.touch({ stream: "expired" })
+  await Bun.sleep(25)
+  expect(released).toHaveLength(1)
+  await until(() => released.length === 2)
+  await service.open({ stream: "disposed", ...held })
+  // Reopening a stream id releases the stream it replaces.
+  await service.open({ stream: "disposed", ...held })
+  expect(released).toHaveLength(3)
+  service.dispose()
+  expect(released).toHaveLength(4)
+  // A source without `authorize` admits nothing to release.
+  await service.open({ stream: "plain", ...open })
+  service.dispose()
+  expect(released).toHaveLength(4)
 })

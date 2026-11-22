@@ -28,6 +28,7 @@ export type SchedulerProjectStatus = {
   status: "scheduled" | "draining" | "registered" | "absent" | "unknown"
   participants: number
 }
+type StatusListener = (status: SchedulerProjectStatus) => void
 
 const systemClock: Clock = {
   now: () => performance.now(),
@@ -43,8 +44,43 @@ export class SchedulerCoordinator {
   private runs = 0
   private errors = 0
   private wakeups = 0
+  /** Status listeners per project key, with the last status each was told. */
+  private watchers = new Map<string, Set<{ listener: StatusListener; last: string }>>()
 
   constructor(private clock: Clock = systemClock) {}
+
+  /**
+   * Tell `listener` the project's status now and whenever it changes (a participant joins or
+   * leaves, a drain starts or ends). The Radar reads the status from the row its listener writes,
+   * not from this process's memory. Returns the unsubscribe.
+   */
+  watch(key: string, listener: StatusListener): () => void {
+    let set = this.watchers.get(key)
+    if (!set) this.watchers.set(key, (set = new Set()))
+    const entry = { listener, last: "" }
+    set.add(entry)
+    this.notify(key)
+    return () => {
+      set.delete(entry)
+      if (!set.size) this.watchers.delete(key)
+    }
+  }
+
+  private notify(key: string) {
+    const set = this.watchers.get(key)
+    if (!set) return
+    const status = this.projectStatus(key)
+    const text = JSON.stringify(status)
+    for (const entry of set) {
+      if (entry.last === text) continue
+      entry.last = text
+      try {
+        entry.listener(status)
+      } catch {
+        // A failing listener never stops the scheduler.
+      }
+    }
+  }
 
   register(key: string, participant: Participant, initialDelayMs = 0) {
     if (!Number.isFinite(participant.intervalMs) || participant.intervalMs <= 0)
@@ -62,6 +98,7 @@ export class SchedulerCoordinator {
     const owner = Symbol(key)
     group.participants.set(owner, participant)
     this.arm()
+    this.notify(key)
     let disposed: Promise<void> | undefined
     return {
       runNow: () => {
@@ -95,6 +132,7 @@ export class SchedulerCoordinator {
           group.dueAt = Math.min(group.dueAt, this.clock.now())
         this.arm()
         disposed = running?.owner === owner ? running.done : Promise.resolve()
+        this.notify(key)
         return disposed
       },
     }
@@ -195,8 +233,10 @@ export class SchedulerCoordinator {
             group.dueAt = Math.min(group.dueAt, this.clock.now() + interval)
           }
           this.arm()
+          this.notify(key)
         })
       group.running = { owner, done, waiters }
+      this.notify(key)
     }
   }
 }

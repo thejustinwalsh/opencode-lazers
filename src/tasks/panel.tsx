@@ -34,8 +34,16 @@ import type { TaskProposal } from "../task.ts"
 import { Tasks } from "./contract.ts"
 import { Streams } from "../streams/contract.ts"
 import { TASK_ROW_HEIGHT } from "./panel-layout.ts"
-import { createStream, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
-import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import { createStream, readWindow, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import {
+  readActivityPayload,
+  readCurrentActivity,
+  readTaskDetail,
+  type PanelActivity,
+  type WindowRead,
+} from "./detail-read.ts"
+import { taskDetailRef, taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import { TaskSpecSchema } from "../task.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import { createSelectedFacts, createTaskList, type TaskList } from "./panel-streams.ts"
 import { taskChanges } from "./events.ts"
@@ -223,7 +231,7 @@ type ScopeReview = { divergences: string[]; accepted: string[]; reason: string |
 
 /** The recorded scope divergence and the Architect's decision, read from the task's activity. */
 function scopeReview(
-  activity: readonly { event: string; payload: string }[] | undefined,
+  activity: readonly { event: string; payload?: string }[] | undefined,
 ): ScopeReview {
   const parse = (payload: string): Record<string, unknown> => {
     try {
@@ -244,8 +252,8 @@ function scopeReview(
       : []
   const reported = activity?.findLast((event) => event.event === "SCOPE_REPORTED")
   const amended = activity?.findLast((event) => event.event === "SCOPE_AMENDED")
-  const report = reported ? parse(reported.payload) : {}
-  const reason = amended ? parse(amended.payload).reason : undefined
+  const report = reported?.payload ? parse(reported.payload) : {}
+  const reason = amended?.payload ? parse(amended.payload).reason : undefined
   return {
     divergences: [...paths(report.divergences), ...paths(report.accepted)],
     accepted: paths(report.accepted),
@@ -322,6 +330,9 @@ function TaskPanel(
   })
   /** The streams of the connected view; absent until a view connects. */
   const [taskList, setList] = createSignal<TaskList>()
+  /** Reads one History row's payload when it opens; absent until a view connects. */
+  const [readPayload, setReadPayload] =
+    createSignal<(taskID: string, planID: string, id: number) => Promise<string | undefined>>()
   const [facts, setFacts] = createSignal<ReturnType<typeof createSelectedFacts>>()
   /** Rows that fit in the list's viewport; the stream window follows it. */
   const [fit, setFit] = createSignal(INITIAL_FIT_ROWS)
@@ -479,6 +490,29 @@ function TaskPanel(
         { location },
       )
       const taskScope = { kind: view.scope, sessionID: value.session }
+      /** One-shot windows for the detail and the activity, cancelled with their read. */
+      const streamsRead =
+        (signal: AbortSignal): WindowRead =>
+        (source, options) =>
+          readWindow(
+            rpcStreamsTransport(
+              () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
+              signal,
+              { location },
+            ),
+            source,
+            options,
+          )
+      setReadPayload(
+        () => (taskID: string, planID: string, id: number) =>
+          readActivityPayload(streamsRead(streams.signal), {
+            project: value.project,
+            scope: taskScope,
+            taskID,
+            planID,
+            id,
+          }),
+      )
       setList(
         createTaskList({
           transport,
@@ -500,18 +534,22 @@ function TaskPanel(
           taskID: () => data().selectedID,
         }),
       )
-      const sessionID = view.scope === "session" ? value.session : undefined
       state.connect(
         key,
         value.project,
         {
           get: (taskID, signal) =>
-            rpc().get({ taskID, ...(sessionID ? { sessionID } : {}) }, { location, signal }),
-          currentActivity: (taskIDs, signal) =>
-            rpc().currentActivity(
-              { sessionID: value.session, scope: view.scope, taskIDs },
-              { location, signal },
+            readTaskDetail(
+              streamsRead(signal),
+              { project: value.project, scope: taskScope, taskID },
+              { payloads: "scope" },
             ),
+          currentActivity: (taskIDs, signal) =>
+            readCurrentActivity(streamsRead(signal), {
+              project: value.project,
+              scope: taskScope,
+              taskIDs,
+            }),
           start: (input, signal) => rpc().start(input, { location, signal }),
           changes: (signal) => taskChanges(value.client.event, value.project, signal),
           online: () => props.session.server.connected,
@@ -991,6 +1029,7 @@ function TaskPanel(
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
         ...(taskRow().concern ? [`concern: ${taskRow().concern!.line}`] : []),
+        ...(taskRow().concern?.recommendation ? [taskRow().concern!.recommendation!] : []),
         ...(taskRow().takeover ? ["takeover"] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
@@ -1068,7 +1107,10 @@ function TaskPanel(
             </Show>
             <Show when={taskRow().concern}>
               {(concern) => (
-                <Label tone="warning" title={`Concern: ${concern().line}`}>
+                <Label
+                  tone="warning"
+                  title={`Concern: ${concern().line}${concern().recommendation ? `\n${concern().recommendation}` : ""}`}
+                >
                   Concern
                 </Label>
               )}
@@ -1741,15 +1783,27 @@ function TaskPanel(
   }
   const historyEvents = () => (selectedDetail()?.activity ?? []).slice(-HISTORY_LIMIT)
   const historyHidden = () => Math.max(0, (selectedDetail()?.activity?.length ?? 0) - HISTORY_LIMIT)
-  const renderHistoryEvent = (event: { event: string; payload: string; createdAt: number }) => {
+  const renderHistoryEvent = (event: PanelActivity) => {
     const [open, setOpen] = createSignal(false)
+    // The payload is cold: the row reads it the first time it opens.
+    const [payload, setPayload] = createSignal(event.payload)
+    const openRow = () => {
+      setOpen(!open())
+      const read = readPayload()
+      const planID = selectedExecution()?.planID
+      if (payload() !== undefined || !read || !planID || !event.taskID) return
+      void read(event.taskID, planID, event.id).then(
+        (text) => setPayload(text ?? ""),
+        () => setPayload(""),
+      )
+    }
     return (
       <div class="lazers-tasks-event">
         <button
           type="button"
           class="lazers-tasks-event-toggle"
           aria-expanded={open()}
-          onClick={() => setOpen(!open())}
+          onClick={openRow}
         >
           <span>{eventLabel(event.event)}</span>
           <time dateTime={new Date(event.createdAt).toISOString()}>
@@ -1765,7 +1819,9 @@ function TaskPanel(
           <p class="lazers-tasks-event-name" style={{ "font-family": ctx.appearance.font("mono") }}>
             {event.event}
           </p>
-          <Ui.Code content={event.payload} language="json" />
+          <Show when={payload() !== undefined} fallback={<p class="lazers-tasks-meta">Loading…</p>}>
+            <Ui.Code content={payload() ?? ""} language="json" />
+          </Show>
         </Show>
       </div>
     )
@@ -2410,12 +2466,29 @@ export function setupTaskPanel(
         )
         return location.project
       },
-      get(session, reference, signal) {
+      async get(session, reference, signal) {
         const server = ctx.servers.get(session.server.id)
         if (!server?.connected || !session.location) throw new Error("Task link session is offline")
-        return server.client
-          .rpc(Tasks)
-          .get({ taskID: reference }, { location: session.location, signal })
+        const location = session.location
+        // `tasks.detail` at window 1; the service sets the project and checks the session.
+        const [row] = await readWindow(
+          rpcStreamsTransport(() => server.client.rpc(Streams) as unknown as StreamsRpc, signal, {
+            location,
+          }),
+          taskDetailRef,
+          {
+            filter: { scope: { kind: "project", sessionID: session.id }, reference },
+            order: "task",
+            window: 1,
+          },
+        )
+        return row
+          ? {
+              status: "found" as const,
+              reference: String(row.reference),
+              task: TaskSpecSchema.parse(row.body),
+            }
+          : { status: "not_found" as const }
       },
       signal: () => linkSignal(ctx),
       open(target) {

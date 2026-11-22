@@ -1,6 +1,8 @@
-import type { SchedulingNode } from "./scheduling-contract.ts"
 import type { TaskConcern, TaskSummary } from "./contract.ts"
 import type { TaskScheduleRow } from "../streams/sources/tasks-ref.ts"
+
+/** A queued task's scheduling decision, as the task schedule projection stores it. */
+type SchedulingDecision = "eligible" | "waiting" | "unknown" | "not-applicable"
 
 export type ExecutionListRow = {
   taskID: string
@@ -14,7 +16,11 @@ export type ExecutionListRow = {
   /** Epoch ms the running task's current attempt began; absent unless the read supplied it. */
   startedAt?: number
   /** Present when the task's recorded effort trips a concern rule; totals come with the detail. */
-  concern?: Omit<TaskConcern, "totals"> & { totals?: TaskConcern["totals"] }
+  concern?: Omit<TaskConcern, "totals"> & {
+    totals?: TaskConcern["totals"]
+    /** The rule's recommended action and why (`concernRecommendation`), when it recorded one. */
+    recommendation?: string
+  }
   /** The latest attempt is the Architect finishing the task itself. */
   takeover?: true
   sourcePlan?: TaskSummary["sourcePlan"]
@@ -35,7 +41,7 @@ export type ExecutionListRow = {
     waiting: boolean
   }>
   scheduling?: {
-    decision: SchedulingNode["decision"]
+    decision: SchedulingDecision
     reason: string | null
     waitingOn: string[]
     waitingOnPlans?: string[]
@@ -84,8 +90,10 @@ export function listRowOf(
   const nodeReason = (f("node_reason") as string | null) ?? null
   const planReason = (f("plan_reason") as string | null) ?? null
   const reason = (f("reason") as string | null) ?? null
-  const concern = f("concern") as { line: string; reasons: string[] } | null
-  const decision = String(f("decision") ?? "not-applicable") as SchedulingNode["decision"]
+  const stored = f("concern") as { line: string; reasons: string[] } | null
+  const recommendation = concernRecommendation(f("concern_action"), f("concern_because"))
+  const concern = stored ? { ...stored, ...(recommendation ? { recommendation } : {}) } : null
+  const decision = String(f("decision") ?? "not-applicable") as SchedulingDecision
   const waitPlans = list<string>(f("wait_plan_ids"))
   const startedAt = f("started_at")
   const sourcePlan = f("source_plan") as ExecutionListRow["sourcePlan"] | null
@@ -152,3 +160,12 @@ export const priorityOfRow = (row: Pick<TaskScheduleRow, "priority_key">) =>
     ? row.priority_key
     : undefined
 export type { TaskSummary }
+
+/**
+ * The open concern's recommended action as the worker pane and the Tasks row word it, from the
+ * stored `task_schedule.concern_action` and `concern_because`; undefined when none was recorded.
+ */
+export function concernRecommendation(action: unknown, because: unknown): string | undefined {
+  if (typeof action !== "string" || !action) return undefined
+  return `Recommended: ${action}${typeof because === "string" && because ? `. ${because}` : ""}`
+}

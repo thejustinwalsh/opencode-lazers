@@ -2,6 +2,8 @@ import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { PriceInputs } from "./price-state.ts"
+import type { DecisionViewCall, DecisionViewResult } from "./decision-view-build.ts"
+import type { CandidateFinish, CandidateRow } from "./candidate-store.ts"
 import type {
   DecisionWorkerMethod,
   WorkerRequest,
@@ -20,6 +22,22 @@ export type ThreadedDecisionWorkerOptions = {
 export type ThreadedDecisionWorker = {
   /** A reader for one project of this database; all readers share the worker thread. */
   reader(projectDirectory: string): ModelDecisionReader
+  /** A stored view's rows for one project (`decision-view.ts`), computed on the worker. */
+  view(
+    projectDirectory: string,
+    call: DecisionViewCall,
+    signal?: AbortSignal,
+  ): Promise<DecisionViewResult>
+  /**
+   * A project's candidate build (`candidate-store.ts`), parsed and built on the worker. The changed
+   * rows arrive in pages, each handed to `onPage` as its message is received (a throw fails the
+   * build); the result is the rest of the build, or null when the stored set is the latest.
+   */
+  candidates(
+    projectDirectory: string,
+    onPage: (rows: CandidateRow[]) => void,
+    signal?: AbortSignal,
+  ): Promise<CandidateFinish | null>
   close(): void
 }
 
@@ -27,6 +45,7 @@ type Pending = {
   resolve(value: never): void
   reject(error: Error): void
   controller: AbortController
+  onPage?: (rows: never) => void
 }
 
 /**
@@ -81,6 +100,18 @@ export function createThreadedDecisionWorker(
       }
       const entry = pending.get(message.id)
       if (!entry) return
+      if (message.type === "page") {
+        try {
+          entry.onPage?.(message.rows as never)
+        } catch (error) {
+          pending.delete(message.id)
+          const failure = error instanceof Error ? error : new Error(String(error))
+          entry.controller.abort(failure)
+          reply({ type: "abort", id: message.id, reason: failure.message })
+          entry.reject(failure)
+        }
+        return
+      }
       pending.delete(message.id)
       if (message.type === "result") entry.resolve(message.value as never)
       else entry.reject(new Error(message.message))
@@ -99,6 +130,7 @@ export function createThreadedDecisionWorker(
     method: DecisionWorkerMethod,
     input: unknown,
     signal?: AbortSignal,
+    onPage?: (rows: never) => void,
   ) => {
     signal?.throwIfAborted()
     const target = acquire()
@@ -119,7 +151,12 @@ export function createThreadedDecisionWorker(
             : new Error("Model decision read aborted"),
         )
       }
-      pending.set(id, { resolve: resolve as never, reject, controller })
+      pending.set(id, {
+        resolve: resolve as never,
+        reject,
+        controller,
+        ...(onPage ? { onPage } : {}),
+      })
       signal?.addEventListener("abort", onAbort, { once: true })
       target.postMessage({
         type: "call",
@@ -135,10 +172,10 @@ export function createThreadedDecisionWorker(
     reader: (projectDirectory) => ({
       overview: (input, opts) => call(projectDirectory, "overview", input, opts?.signal),
       rows: (input, opts) => call(projectDirectory, "rows", input, opts?.signal),
-      configurations: (input, opts) =>
-        call(projectDirectory, "configurations", input, opts?.signal),
-      inspect: (input, opts) => call(projectDirectory, "inspect", input, opts?.signal),
     }),
+    view: (projectDirectory, input, signal) => call(projectDirectory, "view", input, signal),
+    candidates: (projectDirectory, onPage, signal) =>
+      call(projectDirectory, "candidates", null, signal, onPage as (rows: never) => void),
     close() {
       if (closed) return
       closed = true

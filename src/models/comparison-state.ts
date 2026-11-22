@@ -1,11 +1,9 @@
 import { sameProject } from "../project-key.ts"
 import { panelErrorMessage as errorMessage } from "../panel-error.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
-import type { TrajectoryResponse } from "../observability/contract.ts"
-import { readTaskEffortBasis, type ModelCandidate } from "./comparison-presentation.ts"
+import { readTaskEffortBasis } from "./comparison-presentation.ts"
 import type { ModelEvidenceOutput } from "./source-schema.ts"
-import type { ModelComparisonOutput } from "./comparison-schema.ts"
-import { ModelCatalogOutputSchema, ModelMappingWriteOutputSchema } from "./contract.ts"
+import { ModelMappingWriteOutputSchema } from "./contract.ts"
 import type { ModelSettingsOutput } from "./contract.ts"
 import type {
   ModelMappingRecord,
@@ -14,14 +12,7 @@ import type {
 } from "./mapping-schema.ts"
 import type { ModelPolicy } from "../runner/schema.ts"
 import type { ModelMappingSubject as WorkerPersona } from "./agent-ids.ts"
-import type {
-  ModelDecisionConfigurations,
-  ModelDecisionContext,
-  ModelDecisionFilters,
-  ModelDecisionInspect,
-  ModelDecisionOverview,
-  ModelDecisionRows,
-} from "./decision-contract.ts"
+import type { ModelDecisionContext, ModelDecisionFilters } from "./decision-contract.ts"
 
 export type ModelDecisionStatus =
   | "loading"
@@ -34,7 +25,6 @@ export type ModelDecisionStatus =
   | "error"
 
 type ModelMappingWriteOutput = (typeof ModelMappingWriteOutputSchema)["_output"]
-export type ModelCatalogOutput = (typeof ModelCatalogOutputSchema)["_output"]
 
 export type ModelAssignmentWrite = {
   status: "saving" | "verifying" | "uncertain" | "conflict" | "confirmed" | "failed"
@@ -46,40 +36,27 @@ export type ModelAssignmentWrite = {
   message: string
 }
 
+/** One task's effort read: the part of the trajectory a comparison uses (`trajectory.effort`). */
+export type TrajectoryResponse = {
+  projectID: string
+  scope: { kind: string }
+  report: Record<string, unknown>
+}
+
+/**
+ * What the state asks of the service beyond its streams: the source refresh (a write), the
+ * assignments' authoritative readback (one `models.assignments` window), mapping writes and the
+ * selected task's detail. The decision data, catalog and candidates are streams in the
+ * controller.
+ */
 export type ModelComparisonTransport = {
-  comparison(cursor: string | undefined, signal: AbortSignal): Promise<ModelComparisonOutput>
   /** `force` is the refresh button: fetch every source now. Otherwise only stale ones, in the background. */
   refreshSources(signal: AbortSignal, force?: boolean): Promise<ModelEvidenceOutput>
   settings(taskID: string | undefined, signal: AbortSignal): Promise<ModelSettingsOutput>
-  catalog(signal: AbortSignal): Promise<ModelCatalogOutput>
   configure(update: ModelMappingUpdate, signal: AbortSignal): Promise<ModelMappingWriteOutput>
   queryTasks(signal: AbortSignal): Promise<Pick<TaskPage, "projectDirectory" | "tasks">>
   getTask(taskID: string, signal: AbortSignal): Promise<TaskDetail>
   trajectoryStatus(taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
-  decisionOverview?(
-    filters: ModelDecisionFilters,
-    signal: AbortSignal,
-  ): Promise<ModelDecisionOverview>
-  decisionRows?(
-    filters: ModelDecisionFilters,
-    cursor: string | undefined,
-    snapshotID: string,
-    signal: AbortSignal,
-  ): Promise<ModelDecisionRows>
-  decisionConfigurations?(
-    filters: ModelDecisionFilters,
-    cursor: string | undefined,
-    snapshotID: string,
-    signal: AbortSignal,
-  ): Promise<ModelDecisionConfigurations>
-  decisionInspect?(
-    filters: ModelDecisionFilters,
-    snapshotID: string,
-    configurationID: string,
-    selectedTaskID: string | null,
-    contributorCursor: string | undefined,
-    signal: AbortSignal,
-  ): Promise<ModelDecisionInspect>
   online(): boolean
 }
 
@@ -117,38 +94,16 @@ export type ModelComparisonPanelData = {
   key: string
   projectID: string
   projectDirectory: string
-  comparison?: ModelComparisonOutput
-  candidates: ModelCandidate[]
+  /** The selected entry of Projected or Benchmark: a candidate or a public-catalog model id. */
   selectedCandidateID: string | null
   tasks: TaskPage["tasks"]
   selectedTaskID: string | null
   decisionFilters: ModelDecisionFilters
-  decisionStatus: ModelDecisionStatus
-  decisionError: string
-  decisionContext?: ModelDecisionContext
-  decisionOverview?: ModelDecisionOverview
-  decisionRows: ModelDecisionRows["rows"]
-  decisionRowsNextCursor: string | null
-  decisionRowsLoading: boolean
-  decisionConfigurations: ModelDecisionConfigurations["configurations"]
-  decisionConfigurationsNextCursor: string | null
-  decisionConfigurationsLoading: boolean
   selectedConfigurationID: string | null
-  decisionInspection?: Extract<ModelDecisionInspect, { status: "found" }>
-  decisionInspectLoading: boolean
-  decisionInspectError: string
-  decisionNotFound: boolean
-  decisionContributorsLoading: boolean
   task?: ModelTask
   effortBasis?: ReturnType<typeof readTaskEffortBasis>
   settings?: ModelSettingsOutput
-  catalog?: ModelCatalogOutput
-  catalogStatus: "loading" | "ready" | "unavailable"
-  catalogError: string
   assignmentWrite?: ModelAssignmentWrite
-  comparisonLoading: boolean
-  comparisonError: string
-  comparisonStale: boolean
   taskLoading: boolean
   taskError: string
   effortLoading: boolean
@@ -174,39 +129,11 @@ export const emptyModelDecisionFilters: ModelDecisionFilters = {
   period: { from: null, to: null },
 }
 
-function decisionContextMatches(
-  actual: ModelDecisionContext,
-  filters: ModelDecisionFilters,
-  projectDirectory: string,
-  snapshotID?: string,
-) {
-  return (
-    actual.scope.projectDirectory === projectDirectory &&
-    JSON.stringify(actual.filters) === JSON.stringify(filters) &&
-    (snapshotID === undefined || actual.snapshotID === snapshotID)
-  )
-}
-
-function decisionScopeAndFiltersMatch(
-  actual: ModelDecisionContext,
-  filters: ModelDecisionFilters,
-  projectDirectory: string,
-) {
-  return (
-    actual.scope.projectDirectory === projectDirectory &&
-    JSON.stringify(actual.filters) === JSON.stringify(filters)
-  )
-}
-
-function isExpiredDecisionSnapshot(error: unknown) {
-  const message = errorMessage(error)
-  return (
-    message.includes("Model decision snapshot is unavailable or expired") ||
-    message.includes("Model decision cursor is stale or its snapshot expired")
-  )
-}
-
-function decisionStatus(context: ModelDecisionContext, online: boolean): ModelDecisionStatus {
+/** The decision status the panel shows for a stored view's context. */
+export function decisionStatus(
+  context: ModelDecisionContext,
+  online: boolean,
+): ModelDecisionStatus {
   if (context.availability === "backend-not-ready") return "backend-not-ready"
   if (!online || context.freshness === "stale") return "stale"
   if (context.freshness === "unknown") return "unknown"
@@ -244,88 +171,6 @@ function mappingTargetMatches(
   }
 }
 
-function isRecoverableAssignmentStatus(status: ModelAssignmentWrite["status"]) {
-  return status === "saving" || status === "verifying" || status === "uncertain"
-}
-
-function missingDecisionRPC(error: unknown) {
-  return /unknown (?:rpc|method)|rpc (?:not found|not registered|unavailable)|method not found|no (?:rpc|method) handler|not implemented/i.test(
-    errorMessage(error),
-  )
-}
-
-/** Only a snapshot with something to show is worth restoring. */
-export function isSeedable(data: ModelComparisonPanelData) {
-  return (
-    Boolean(data.decisionOverview || data.comparison) &&
-    (data.decisionStatus === "ready" || data.decisionStatus === "partial")
-  )
-}
-
-export function isConnectionSeedable(data: ModelComparisonPanelData) {
-  return (
-    isSeedable(data) ||
-    Boolean(data.assignmentWrite && isRecoverableAssignmentStatus(data.assignmentWrite.status))
-  )
-}
-
-/** A cached snapshot as the starting point of a new connection: content kept, loading flags reset. */
-function seededData(
-  seed: ModelComparisonPanelData,
-  key: string,
-  projectID: string,
-  projectDirectory: string,
-  preferences: ModelComparisonPreferences,
-  decisionFilters: ModelDecisionFilters,
-): ModelComparisonPanelData {
-  const assignmentWrite = seed.assignmentWrite
-  const sameAssignmentScope =
-    seed.projectID === projectID &&
-    seed.projectDirectory === projectDirectory &&
-    seed.selectedTaskID === preferences.selectedTaskID &&
-    (assignmentWrite?.target?.scope !== "task" ||
-      assignmentWrite.target.taskID === preferences.selectedTaskID)
-  const keepAssignmentWrite =
-    sameAssignmentScope &&
-    (!assignmentWrite ||
-      !isRecoverableAssignmentStatus(assignmentWrite.status) ||
-      Boolean(assignmentWrite.target))
-  return {
-    ...seed,
-    key,
-    projectID,
-    projectDirectory,
-    decisionFilters,
-    selectedTaskID: preferences.selectedTaskID,
-    selectedCandidateID: preferences.selectedCandidateID,
-    selectedConfigurationID: preferences.selectedConfigurationID ?? null,
-    assignmentWrite: keepAssignmentWrite ? assignmentWrite : undefined,
-    decisionError: "",
-    decisionRowsLoading: false,
-    decisionConfigurationsLoading: false,
-    decisionInspectLoading: false,
-    decisionInspectError: "",
-    decisionNotFound: false,
-    decisionContributorsLoading: false,
-    comparisonLoading: true,
-    comparisonError: "",
-    comparisonStale: false,
-    taskLoading: false,
-    taskError: "",
-    effortLoading: false,
-    effortError: "",
-    settingsLoading: true,
-    settingsError: "",
-    tasksLoading: true,
-    tasksError: "",
-    catalogStatus: seed.catalogStatus === "ready" ? "ready" : "loading",
-    catalogError: "",
-    sourceRefresh: "idle",
-    sourceRefreshError: "",
-    stale: false,
-  }
-}
-
 function blank(
   key = "",
   projectID = "",
@@ -340,35 +185,17 @@ function blank(
     key,
     projectID,
     projectDirectory,
-    candidates: [],
     selectedCandidateID: preferences.selectedCandidateID,
     tasks: [],
     selectedTaskID: preferences.selectedTaskID,
     decisionFilters,
-    decisionStatus: "loading",
-    decisionError: "",
-    decisionRows: [],
-    decisionRowsNextCursor: null,
-    decisionRowsLoading: false,
-    decisionConfigurations: [],
-    decisionConfigurationsNextCursor: null,
-    decisionConfigurationsLoading: false,
     selectedConfigurationID: preferences.selectedConfigurationID ?? null,
-    decisionInspectLoading: false,
-    decisionInspectError: "",
-    decisionNotFound: false,
-    decisionContributorsLoading: false,
-    comparisonLoading: true,
-    comparisonError: "",
-    comparisonStale: false,
     taskLoading: true,
     taskError: "",
     effortLoading: false,
     effortError: "",
     settingsLoading: true,
     settingsError: "",
-    catalogStatus: "loading",
-    catalogError: "",
     tasksLoading: true,
     tasksError: "",
     sourceRefresh: "idle",
@@ -377,35 +204,19 @@ function blank(
   }
 }
 
-/** Coordinates bounded comparison reads and the selected task's actual observation. */
-/** Longest a decision read waits for a forced source refresh before using saved prices. */
-const SOURCE_WAIT_MS = 10_000
-const BACKGROUND_POLL_MS = 3_000
-const BACKGROUND_POLLS = 20
-
-function settleWithin(promise: Promise<unknown>, ms: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  return Promise.race([
-    promise,
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, ms)
-    }),
-  ]).finally(() => clearTimeout(timer))
-}
-
+/**
+ * The Models panel's selections, task detail, source refresh and assignment writes. What the panel
+ * shows of the comparison (views, catalog, chart, contributors, assignments) is read by streams in
+ * the controller; the assignments stream hands its settings here (`applySettings`).
+ */
 export class ModelComparisonPanelState {
   data = blank()
   private controller = new AbortController()
   private taskController = new AbortController()
-  private decisionController = new AbortController()
-  private inspectionController = new AbortController()
   private generation = 0
-  private comparisonRequest = 0
-  private comparisonRevision = 0
   private taskRequest = 0
   private selectedTaskLoad?: PendingSelectedTaskLoad
   private settingsRequest = 0
-  private catalogRequest = 0
   private selectionRevision = 0
   private assignmentRequest = 0
   private assignmentController = new AbortController()
@@ -414,19 +225,8 @@ export class ModelComparisonPanelState {
   private projectID = ""
   private projectDirectory = ""
   private sourceRefreshPromise?: Promise<void>
-  /** Whether the refresh in flight was asked for (the header button), not the open-time one. */
-  private sourceRefreshForced = false
-  private comparisonPromise?: Promise<void>
   private taskListPromise?: Promise<void>
-  private seededTask = false
   private refreshPromise?: Promise<void>
-  private comparisonNeedsRefresh = false
-  private decisionRequest = 0
-  private decisionInspectionRequest = 0
-  private decisionContributorsRequest = 0
-  private decisionPromise?: Promise<void>
-  private decisionNeedsRefresh = false
-  private decisionContributorsPromise?: Promise<void>
 
   constructor(
     private readonly changed: (data: ModelComparisonPanelData) => void,
@@ -445,139 +245,17 @@ export class ModelComparisonPanelState {
     transport: ModelComparisonTransport,
     preferences: ModelComparisonPreferences,
     decisionFilters: ModelDecisionFilters = emptyModelDecisionFilters,
-    /** The last snapshot for this project and filters: shown at once, refreshed in place. */
-    seed?: ModelComparisonPanelData,
   ) {
     this.close()
     this.controller = new AbortController()
     this.taskController = new AbortController()
-    this.decisionController = new AbortController()
-    this.inspectionController = new AbortController()
     this.transport = transport
     this.projectID = projectID
     this.projectDirectory = projectDirectory
-    this.seededTask = Boolean(seed && isConnectionSeedable(seed) && seed.task)
-    this.data =
-      seed && isConnectionSeedable(seed)
-        ? seededData(seed, key, projectID, projectDirectory, preferences, decisionFilters)
-        : blank(key, projectID, projectDirectory, preferences, decisionFilters)
-    const recoveringAssignment = this.restorePendingAssignmentWrite()
+    this.data = blank(key, projectID, projectDirectory, preferences, decisionFilters)
     const generation = this.generation
-    const selectionRevision = this.selectionRevision
-
-    // Invoke the cached bounded projection before starting the independent refresh.
-    void this.refreshComparison(generation)
     void this.loadTasks(generation, preferences.selectedTaskID ?? undefined)
-    if (recoveringAssignment) void this.recheckAssignmentWrite()
-    else
-      void this.loadSettings(generation, preferences.selectedTaskID ?? undefined, selectionRevision)
-    void this.loadCatalog(generation)
     void this.refreshSources(generation)
-    void this.refreshDecisionSnapshot(generation)
-  }
-
-  async refreshComparison(generation = this.generation, cursor?: string) {
-    if (this.comparisonPromise) {
-      if (!cursor) this.comparisonNeedsRefresh = true
-      return this.comparisonPromise
-    }
-    const transport = this.transport
-    if (!transport || this.controller.signal.aborted) return
-    const request = ++this.comparisonRequest
-    const signal = this.controller.signal
-    this.update({ comparisonLoading: true })
-    const operation = (async () => {
-      try {
-        const output = await transport.comparison(cursor, signal)
-        if (generation !== this.generation || request !== this.comparisonRequest || signal.aborted)
-          return
-        if (output.candidates.length > 100) throw new Error("Comparison exceeded its bounded page")
-        const candidates = cursor
-          ? [...this.data.candidates, ...output.candidates]
-          : output.candidates
-        const previousCandidateID = this.data.selectedCandidateID
-        const selectedCandidateID = candidates.some(
-          (candidate) => candidate.candidateID === this.data.selectedCandidateID,
-        )
-          ? this.data.selectedCandidateID
-          : (this.data.selectedCandidateID ?? candidates[0]?.candidateID ?? null)
-        this.comparisonRevision++
-        this.update({
-          // The coverage and public catalog come with the first page only; later pages keep them.
-          comparison: cursor
-            ? {
-                ...output,
-                publicCoverage: output.publicCoverage ?? this.data.comparison?.publicCoverage,
-                publicCatalog: output.publicCatalog ?? this.data.comparison?.publicCatalog,
-              }
-            : output,
-          candidates,
-          selectedCandidateID,
-          comparisonLoading: false,
-          comparisonError: "",
-          comparisonStale: false,
-          stale: !transport.online(),
-        })
-        if (selectedCandidateID !== previousCandidateID)
-          this.selectionChanged({
-            selectedTaskID: this.data.selectedTaskID,
-            selectedCandidateID,
-            selectedConfigurationID: this.data.selectedConfigurationID,
-          })
-      } catch (error) {
-        if (generation === this.generation && request === this.comparisonRequest && !signal.aborted)
-          this.update({
-            comparisonLoading: false,
-            comparisonError: errorMessage(error),
-            comparisonStale: Boolean(this.data.comparison),
-            stale: true,
-          })
-      }
-    })()
-    this.comparisonPromise = operation
-    await operation
-    if (generation === this.generation && this.comparisonPromise === operation) {
-      this.comparisonPromise = undefined
-      if (this.comparisonNeedsRefresh && !this.controller.signal.aborted) {
-        this.comparisonNeedsRefresh = false
-        await this.refreshComparison(generation)
-      }
-    }
-  }
-
-  async moreCandidates() {
-    const cursor = this.data.comparison?.nextCursor
-    if (!cursor || this.data.comparisonLoading) return
-    const generation = this.generation
-    const signal = this.controller.signal
-    const comparisonRevision = this.comparisonRevision
-    const before = this.data.candidates.length
-    const output = this.data.comparison
-    await this.refreshComparison(generation, cursor)
-    // The awaited page may belong to a connection that was replaced or hidden.
-    // In particular, never let this rollback publish the old connection's cache.
-    if (
-      generation !== this.generation ||
-      signal.aborted ||
-      this.comparisonRevision !== comparisonRevision + 1
-    )
-      return
-    const current = this.data.comparison
-    if (
-      output &&
-      current &&
-      output.sources.some(
-        (source, index) => source.selectedSnapshotID !== current.sources[index]?.selectedSnapshotID,
-      )
-    ) {
-      this.update({
-        comparisonError:
-          "Source snapshots changed while loading more candidates. Refresh the view.",
-        comparisonStale: true,
-        comparison: output,
-        candidates: this.data.candidates.slice(0, before),
-      })
-    }
   }
 
   async refresh() {
@@ -590,7 +268,6 @@ export class ModelComparisonPanelState {
     const operation = Promise.all([
       this.loadTasks(generation, selectedTaskID ?? undefined),
       this.refreshSources(generation, true),
-      this.refreshDecisionSnapshot(generation),
       selectedTaskID
         ? this.loadSelectedTask(generation, selectedTaskID, selectionRevision)
         : Promise.resolve(),
@@ -602,23 +279,23 @@ export class ModelComparisonPanelState {
       this.refreshPromise = undefined
   }
 
+  /**
+   * Ask the service to refresh the price and benchmark sources. The stored view follows the new
+   * snapshots by itself; this only reports the request's own outcome.
+   */
   async refreshSources(generation = this.generation, force = false): Promise<void> {
     if (this.sourceRefreshPromise) return this.sourceRefreshPromise
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
     const signal = this.controller.signal
     this.update({ sourceRefresh: "refreshing", sourceRefreshError: "" })
-    this.sourceRefreshForced = force
     const operation = (async () => {
       try {
         // The server answers from its stored snapshots at once and refreshes only what is past
         // its TTL in the background; a forced refresh waits for the fetch.
-        const output = await transport.refreshSources(signal, force)
+        await transport.refreshSources(signal, force)
         if (generation !== this.generation || signal.aborted) return
         this.update({ sourceRefresh: "succeeded", sourceRefreshError: "" })
-        await this.refreshComparison(generation)
-        if (output.sources.some((source) => source.state === "refreshing"))
-          void this.followBackgroundRefresh(generation)
       } catch (error) {
         if (generation === this.generation && !signal.aborted)
           this.update({
@@ -627,415 +304,30 @@ export class ModelComparisonPanelState {
             stale: true,
           })
       } finally {
-        if (generation === this.generation) {
-          this.sourceRefreshPromise = undefined
-          this.sourceRefreshForced = false
-        }
+        if (generation === this.generation) this.sourceRefreshPromise = undefined
       }
     })()
     this.sourceRefreshPromise = operation
     return operation
   }
 
-  /** Re-read the comparison once a background source refresh finishes; the panel never waits on it. */
-  private async followBackgroundRefresh(generation: number) {
-    const transport = this.transport
-    const signal = this.controller.signal
-    for (let attempt = 0; attempt < BACKGROUND_POLLS; attempt++) {
-      await new Promise<void>((resolve) => setTimeout(resolve, BACKGROUND_POLL_MS))
-      if (!transport || generation !== this.generation || signal.aborted) return
-      try {
-        const output = await transport.refreshSources(signal)
-        if (generation !== this.generation || signal.aborted) return
-        if (output.sources.every((source) => source.state !== "refreshing")) {
-          await this.refreshComparison(generation)
-          return
-        }
-      } catch {
-        return
-      }
-    }
-  }
-
-  setDecisionFilters(filters: ModelDecisionFilters, seed?: ModelComparisonPanelData) {
+  setDecisionFilters(filters: ModelDecisionFilters) {
     if (JSON.stringify(filters) === JSON.stringify(this.data.decisionFilters)) return
-    this.decisionController.abort()
-    this.inspectionController.abort()
-    this.decisionController = new AbortController()
-    this.inspectionController = new AbortController()
-    this.decisionRequest++
-    this.decisionInspectionRequest++
-    this.decisionContributorsRequest++
-    this.decisionPromise = undefined
-    this.decisionContributorsPromise = undefined
-    this.decisionNeedsRefresh = false
-    if (
-      seed &&
-      isSeedable(seed) &&
-      JSON.stringify(seed.decisionFilters) === JSON.stringify(filters)
-    ) {
-      // The last result for these filters shows at once; the refresh below replaces it in place.
-      this.update({
-        decisionFilters: filters,
-        decisionStatus: seed.decisionStatus,
-        decisionError: "",
-        decisionContext: seed.decisionContext,
-        decisionOverview: seed.decisionOverview,
-        decisionRows: seed.decisionRows,
-        decisionRowsNextCursor: seed.decisionRowsNextCursor,
-        decisionRowsLoading: false,
-        decisionConfigurations: seed.decisionConfigurations,
-        decisionConfigurationsNextCursor: seed.decisionConfigurationsNextCursor,
-        decisionConfigurationsLoading: false,
-        decisionInspection: seed.decisionInspection,
-        decisionInspectLoading: false,
-        decisionInspectError: "",
-        decisionNotFound: false,
-        decisionContributorsLoading: false,
-      })
-      void this.refreshDecisionSnapshot()
-      return
-    }
-    this.update({
-      decisionFilters: filters,
-      decisionStatus: "loading",
-      decisionError: "",
-      decisionContext: undefined,
-      decisionOverview: undefined,
-      decisionRows: [],
-      decisionRowsNextCursor: null,
-      decisionRowsLoading: false,
-      decisionConfigurations: [],
-      decisionConfigurationsNextCursor: null,
-      decisionConfigurationsLoading: false,
-      decisionInspection: undefined,
-      decisionInspectLoading: false,
-      decisionInspectError: "",
-      decisionNotFound: false,
-      decisionContributorsLoading: false,
-    })
-    void this.refreshDecisionSnapshot()
-  }
-
-  async refreshDecisionSnapshot(generation = this.generation) {
-    if (this.decisionPromise) {
-      this.decisionNeedsRefresh = true
-      return this.decisionPromise
-    }
-    const transport = this.transport
-    if (!transport || this.controller.signal.aborted) return
-    const {
-      decisionOverview: readOverview,
-      decisionRows: readRows,
-      decisionConfigurations: readConfigurations,
-    } = transport
-    if (!readOverview || !readRows || !readConfigurations) {
-      this.update({
-        decisionStatus: "missing-rpc",
-        decisionError: "The Models decision RPC is not registered in this server session.",
-        decisionRowsLoading: false,
-        decisionConfigurationsLoading: false,
-      })
-      return
-    }
-
-    const request = ++this.decisionRequest
-    const filters = this.data.decisionFilters
-    const signal = AbortSignal.any([this.controller.signal, this.decisionController.signal])
-    this.update({
-      decisionStatus: this.data.decisionOverview ? this.data.decisionStatus : "loading",
-      decisionError: "",
-      decisionRowsLoading: true,
-      decisionConfigurationsLoading: true,
-    })
-    const current = () =>
-      generation === this.generation &&
-      request === this.decisionRequest &&
-      !signal.aborted &&
-      JSON.stringify(filters) === JSON.stringify(this.data.decisionFilters)
-    const operation = (async () => {
-      try {
-        // The open-time source refresh answers from stored snapshots and fetches in the
-        // background, so the snapshot never waits for it: it is a round trip that used to sit
-        // in front of the slowest read. Only a refresh the person asked for is waited on, and
-        // even then a slow one must not hold the comparison back: continue with saved prices.
-        if (this.data.sourceRefresh === "idle" && !this.sourceRefreshPromise)
-          void this.refreshSources(generation)
-        if (this.sourceRefreshForced && this.sourceRefreshPromise)
-          await settleWithin(this.sourceRefreshPromise, SOURCE_WAIT_MS)
-        if (!current()) return
-
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const overview = await readOverview(filters, signal)
-          if (!current()) return
-          const context = overview.context
-          if (!decisionContextMatches(context, filters, this.projectDirectory))
-            throw new Error("Models decision overview belongs to another project or filter.")
-
-          const [rowResult, configurationResult] = await Promise.allSettled([
-            readRows(filters, undefined, context.snapshotID, signal),
-            readConfigurations(filters, undefined, context.snapshotID, signal),
-          ])
-          if (!current()) return
-
-          const fulfilledRows = rowResult.status === "fulfilled" ? rowResult.value : undefined
-          const fulfilledConfigurations =
-            configurationResult.status === "fulfilled" ? configurationResult.value : undefined
-          if (
-            (fulfilledRows &&
-              !decisionScopeAndFiltersMatch(
-                fulfilledRows.context,
-                filters,
-                this.projectDirectory,
-              )) ||
-            (fulfilledConfigurations &&
-              !decisionScopeAndFiltersMatch(
-                fulfilledConfigurations.context,
-                filters,
-                this.projectDirectory,
-              ))
-          )
-            throw new Error("Models decision reads disagree on project or filters.")
-
-          const failures = [rowResult, configurationResult].filter(
-            (result): result is PromiseRejectedResult => result.status === "rejected",
-          )
-          if (failures.length) {
-            const unrecoverable = failures.find(
-              (failure) => !isExpiredDecisionSnapshot(failure.reason),
-            )
-            if (unrecoverable) throw unrecoverable.reason
-            if (attempt === 0) continue
-            throw failures[0]!.reason
-          }
-
-          if (
-            fulfilledRows!.context.snapshotID !== context.snapshotID ||
-            fulfilledConfigurations!.context.snapshotID !== context.snapshotID
-          ) {
-            if (attempt === 0) continue
-            throw new Error("Models decision reads disagree on project, filters, or snapshot.")
-          }
-
-          const rowPage = fulfilledRows!
-          const configurationPage = fulfilledConfigurations!
-          const previousSelectedConfigurationID = this.data.selectedConfigurationID
-          const decisionRows = rowPage.rows
-          const decisionConfigurations = configurationPage.configurations
-          const selectedConfigurationID =
-            this.data.selectedConfigurationID ??
-            decisionConfigurations[0]?.configurationID ??
-            decisionRows[0]?.configuration.configurationID ??
-            overview.graph.points[0]?.configurationID ??
-            null
-          const nextStatus = decisionStatus(context, transport.online())
-          this.update({
-            decisionContext: context,
-            decisionOverview: overview,
-            decisionRows,
-            decisionRowsNextCursor: rowPage.nextCursor,
-            decisionRowsLoading: false,
-            decisionConfigurations,
-            decisionConfigurationsNextCursor: configurationPage.nextCursor,
-            decisionConfigurationsLoading: false,
-            selectedConfigurationID,
-            decisionStatus: nextStatus,
-            decisionError:
-              nextStatus === "backend-not-ready" ? (context.unavailableReason ?? "") : "",
-            decisionInspection: undefined,
-            decisionInspectLoading: false,
-            decisionInspectError: "",
-            decisionNotFound: false,
-          })
-          if (selectedConfigurationID !== previousSelectedConfigurationID)
-            this.selectionChanged({
-              selectedTaskID: this.data.selectedTaskID,
-              selectedCandidateID: this.data.selectedCandidateID,
-              selectedConfigurationID,
-            })
-          if (selectedConfigurationID) void this.loadDecisionInspection()
-          return
-        }
-        throw new Error("Models decision snapshot could not be captured coherently.")
-      } catch (error) {
-        if (!current()) return
-        const cached = Boolean(this.data.decisionOverview)
-        const missingRPC = missingDecisionRPC(error)
-        this.update({
-          decisionStatus: cached ? "stale" : missingRPC ? "missing-rpc" : "error",
-          decisionError: errorMessage(error),
-          decisionRowsLoading: false,
-          decisionConfigurationsLoading: false,
-        })
-      }
-    })()
-    this.decisionPromise = operation
-    await operation
-    if (generation === this.generation && this.decisionPromise === operation) {
-      this.decisionPromise = undefined
-      if (this.decisionNeedsRefresh && !this.controller.signal.aborted) {
-        this.decisionNeedsRefresh = false
-        await this.refreshDecisionSnapshot(generation)
-      }
-    }
+    this.update({ decisionFilters: filters })
   }
 
   selectConfiguration(configurationID: string) {
     if (!configurationID || configurationID === this.data.selectedConfigurationID) return
-    this.inspectionController.abort()
-    this.inspectionController = new AbortController()
-    this.decisionInspectionRequest++
-    this.decisionContributorsRequest++
-    this.decisionContributorsPromise = undefined
-    this.update({
-      selectedConfigurationID: configurationID,
-      decisionInspection: undefined,
-      decisionInspectLoading: Boolean(this.data.decisionContext),
-      decisionInspectError: "",
-      decisionNotFound: false,
-      decisionContributorsLoading: false,
-    })
+    this.update({ selectedConfigurationID: configurationID })
     this.selectionChanged({
       selectedTaskID: this.data.selectedTaskID,
       selectedCandidateID: this.data.selectedCandidateID,
       selectedConfigurationID: configurationID,
     })
-    void this.loadDecisionInspection()
   }
 
-  private async loadDecisionInspection(contributorCursor?: string) {
-    const context = this.data.decisionContext
-    const configurationID = this.data.selectedConfigurationID
-    const transport = this.transport
-    if (
-      !context ||
-      !configurationID ||
-      !transport?.decisionInspect ||
-      this.controller.signal.aborted ||
-      this.decisionController.signal.aborted
-    )
-      return
-    if (contributorCursor && this.decisionContributorsPromise)
-      return this.decisionContributorsPromise
-
-    const generation = this.generation
-    const filters = this.data.decisionFilters
-    const selectedTaskID = this.data.selectedTaskID
-    if (!contributorCursor) {
-      this.inspectionController.abort()
-      this.inspectionController = new AbortController()
-    }
-    const request = ++this.decisionInspectionRequest
-    const contributorRequest = ++this.decisionContributorsRequest
-    const signal = AbortSignal.any([
-      this.controller.signal,
-      this.decisionController.signal,
-      this.inspectionController.signal,
-    ])
-    const current = () =>
-      generation === this.generation &&
-      request === this.decisionInspectionRequest &&
-      contributorRequest === this.decisionContributorsRequest &&
-      !signal.aborted &&
-      this.data.selectedConfigurationID === configurationID &&
-      this.data.selectedTaskID === selectedTaskID &&
-      JSON.stringify(this.data.decisionFilters) === JSON.stringify(filters)
-    if (contributorCursor)
-      this.update({ decisionContributorsLoading: true, decisionInspectError: "" })
-    else
-      this.update({
-        decisionInspectLoading: true,
-        decisionInspectError: "",
-        decisionNotFound: false,
-      })
-
-    const operation = (async () => {
-      try {
-        const inspection = await transport.decisionInspect!(
-          filters,
-          context.snapshotID,
-          configurationID,
-          selectedTaskID,
-          contributorCursor,
-          signal,
-        )
-        if (!current()) return
-        if (
-          !decisionContextMatches(
-            inspection.context,
-            filters,
-            this.projectDirectory,
-            context.snapshotID,
-          )
-        )
-          throw new Error("Model inspection belongs to another project, filter, or snapshot.")
-        if (inspection.status === "not-found") {
-          if (inspection.configurationID !== configurationID)
-            throw new Error("Model inspection returned a different configuration.")
-          this.update({
-            decisionInspection: undefined,
-            decisionNotFound: true,
-            decisionInspectLoading: false,
-            decisionContributorsLoading: false,
-          })
-          return
-        }
-        if (
-          inspection.configuration.configurationID !== configurationID ||
-          inspection.selectedTaskID !== selectedTaskID
-        )
-          throw new Error("Model inspection returned a different configuration or selected task.")
-        if (contributorCursor) {
-          const currentInspection = this.data.decisionInspection
-          if (!currentInspection)
-            throw new Error("Contributor page has no matching inspection to extend.")
-          this.update({
-            decisionInspection: {
-              ...currentInspection,
-              contributorPage: {
-                ...inspection.contributorPage,
-                contributors: [
-                  ...currentInspection.contributorPage.contributors,
-                  ...inspection.contributorPage.contributors,
-                ],
-              },
-            },
-            decisionContributorsLoading: false,
-            decisionInspectError: "",
-          })
-        } else {
-          this.update({
-            decisionInspection: inspection,
-            decisionInspectLoading: false,
-            decisionNotFound: false,
-            decisionInspectError: "",
-          })
-        }
-      } catch (error) {
-        if (!current()) return
-        this.update({
-          decisionInspectLoading: false,
-          decisionContributorsLoading: false,
-          decisionInspectError: errorMessage(error),
-        })
-      }
-    })()
-    if (contributorCursor) {
-      this.decisionContributorsPromise = operation
-      await operation
-      if (this.decisionContributorsPromise === operation)
-        this.decisionContributorsPromise = undefined
-    } else await operation
-  }
-
-  async moreDecisionContributors() {
-    const cursor = this.data.decisionInspection?.contributorPage.nextCursor
-    if (!cursor || this.data.decisionContributorsLoading) return
-    await this.loadDecisionInspection(cursor)
-  }
-
+  /** Select a Projected or Benchmark entry: a candidate or a public-catalog model. */
   selectCandidate(candidateID: string) {
-    if (!this.data.candidates.some((candidate) => candidate.candidateID === candidateID)) return
     if (candidateID === this.data.selectedCandidateID) return
     this.update({ selectedCandidateID: candidateID })
     this.selectionChanged({
@@ -1074,9 +366,7 @@ export class ModelComparisonPanelState {
       selectedConfigurationID: this.data.selectedConfigurationID,
     })
     const generation = this.generation
-    void this.loadSettings(generation, taskID ?? undefined, selectionRevision)
     if (taskID) void this.loadSelectedTask(generation, taskID, selectionRevision)
-    void this.loadDecisionInspection()
   }
 
   private async loadTasks(generation: number, preferredTaskID?: string) {
@@ -1099,13 +389,7 @@ export class ModelComparisonPanelState {
             : this.data.selectedTaskID
         const selected = current ?? page.tasks[0]?.taskID ?? null
         if (selected !== this.data.selectedTaskID) this.selectTask(selected)
-        else if (
-          selected &&
-          (!this.data.task || this.seededTask) &&
-          !this.taskController.signal.aborted
-        ) {
-          // A restored task is shown while it is read again.
-          this.seededTask = false
+        else if (selected && !this.data.task && !this.taskController.signal.aborted) {
           await this.loadSelectedTask(generation, selected, this.selectionRevision)
         } else if (!selected && this.data.selectedTaskID !== null) this.selectTask(null)
       } catch (error) {
@@ -1306,29 +590,22 @@ export class ModelComparisonPanelState {
     }
   }
 
-  async refreshCatalog() {
-    return this.loadCatalog(this.generation)
+  /**
+   * The assignments stream's settings for the selected task. A read for another task (the stream
+   * reopens after a selection) is ignored.
+   */
+  applySettings(settings: ModelSettingsOutput) {
+    if (
+      settings.projectDirectory !== this.projectDirectory ||
+      settings.taskID !== this.data.selectedTaskID
+    )
+      return
+    this.update({ settings, settingsLoading: false, settingsError: "" })
   }
 
-  private async loadCatalog(generation: number) {
-    const transport = this.transport
-    if (!transport || this.controller.signal.aborted) return
-    const request = ++this.catalogRequest
-    const signal = this.controller.signal
-    this.update({ catalogStatus: "loading", catalogError: "" })
-    try {
-      const catalog = await transport.catalog(signal)
-      if (generation !== this.generation || request !== this.catalogRequest || signal.aborted)
-        return
-      this.update({ catalog, catalogStatus: "ready", catalogError: "" })
-    } catch (error) {
-      if (generation === this.generation && request === this.catalogRequest && !signal.aborted)
-        this.update({
-          catalog: undefined,
-          catalogStatus: "unavailable",
-          catalogError: errorMessage(error),
-        })
-    }
+  /** The assignments stream failed: the error is shown until its next frame. */
+  settingsFailed(error: string) {
+    this.update({ settingsLoading: false, settingsError: error })
   }
 
   async refreshSettings() {
@@ -1661,74 +938,20 @@ export class ModelComparisonPanelState {
     this.assignmentOperation = undefined
   }
 
-  private restorePendingAssignmentWrite() {
-    const write = this.data.assignmentWrite
-    const target = write?.target
-    const transport = this.transport
-    if (
-      !write ||
-      !target ||
-      !isRecoverableAssignmentStatus(write.status) ||
-      !transport ||
-      this.controller.signal.aborted ||
-      this.data.projectID !== this.projectID ||
-      this.data.projectDirectory !== this.projectDirectory ||
-      (target.scope === "task" && target.taskID !== this.data.selectedTaskID)
-    )
-      return false
-
-    const targetRevision = write.revision ?? write.expectedRevision + 1
-    const operation: PendingAssignmentWrite = {
-      request: ++this.assignmentRequest,
-      generation: this.generation,
-      selectionRevision: this.selectionRevision,
-      taskID: this.data.selectedTaskID,
-      projectDirectory: this.projectDirectory,
-      transport,
-      target,
-      persona: write.persona,
-      route: write.route,
-      expectedRevision: write.expectedRevision,
-      targetRevision,
-      outcome: write.status === "verifying" ? "updated" : "uncertain",
-      signal: AbortSignal.any([this.controller.signal, this.assignmentController.signal]),
-    }
-    this.assignmentOperation = operation
-    this.update({
-      assignmentWrite: {
-        ...write,
-        status: "uncertain",
-        revision: targetRevision,
-        message:
-          "The previous connection ended before this route could be confirmed. Checking authoritative settings without replaying the write.",
-      },
-    })
-    return true
-  }
-
   close() {
     this.generation++
-    this.comparisonRequest++
     this.taskRequest++
     this.selectedTaskLoad = undefined
     this.settingsRequest++
-    this.catalogRequest++
     this.selectionRevision++
     this.invalidateAssignmentWrite()
     this.controller.abort()
     this.taskController.abort()
-    this.decisionController.abort()
-    this.inspectionController.abort()
     this.transport = undefined
     this.projectID = ""
     this.projectDirectory = ""
     this.sourceRefreshPromise = undefined
-    this.comparisonPromise = undefined
     this.taskListPromise = undefined
     this.refreshPromise = undefined
-    this.comparisonNeedsRefresh = false
-    this.decisionPromise = undefined
-    this.decisionNeedsRefresh = false
-    this.decisionContributorsPromise = undefined
   }
 }

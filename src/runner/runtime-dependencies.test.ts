@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { git } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
-import { TaskReads } from "../tasks/read.ts"
+import { getTaskDetail } from "../tasks/stream-query.ts"
 import {
   TaskRuntime,
   acceptAndIntegratePlan,
@@ -33,22 +33,13 @@ test("priority orders conflicting plans without rejecting their overlapping scop
   )
   await runPlan(f, f.receipt.planID, "priority-run-a")
   await runPlan(f, later.planID, "priority-run-b")
-  const projection = await f.runtime.readScheduling({
-    scope: { kind: "project", sessionID: "owner" },
-    limit: 100,
-  })
-  expect(projection.next).toMatchObject({
-    status: "known",
-    candidate: { planID: later.planID, taskID: b.id, priority: 10, planOrder: 0 },
-  })
-  expect(projection.selectedTaskIDs).toEqual([b.id])
   await f.runtime.tick()
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
   const attempt = f.store.attempts(later.planID)[0]!
   expect(attempt).toBeDefined()
-  expect(projection.selectedTaskIDs).toEqual(
+  expect(
     allPlans(f.store).flatMap((plan) => f.store.attempts(plan.id).map((row) => row.task_id)),
-  )
+  ).toEqual([b.id])
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
   const updated = await f.runtime.command(
     {
@@ -65,7 +56,7 @@ test("priority orders conflicting plans without rejecting their overlapping scop
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
 })
 
-test("runtime dispatch matches scheduling projection for submission ties and shared ordinal order", async () => {
+test("runtime dispatch breaks submission ties by plan order and shared ordinal order", async () => {
   const f = fixture({
     shared: true,
     independent: true,
@@ -83,27 +74,10 @@ test("runtime dispatch matches scheduling projection for submission ties and sha
   await runPlan(f, f.receipt.planID, "run-tied-first")
   await runPlan(f, later.planID, "run-tied-later")
 
-  const projection = await f.runtime.readScheduling({
-    scope: { kind: "project", sessionID: "owner" },
-    limit: 100,
-  })
-  expect(projection.next).toMatchObject({
-    status: "known",
-    candidate: {
-      planID: f.receipt.planID,
-      taskID: f.tasks[0]!.id,
-      priority: 0,
-      planOrder: 0,
-      ordinal: 0,
-    },
-  })
-  expect(projection.selectedTaskIDs).toEqual([f.tasks[0]!.id])
-
   await f.runtime.tick()
   const actual = allPlans(f.store).flatMap((plan) =>
     f.store.attempts(plan.id).map((attempt) => attempt.task_id),
   )
-  expect(actual).toEqual(projection.selectedTaskIDs)
   expect(actual).toEqual([f.tasks[0]!.id])
 })
 
@@ -133,16 +107,8 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       "owner",
     )
     await runPlan(f, child.planID, `run-child-${childPriority}`)
-    expect(
-      (
-        await f.runtime.readScheduling({
-          scope: { kind: "project", sessionID: "owner" },
-          limit: 100,
-        })
-      ).next,
-    ).toEqual({ status: "none" })
     const accepted = await acceptPlan(f, parentID)
-    expect(new TaskReads(f.repository).get({ taskID: childTask.id })).toMatchObject({
+    expect(await getTaskDetail(f.repository, { taskID: childTask.id })).toMatchObject({
       recordedState: "queued",
       execution: {
         state: "blocked",
@@ -155,15 +121,6 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     includeArtifact(f, accepted.plan.artifact!)
     await recordPlanIntegration(f, parentID, { recordTaskLanding: true })
     expect(f.store.plan(parentID)!.state).toBe("cleaning")
-    const projection = await f.runtime.readScheduling({
-      scope: { kind: "project", sessionID: "owner" },
-      limit: 100,
-    })
-    expect(projection.next).toMatchObject({
-      status: "known",
-      candidate: { planID: child.planID, taskID: childTask.id },
-    })
-
     const observations: { parentState: string; workspace: string; source: string }[] = []
     const originalPrompt = f.host.prompt
     f.host.prompt = async (input) => {
@@ -189,7 +146,7 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     expect(childAttempt.workspace).toBe(observations[0]!.workspace)
     expect(childAttempt.workspace).not.toBe(accepted.attempt.workspace)
     expect(childAttempt.base_commit).toBe(accepted.plan.artifact!)
-    expect(projection.selectedTaskIDs).toEqual([childTask.id])
+    expect(childAttempt.task_id).toBe(childTask.id)
   }
 })
 
@@ -206,16 +163,6 @@ test("task dependencies dispatch only after durable source integration and use i
   expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(f.store.execution(f.tasks[1]!.id)?.waitingOn).toEqual([prerequisiteTaskID])
-  const beforeLanding = await f.runtime.readScheduling({
-    scope: { kind: "project", sessionID: "owner" },
-    limit: 100,
-  })
-  expect(beforeLanding.next).toEqual({ status: "none" })
-  expect(beforeLanding.plans[0]?.nodes[1]).toMatchObject({
-    taskID: f.tasks[1]!.id,
-    decision: "waiting",
-    waitingOn: [prerequisiteTaskID],
-  })
 
   const artifact = predecessor.artifact!
   includeArtifact(f, artifact)
@@ -254,14 +201,6 @@ test("task dependencies dispatch only after durable source integration and use i
   expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptsBefore)
   git(f.root, ["update-ref", "refs/heads/main", baseline])
 
-  const afterLanding = await f.runtime.readScheduling({
-    scope: { kind: "project", sessionID: "owner" },
-    limit: 100,
-  })
-  expect(afterLanding.next).toMatchObject({
-    status: "known",
-    candidate: { taskID: f.tasks[1]!.id },
-  })
   const originalPrompt = f.host.prompt
   f.host.prompt = async (input) => {
     const dependent = f.store

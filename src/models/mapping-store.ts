@@ -33,7 +33,8 @@ export type ModelMappingWrite =
       current: ModelMappingRecord | null
     }
 
-function ensureTables(db: Database): void {
+/** The versioned mapping table; also created by the assignment view's install (`assignment-view.ts`). */
+export function ensureModelMappingTables(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS model_mappings (
       scope TEXT NOT NULL CHECK(scope IN ('shared','project','task')),
@@ -103,7 +104,7 @@ export class ModelMappingStore {
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("no such table: model_mappings"))
         throw error
-      this.repository.atomic(ensureTables)
+      this.repository.atomic(ensureModelMappingTables)
       return this.repository.read(run)
     }
   }
@@ -128,7 +129,7 @@ export class ModelMappingStore {
     const key = keyFor(update.target, this.repository.projectDirectory, update.persona)
 
     return this.repository.atomic((db) => {
-      ensureTables(db)
+      ensureModelMappingTables(db)
       const current = currentIn(db, key)
       const currentRevision = current?.revision ?? 0
       if (guard !== undefined && currentRevision !== guard)

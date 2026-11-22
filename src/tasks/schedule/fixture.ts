@@ -3,12 +3,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../../test/proposal.ts"
 import { TaskRepository } from "../../storage.ts"
-import { TaskReads } from "../read.ts"
+import { RunnerStore } from "../../runner/store.ts"
 
 export function openFixture(project = "/project") {
   const directory = mkdtempSync(join(tmpdir(), "lazers-schedule-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), project)
-  const reads = new TaskReads(repository)
+  const reads = { repository, runner: new RunnerStore(repository) }
   return {
     repository,
     reads,

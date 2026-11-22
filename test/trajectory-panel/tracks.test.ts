@@ -5,14 +5,10 @@ import {
   durationText,
   elapsedDurationLabel,
   eventPayload,
-  parseTrajectoryReport,
+  Event,
   tickStep,
 } from "../../src/trajectory-panel/projection.ts"
-import type {
-  ProjectedSnapshot,
-  TrajectoryEvent,
-  TrajectoryReport,
-} from "../../src/trajectory-panel/projection.ts"
+import type { TrajectoryEvent, TrajectoryReport } from "../../src/trajectory-panel/projection.ts"
 import {
   attemptOutcome,
   buildTracks,
@@ -184,10 +180,8 @@ test("elapsed axis uses readable second, minute and hour steps", () => {
   ])
 })
 
-const snapshot = (state: string, endedAt: number | null): ProjectedSnapshot =>
+const snapshot = (state: string, endedAt: number | null) =>
   ({
-    plans: [{ id: "plan", title: null, nodes: [{ taskID: "task", ordinal: 0, state }] }],
-    unplannedTasks: [],
     attempts: [
       {
         id: "attempt-1",
@@ -210,27 +204,22 @@ const snapshot = (state: string, endedAt: number | null): ProjectedSnapshot =>
       },
     ],
     checks: [],
-  }) as unknown as ProjectedSnapshot
+  }) as unknown as Parameters<typeof buildTimeline>[0]
 
 test("an active attempt is an open bar to the capture time; a finished one keeps its axis", () => {
-  const running = buildTimeline(snapshot("running", null), "task", undefined, origin + 90_000)
+  const running = buildTimeline(snapshot("running", null), origin + 90_000)
   expect(running.openEnd).toBe(origin + 90_000)
   expect(running.attempts[0]?.segments[0]).toMatchObject({ open: true, pointOnly: false })
   expect(running.durationMs).toBe(90_000)
   expect(running.attempts[0]?.segments[0]?.width).toBeCloseTo(100, 6)
 
   // A finished attempt with a missing end stays a point; capture time cannot extend it.
-  const unknownEnd = buildTimeline(snapshot("failed", null), "task", undefined, origin + 90_000)
+  const unknownEnd = buildTimeline(snapshot("failed", null), origin + 90_000)
   expect(unknownEnd.openEnd).toBeNull()
   expect(unknownEnd.attempts[0]?.segments[0]).toMatchObject({ open: false, pointOnly: true })
 
-  const finishedLine = buildTimeline(snapshot("failed", origin + 50_000), "task")
-  const later = buildTimeline(
-    snapshot("failed", origin + 50_000),
-    "task",
-    undefined,
-    origin + 9_000_000,
-  )
+  const finishedLine = buildTimeline(snapshot("failed", origin + 50_000))
+  const later = buildTimeline(snapshot("failed", origin + 50_000), origin + 9_000_000)
   expect(later.durationMs).toBe(finishedLine.durationMs)
   expect(later.ticks).toEqual(finishedLine.ticks)
 })
@@ -295,17 +284,10 @@ test("the panel schema keeps only allow-listed event fields and tolerates new sh
       ],
     },
   }
-  const parsed = parseTrajectoryReport({ report } as never) as TrajectoryReport
-  const [parsedEvent] = parsed.trajectory.events
+  const parsedEvent = Event.parse(report.trajectory.events[0])
   expect(parsedEvent).not.toHaveProperty("reasoning")
   expect(parsedEvent).not.toHaveProperty("native")
   expect(parsedEvent?.timing).toEqual({ endpoints: { calledAt: { at: 5, sourceType: "x" } } })
   expect(parsedEvent?.fileTargets).toBeUndefined()
   expect(JSON.stringify(eventPayload(parsedEvent!))).not.toContain("private chain of thought")
-})
-
-test("settled-history plan states mirror the runner's terminal plan states", async () => {
-  const { terminalPlanStates } = await import("../../src/runner/plan-control.ts")
-  const { SETTLED_PLAN_STATES } = await import("../../src/trajectory-panel/projection.ts")
-  expect([...SETTLED_PLAN_STATES].sort()).toEqual([...terminalPlanStates].sort())
 })

@@ -152,7 +152,18 @@ export function mountPanel<D>(
     sessions: { current: () => session, list: () => [session] },
     layout: { open: (id: string) => openPanel(id) },
     tabs: { open: () => {} },
-    stores: new Proxy({}, { get: (_target, name: string) => () => named(name) }),
+    // A per-session store is called (`ctx.stores.taskView(session)`); a global one is read
+    // directly (`ctx.stores.taskStateDefaults.ready()`): one stand-in answers both.
+    stores: new Proxy(
+      {},
+      {
+        get: (_target, name: string) =>
+          new Proxy(() => named(name), {
+            get: (target, key) =>
+              key in target ? Reflect.get(target, key) : Reflect.get(named(name), key),
+          }),
+      },
+    ),
     links: { open: () => {} },
     system: { copy: async () => {} },
     servers: { get: () => server },

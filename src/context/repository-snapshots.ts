@@ -322,11 +322,19 @@ export class RepositorySnapshotStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
     }
-    repository.atomic((db) =>
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS context_repo_snapshots(snapshot_id TEXT PRIMARY KEY,file TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL,bytes INTEGER NOT NULL);`,
-      ),
+    // A current database needs no write lock: loading must not wait behind another writer.
+    if (
+      !repository.read((db) =>
+        db
+          .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_repo_snapshots'")
+          .get(),
+      )
     )
+      repository.atomic((db) =>
+        db.exec(
+          `CREATE TABLE IF NOT EXISTS context_repo_snapshots(snapshot_id TEXT PRIMARY KEY,file TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL,bytes INTEGER NOT NULL);`,
+        ),
+      )
   }
 
   private assertCacheDirectory() {

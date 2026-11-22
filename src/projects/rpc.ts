@@ -20,9 +20,6 @@ import { runbook } from "../guidance/index.ts"
 import { startSetupSession } from "./setup-session.ts"
 import type { SetupSessionApi } from "./setup-session.ts"
 import { isLoaded, liveDirectories } from "./scope.ts"
-import { needsYouPage } from "./needs-you.ts"
-import type { NeedsYouSession } from "./needs-you.ts"
-import { allProjectsAccess } from "./read-access.ts"
 import {
   globalSettings,
   projectKeyOfDirectory,
@@ -42,11 +39,8 @@ import {
 } from "./profile-store.ts"
 import type { ProfileRevisionRow } from "./profile-store.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
+import type { ProjectsDefaults } from "./overview-store.ts"
 
-export type ProjectsDefaults = {
-  global?: Partial<GlobalSettings>
-  project?: Partial<ProjectSettings>
-}
 type Controls = TaskRepository
 
 const refuse = (
@@ -96,7 +90,11 @@ const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
   credentialLikeEnv: row.profile.env.filter(credentialLikeEnv),
 })
 
-/** Everything the Projects section shows, read fresh from the shared database. */
+/**
+ * Everything the Projects section showed through the removed `list` read, read fresh from the
+ * shared database: kept as the parity oracle of `project_overview` until the old reads go
+ * (panel-streams Task 14).
+ */
 function listProjects(
   repository: Controls,
   loaded: () => Iterable<string>,
@@ -161,6 +159,9 @@ export function profileViewOf(repository: Controls, key: string): ProfileView {
   }
 }
 
+/** What a loaded location can say about one of its own OpenCode project's sessions. */
+export type ProjectSession = { id: string; agent?: string; archived: boolean }
+
 /** The operations behind `lz.projects`; separate from registration so tests call them directly. */
 export function projectsOperations(
   repository: Controls,
@@ -174,7 +175,7 @@ export function projectsOperations(
     /** Receipts of proof runs are written under this directory. */
     dataDirectory?: string
     /** Reads a session of this location's project; the setup notice answers only for those. */
-    sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
+    sessionOf?: (sessionID: string) => Promise<ProjectSession | null>
     /** Creates and prompts the setup Architect session. */
     setupSession?: SetupSessionApi
   },
@@ -345,8 +346,6 @@ export function registerProjects(
   options: Parameters<typeof projectsOperations>[1] & {
     /** This location's OpenCode project id, for the caller's session check. */
     projectID: string
-    /** Reads a session of this location's project; native questions come only from these. */
-    sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
   },
 ) {
   const operations = projectsOperations(repository, {
@@ -354,29 +353,6 @@ export function registerProjects(
     setupSession: options.setupSession ?? ctx.session,
   })
   return timedRpc(ctx.rpc).register(Projects, {
-    needsYou: (input) =>
-      Effect.tryPromise({
-        try: async () => {
-          const access = await allProjectsAccess(ctx, {
-            sessionID: input.sessionID,
-            projectID: options.projectID,
-            repository,
-            loaded: options.loaded,
-            unavailable: "Needs you scope is unavailable",
-          })
-          const page = await needsYouPage({
-            repository,
-            units: access.units,
-            ownDirectory: repository.projectDirectory,
-            ...(input.cursor ? { cursor: input.cursor } : {}),
-            ...(options.sessionOf ? { sessionOf: options.sessionOf } : {}),
-          })
-          return page ?? { items: [], nextCursor: null }
-        },
-        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-      }).pipe(Effect.orDie),
-    list: () => Effect.sync(() => operations.list()),
-    profile: (input) => Effect.sync(() => operations.profile(input.key)),
     setupStatus: (input) => Effect.promise(() => operations.setupStatus(input.sessionID)),
     startSetup: (input) => Effect.promise(() => operations.startSetup(input.sessionID)),
     dismissSetup: (input) => Effect.sync(() => operations.dismissSetup(input.key)),

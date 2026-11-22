@@ -1,3 +1,4 @@
+import { AuditHistory } from "../../audit/history.ts"
 import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
 import { drainTaskSchedule, retryParked } from "./drain.ts"
@@ -185,6 +186,7 @@ test("triggers queue the owner of each changed row, and only for relevant column
 test("every source table has its triggers", () => {
   const f = open()
   new HandoffStore(f.repository)
+  new AuditHistory(f.repository)
   const present = new Set(
     rows<{ name: string }>(
       f,
@@ -476,7 +478,7 @@ test("a generation reinstall drops the projection and the backfill refills it", 
 
 // ---- Several plans for one task -------------------------------------------------------------
 
-test("a task in two plans shows its newest plan, like currentActivityTargets", () => {
+test("a task in two plans shows its newest plan, as the current activity read did", () => {
   const f = open()
   const a = insertTask(f.repository, "alpha")
   const first = submitPlan(f, "first", [a])
@@ -495,7 +497,6 @@ test("a task in two plans shows its newest plan, like currentActivityTargets", (
     a,
   )[0]
   expect(row).toEqual({ plan_id: second, node_state: "running" })
-  expect(f.reads.currentActivityTargets([a])[0]?.planID).toBe(second)
 })
 
 // ---- Owner ----------------------------------------------------------------------------------

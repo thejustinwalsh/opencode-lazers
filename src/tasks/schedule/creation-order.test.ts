@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { createControlTables } from "../../projects/settings.ts"
+import { AuditHistory } from "../../audit/history.ts"
 import { HandoffStore } from "../../recovery/handoff/store.ts"
 import { SCHEDULE_TRIGGERS, installScheduleTriggers } from "./schema.ts"
 import { openFixture } from "./fixture.ts"
@@ -46,6 +47,13 @@ test("lazers_dispatch_pause: triggers appear whichever of the table and the proj
   expect(triggersOn(f, "lazers_dispatch_pause").length).toBe(expected("lazers_dispatch_pause"))
 })
 
+test("audit runs: the audit store created after the projection adds the triggers", () => {
+  const f = open()
+  expect(triggersOn(f, "audit_runs")).toEqual([])
+  new AuditHistory(f.repository)
+  expect(triggersOn(f, "audit_runs").length).toBe(expected("audit_runs"))
+})
+
 test("recovery concern tables: both orders, and installing twice leaves one set", () => {
   const f = open()
   expect(triggersOn(f, "recovery_concern_versions")).toEqual([])
@@ -67,6 +75,7 @@ test("recovery concern tables: both orders, and installing twice leaves one set"
 test("every table the projection reads has its triggers once the stores are constructed", () => {
   const f = open()
   new HandoffStore(f.repository)
+  new AuditHistory(f.repository)
   for (const table of new Set(SCHEDULE_TRIGGERS.map((spec) => spec.table)))
     expect(triggersOn(f, table).length).toBe(expected(table))
 })

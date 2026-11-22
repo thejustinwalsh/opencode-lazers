@@ -117,6 +117,8 @@ export function installProjectSchema(repository: TaskRepository): void {
     if (!columns.has("name")) db.exec("ALTER TABLE lazers_projects ADD COLUMN name TEXT")
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS lazers_projects_code ON lazers_projects(code);
+      -- Generation 3: a project's checkouts by key, read per project (was a scan per project).
+      CREATE INDEX IF NOT EXISTS lazers_project_paths_key ON lazers_project_paths(key);
       CREATE TABLE IF NOT EXISTS task_reference_aliases (
         project_key TEXT NOT NULL REFERENCES lazers_projects(key),
         alias TEXT NOT NULL,
@@ -196,11 +198,6 @@ export function sameProject(a: string | undefined, b: string | undefined): boole
   if (a === undefined || b === undefined) return false
   const key = idToKey.get(a)
   return key !== undefined && key === idToKey.get(b)
-}
-
-/** SQL helper: bind as one parameter to `col IN (SELECT value FROM json_each(?))`. */
-export function projectIdsJSON(id: string): string {
-  return JSON.stringify(projectIdsFor(id))
 }
 
 function hydrateProjectAliases(repository: TaskRepository): void {

@@ -154,17 +154,20 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
         </div>
       }
     >
-      <Show when={scored() >= 5}>
+      {/* The picker stays while a basis scores fewer than five models: it is the way back. */}
+      <Show when={scored() >= 5 || ctl.scoreOptions().length > 1}>
         <div class="lazers-chart-modes">
-          <Segmented
-            label="Projected plot"
-            value={view()}
-            onChange={setView}
-            options={[
-              { value: "ranking", label: "Ranking" },
-              { value: "scatter", label: "Cost vs score" },
-            ]}
-          />
+          <Show when={scored() >= 5}>
+            <Segmented
+              label="Projected plot"
+              value={view()}
+              onChange={setView}
+              options={[
+                { value: "ranking", label: "Ranking" },
+                { value: "scatter", label: "Cost vs score" },
+              ]}
+            />
+          </Show>
           <Show when={ctl.scoreOptions().length > 1}>
             <label class="lazers-score-basis">
               <span>Score:</span>
@@ -686,7 +689,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                   model={model()}
                   onTrajectory={openContributorTrajectory}
                   moreBusy={visible()?.decisionContributorsLoading}
-                  onMore={() => void state.moreDecisionContributors()}
+                  onMore={ctl.moreContributors}
                 />
               )
             }}

@@ -1,6 +1,6 @@
 import type { TaskStateFilter, TaskStateSelection } from "./state-filter.ts"
 
-export const TASK_STATE_SELECTIONS: readonly TaskStateSelection[] = [
+const TASK_STATE_SELECTIONS: readonly TaskStateSelection[] = [
   "open",
   "queued",
   "running",

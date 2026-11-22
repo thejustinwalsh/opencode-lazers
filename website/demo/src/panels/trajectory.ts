@@ -1,8 +1,9 @@
 import { setupTrajectoryPanel } from "../../../../src/trajectory-panel/panel.tsx"
 import { mountPanel } from "../host.tsx"
 import type { PanelAdapter } from "../adapter.ts"
-import { PROJECT, reads, rpc, trajectoryChanged } from "./trajectory-answers.ts"
+import { PROJECT } from "./trajectory-answers.ts"
 import type { TrajectoryData } from "./trajectory-answers.ts"
+import { reads, rpc, trajectoryChanged } from "./trajectory-streams.ts"
 
 const adapter: PanelAdapter<TrajectoryData> = {
   panelID: "trajectory",

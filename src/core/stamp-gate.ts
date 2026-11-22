@@ -21,7 +21,7 @@ import type { Database } from "bun:sqlite"
  * - The cache is a byte-budgeted LRU. It never refuses a read: older entries are evicted, and
  *   a result larger than the whole budget is returned without being kept. `sizeOf` defaults to
  *   the JSON length of the value, measured once when the entry is stored. `maxBytes` has no
- *   measured default here; callers pass the budget they own (see `historyCacheBytes`).
+ *   measured default here; callers pass the budget they own.
  */
 export class StampGate<T> {
   private readonly entries = new Map<string, { stamp: string | number; value: T; bytes: number }>()

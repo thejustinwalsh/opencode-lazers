@@ -15,6 +15,13 @@ export const TASK_SOURCES = {
   bucketCounts: "tasks.bucketCounts",
   sessionBucketCounts: "tasks.sessionBucketCounts",
   index: "tasks.index",
+  detail: "tasks.detail",
+  attempts: "tasks.attempts",
+  activity: "tasks.activity",
+  activityPayloads: "tasks.activityPayloads",
+  attemptCalls: "tasks.attemptCalls",
+  currentActivity: "tasks.currentActivity",
+  searchFields: "tasks.searchFields",
 } as const
 
 /** A state chip, or a union of chips; `legacy` is `Tasks.query`'s default. Omitted is every task. */
@@ -79,6 +86,10 @@ export const taskScheduleColumns = {
   takeover: "bool",
   classification: "json",
   concern: "json",
+  /** The open concern's recommended action (`acknowledge`, `steer`, `takeover`, `cancel`), when its rule recorded one. */
+  concern_action: "text",
+  /** Why the rule recommends `concern_action` (at most 600 characters). */
+  concern_because: "text",
   /** The totals of the open concern, across every attempt; null with no open concern. */
   concern_totals: "json",
   dispatch_pause: "json",
@@ -223,6 +234,162 @@ export type TaskPlansFilter = {
 }
 export type TaskCountsFilter = { scope?: TaskScope; project: string; session?: string }
 export type TaskIndexFilter = { scope?: TaskScope; project: string }
+
+/**
+ * One task's detail (`tasks.detail`, always read at window 1). A filter names the task by id or
+ * by `<CODE>-<n>` reference; `creator` keeps only a task the session created (the agent tool's
+ * `sessionID`), `session` a task linked to it (the panel's session view).
+ */
+export type TaskDetailFilter = {
+  scope?: TaskScope
+  project?: string
+  task?: string
+  reference?: string
+  creator?: string
+  session?: string
+}
+export const taskDetailColumns = {
+  task_id: "text",
+  reference: "text",
+  revision: "int",
+  status: "text",
+  /** The node's own state in the task's current plan; null when unplanned. */
+  node_state: "text",
+  plan_id: "text",
+  session_id: "text",
+  retired: "bool",
+} as const satisfies Columns
+export const taskDetailColdColumns = {
+  /** The task specification as submitted (`tasks.body`). */
+  body: "json",
+  /** The execution the detail shows; null when unplanned. */
+  execution: "json",
+  classification: "json",
+  classification_history: "json",
+  advice: "json",
+  audit_history: "json",
+  disposition: "json",
+  /** The current plan's owner: the Architect session. */
+  architect_session_id: "text",
+} as const satisfies Columns
+
+/** The attempts of a task in one plan, oldest first, as the detail lists them. */
+export type TaskAttemptsFilter = TaskChildFilter & { plan?: string }
+export const taskAttemptColumns = {
+  id: "text",
+  number: "int",
+  state: "text",
+  started_at: "int",
+  artifact: "text",
+  token_count: "float",
+  tool_count: "int",
+  session_id: "text",
+  /** The attempt is the Architect finishing the task (its policy names a takeover). */
+  takeover: "bool",
+  /** The recorded `policy.model` object, unvalidated; the consumer checks its shape. */
+  model: "json",
+} as const satisfies Columns
+
+/** A task's transitions in one plan, by transition id; `events` narrows to those names. */
+export type TaskActivityFilter = TaskChildFilter & { plan?: string; events?: readonly string[] }
+export const taskActivityColumns = {
+  /** The `runner_transitions` id: the order and the key. */
+  transition_id: "int",
+  task_id: "text",
+  event: "text",
+  at: "float",
+} as const satisfies Columns
+/** The raw transition payload: cold on `tasks.activity`, a list column on `tasks.activityPayloads`. */
+export const taskActivityPayloadColumns = { payload: "text" } as const satisfies Columns
+
+/** One attempt's progress rows (`runner_progress_display`), for the latest attempt's summary. */
+export type TaskAttemptCallsFilter = TaskChildFilter & {
+  attempt?: string
+  sessionID?: string
+  /** Only tool calls (`kind = 'tool'` with a call id): the summary's ticks. */
+  toolsOnly?: boolean
+}
+export const taskAttemptCallColumns = {
+  seq: "int",
+  at: "float",
+  status: "text",
+  file_targets_json: "json",
+} as const satisfies Columns
+
+/**
+ * What a row's current activity shows: the task's node and latest attempt, joined to the attempt
+ * session's stored host facts (`host_session_state`). `tasks` names the rows in view.
+ */
+export type TaskCurrentActivityFilter = {
+  scope?: TaskScope
+  project?: string
+  session?: string
+  tasks: readonly string[]
+}
+export const taskCurrentActivityColumns = {
+  task_id: "text",
+  node_state: "text",
+  plan_state: "text",
+  node_reason: "text",
+  plan_reason: "text",
+  attempt_id: "text",
+  attempt_session_id: "text",
+  attempt_workspace: "text",
+  /** Null when the host fold holds no row for the attempt session. */
+  host_agent: "text",
+  host_attempt_id: "text",
+  host_directory: "text",
+  busy: "bool",
+  pending_input: "bool",
+  pending_permissions: "int",
+  pending_forms: "int",
+  outcome: "text",
+  archived: "bool",
+  /** When the fold last changed a shown host column. */
+  observed_at: "int",
+} as const satisfies Columns
+
+/** The six fields a search matches, as written, for the tasks of one page. */
+export type TaskSearchFieldsFilter = { project?: string; tasks: readonly string[] }
+export const taskSearchFieldColumns = {
+  task_id: "text",
+  ord: "int",
+  field: "text",
+  text: "text",
+} as const satisfies Columns
+
+export const taskDetailRef: SourceRef<TaskDetailFilter, typeof taskDetailColumns> = sourceRef({
+  name: TASK_SOURCES.detail,
+  columns: taskDetailColumns,
+  detail: taskDetailColdColumns,
+})
+export const taskAttemptsRef: SourceRef<TaskAttemptsFilter, typeof taskAttemptColumns> = sourceRef({
+  name: TASK_SOURCES.attempts,
+  columns: taskAttemptColumns,
+})
+export const taskActivityRef: SourceRef<TaskActivityFilter, typeof taskActivityColumns> = sourceRef(
+  {
+    name: TASK_SOURCES.activity,
+    columns: taskActivityColumns,
+    detail: taskActivityPayloadColumns,
+  },
+)
+export const taskActivityPayloadsRef: SourceRef<
+  TaskActivityFilter,
+  typeof taskActivityColumns & typeof taskActivityPayloadColumns
+> = sourceRef({
+  name: TASK_SOURCES.activityPayloads,
+  columns: { ...taskActivityColumns, ...taskActivityPayloadColumns },
+})
+export const taskAttemptCallsRef: SourceRef<TaskAttemptCallsFilter, typeof taskAttemptCallColumns> =
+  sourceRef({ name: TASK_SOURCES.attemptCalls, columns: taskAttemptCallColumns })
+export const taskCurrentActivityRef: SourceRef<
+  TaskCurrentActivityFilter,
+  typeof taskCurrentActivityColumns
+> = sourceRef({ name: TASK_SOURCES.currentActivity, columns: taskCurrentActivityColumns })
+
+export const taskSearchFieldsRef: SourceRef<TaskSearchFieldsFilter, typeof taskSearchFieldColumns> =
+  sourceRef({ name: TASK_SOURCES.searchFields, columns: taskSearchFieldColumns })
 
 export const taskScheduleRef: SourceRef<TaskScheduleFilter, typeof taskScheduleColumns> = sourceRef(
   {

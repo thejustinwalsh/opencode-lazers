@@ -1,22 +1,49 @@
-import type { ObservationScope } from "../observability/contract.ts"
-import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import {
-  checkKey,
-  currentTaskState,
-  detailedChecks,
-  parseProjectedSnapshot,
-  parseTrajectoryReport,
-  settledHistory,
-  taskChoices,
-  taskSnapshotFingerprint,
-} from "./projection.ts"
+  createEffect,
+  createMemo,
+  createRoot,
+  createSignal,
+  getOwner,
+  on,
+  onCleanup,
+  runWithOwner,
+  type Accessor,
+} from "solid-js"
+import { safeText, privacyStats } from "../trajectory/privacy.ts"
+import { createStream, type GuiStream, type StreamsTransport } from "../streams/gui.ts"
+import type { Columns } from "../streams/frame.ts"
+import type { TrajectoryScope } from "../streams/sources/trajectory-ref.ts"
+import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import {
+  trajectoryAttemptsRef,
+  trajectoryEffortRef,
+  trajectoryEventsRef,
+  trajectoryTranscriptRef,
+} from "./streams.ts"
+import { checkKey, detailedChecks, reportEffortSchema } from "./projection.ts"
 import type {
-  ProjectedSnapshot,
+  RecordedAttempt,
+  RecordedCheck,
   TaskChoice,
+  TrajectoryAttempt,
   TrajectoryEvent,
   TrajectoryReport,
-  TrajectoryTransport,
 } from "./projection.ts"
+import {
+  attemptFromRow,
+  concernFromSchedule,
+  checkFromDetail,
+  checkFromRow,
+  choiceFromRow,
+  emptyEffort,
+  holdFromSchedule,
+  eventFromDetail,
+  eventFromRow,
+  eventFromTranscript,
+  recordedAttempt,
+  recordedCheck,
+  timelineEventID,
+} from "./rows.ts"
 
 export type Selection =
   { kind: "attempt"; id: string } | { kind: "check"; id: string } | { kind: "event"; id: string }
@@ -37,32 +64,26 @@ export type TaskTrajectoryTarget = {
 
 export type PanelData = {
   key: string
-  snapshot?: ProjectedSnapshot
-  eventSequence?: number | null
   tasks: TaskChoice[]
   taskID: string | null
   taskReference: string | null
   report?: TrajectoryReport
+  /** The attempts and checks as the timeline plots them. */
+  recorded: { attempts: RecordedAttempt[]; checks: RecordedCheck[] }
   selection: Selection | null
+  /** The events of the loaded windows (timeline and the selected attempt's transcript), by time. */
   events: TrajectoryEvent[]
-  liveEvents: TrajectoryEvent[]
-  capturedEventIDs: string[]
   selectionEventSnapshot?: TrajectoryEvent
-  eventCursor: string | null
+  /** Every event of the task, loaded or not (the timeline source's exact count). */
   totalEvents: number
-  historyCapturedAt: number | null
-  historyExpiresAt: number | null
-  historyError: string
-  /** The captured cursor cannot advance; only a fresh capture can continue paging. */
-  pageRecaptureRequired: boolean
-  /** Panel clock when the last live status read was applied; null while showing only capture. */
-  statusReadAt: number | null
-  recapturingHistory: boolean
+  /** The windows do not hold every event: earlier or later rows are read as the view moves. */
+  partial: boolean
+  /** The selected attempt's message text has not arrived yet. */
+  loadingTranscript: boolean
   loading: boolean
-  loadingActivity: boolean
   stale: boolean
   error: string
-  /** Epoch ms of the last successful read. It survives later failures with the content. */
+  /** Epoch ms of the last frame applied. */
   asOf: number | null
 }
 
@@ -80,1209 +101,456 @@ export function selectedAttemptFor(data: PanelData | undefined) {
   return id ? report.attempts.find((attempt) => attempt.id === id) : undefined
 }
 
-const blank = (key = ""): PanelData => ({
-  key,
-  eventSequence: null,
-  tasks: [],
-  taskID: null,
-  taskReference: null,
-  selection: null,
-  events: [],
-  liveEvents: [],
-  capturedEventIDs: [],
-  eventCursor: null,
-  totalEvents: 0,
-  historyCapturedAt: null,
-  historyExpiresAt: null,
-  historyError: "",
-  pageRecaptureRequired: false,
-  statusReadAt: null,
-  recapturingHistory: false,
-  loading: true,
-  loadingActivity: false,
-  stale: false,
-  error: "",
-  asOf: null,
-})
-
 export function selectedEventFor(data: PanelData | undefined) {
   const selection = data?.selection
   if (!data || selection?.kind !== "event") return undefined
   return (
     data.events.find((event) => event.id === selection.id) ??
-    data.liveEvents.find((event) => event.id === selection.id) ??
     (data.selectionEventSnapshot?.id === selection.id ? data.selectionEventSnapshot : undefined)
   )
 }
 
-/**
- * The last loaded trajectory per project, scope, task and selected attempt. A panel that is
- * mounted again (switching to another panel tab and back) renders it at once and refreshes it in
- * place, instead of showing the skeleton again. Process-local; a few entries only.
- */
-export class TrajectoryViewCache {
-  private readonly entries = new Map<string, PanelData>()
-  constructor(private readonly capacity = 6) {}
+/** The timeline window: about 60 rows in view at the default zoom, 30 more each side. */
+const VISIBLE_ROWS = 60
+const SLOP_ROWS = 30
+/** Basis: Panel 2 of `.agents/plans/panel-streams.md`; the plot draws a mark per row. */
+const WINDOW_ROWS = VISIBLE_ROWS + 2 * SLOP_ROWS
+/** A slide moves the window by its slop on both sides: half of it. */
+const SLIDE_ROWS = 2 * SLOP_ROWS
+/** Rows of a stored event that carry a detail JSON (`task_events`); steps and calls do not. */
+const STORED_REF = /^(tr|ef|pg):/
 
-  static key(
-    projectID: string,
-    scope: ObservationScope,
-    taskID: string,
-    selection: Selection | null,
-  ) {
-    return JSON.stringify([
-      projectID,
-      scope.kind,
-      scope.kind === "session" ? scope.sessionID : "",
-      taskID,
-      selection?.kind === "attempt" ? selection.id : "",
-    ])
-  }
+const rowOf = (row: unknown) => row as Record<string, unknown>
 
-  /** Kept with the views so a re-mounted panel does not repeat a failure the previous mount saw. */
-  readonly captureFailures = new Map<string, CaptureFailure>()
-  private readonly lastTasks = new Map<string, string>()
-  private static viewKey(projectID: string, scope: ObservationScope) {
-    return JSON.stringify([projectID, scope.kind, scope.kind === "session" ? scope.sessionID : ""])
-  }
-
-  /** The task last shown for this project and scope, for a panel opened with no task context. */
-  lastTask(projectID: string, scope: ObservationScope) {
-    return this.lastTasks.get(TrajectoryViewCache.viewKey(projectID, scope))
-  }
-
-  noteTask(projectID: string, scope: ObservationScope, taskID: string) {
-    this.lastTasks.set(TrajectoryViewCache.viewKey(projectID, scope), taskID)
-  }
-
-  get(key: string) {
-    const value = this.entries.get(key)
-    if (!value) return undefined
-    this.entries.delete(key)
-    this.entries.set(key, value)
-    return value
-  }
-
-  set(key: string, value: PanelData) {
-    this.entries.delete(key)
-    this.entries.set(key, value)
-    while (this.entries.size > this.capacity) this.entries.delete(this.entries.keys().next().value!)
-  }
-
-  clear() {
-    this.entries.clear()
-    this.lastTasks.clear()
-    this.captureFailures.clear()
-  }
-}
-
-/** Shared by every Trajectory panel in the process. */
-export const trajectoryViewCache = new TrajectoryViewCache()
-
-/**
- * Pacing, not a limit: after a capture fails, the same task is not requested again on its own
- * until this long has passed (doubling per consecutive failure up to the ceiling). A person's
- * Retry or Recapture always asks at once. Chosen by hand, not measured; it only stops a
- * re-mounting or event-driven panel from repeating an identical failing request every second.
- */
-const CAPTURE_RETRY_FIRST_MS = 5_000
-const CAPTURE_RETRY_LAST_MS = 60_000
-
-type CaptureFailure = { message: string; at: number; delayMs: number }
-
-/** A first read that has not answered by now becomes a failure with Retry, not a spinner. */
-const FIRST_READ_TIMEOUT_MS = 30_000
-
-function withDeadline<T>(read: Promise<T>, ms: number, what: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${what}`)), ms)
-    read.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error: unknown) => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
+/** A stream that reads every row of its filter: it doubles its window while rows remain. */
+function wholeStream<F, C extends Columns>(
+  transport: StreamsTransport,
+  source: Parameters<typeof createStream<F, C>>[1],
+  options: () => { filter: F; order: string },
+  initial: number,
+): GuiStream<C> {
+  const [window, setWindow] = createSignal(initial)
+  const stream = createStream(transport, source, () => ({ ...options(), window: window() }))
+  createEffect(() => {
+    if (stream.loaded() && stream.after() !== 0) setWindow((current) => current * 2)
   })
+  return stream
 }
 
-const delay = (signal: AbortSignal) =>
-  new Promise<void>((resolve) => {
-    if (signal.aborted) return resolve()
-    const done = () => {
-      clearTimeout(timer)
-      signal.removeEventListener("abort", done)
-      resolve()
-    }
-    const timer = setTimeout(done, 1_000)
-    signal.addEventListener("abort", done, { once: true })
-  })
-
-function defaultSelection(report: TrajectoryReport): Selection | null {
-  const check = detailedChecks(report)[0]
-  if (check) return { kind: "check", id: checkKey(check) }
-  const attempt = report.attempts.at(-1)
-  if (attempt) return { kind: "attempt", id: attempt.id }
-  const event = report.trajectory.events[0]
-  return event ? { kind: "event", id: event.id } : null
-}
-
-function responseMatchesScope(
-  response: { scope: { kind: string; sessionID?: string } },
-  scope: ObservationScope,
-) {
-  return (
-    response.scope.kind === scope.kind &&
-    (scope.kind === "project" || response.scope.sessionID === scope.sessionID)
-  )
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function historyFailureMessage(error: unknown) {
-  const value = record(error)
-  if (value?.type === "trajectory_history_unavailable") {
-    const data = record(value.data)
-    if (data?.recovery !== "recapture")
-      return "Captured history is unavailable. Recapture history to continue."
-    if (data.reason === "expired")
-      return "Captured history has expired. Recapture history to continue."
-    if (data.reason === "evicted")
-      return "Captured history is no longer cached. Recapture history to continue."
-    if (data.reason === "invalid-cursor")
-      return "This history continuation is invalid or stale. Recapture history to continue."
-    return "Captured history is unavailable. Recapture history to continue."
-  }
-  if (error instanceof Error)
-    return safeText(error.message, privacyStats(), 400) || "Captured history could not be loaded."
-  return "Captured history could not be loaded. Recapture history to try again."
-}
-
-/** Internal page validation failure: the captured cursor can no longer be trusted. */
-class PageRecaptureError extends Error {}
-
-function requiresRecapture(error: unknown) {
-  return (
-    error instanceof PageRecaptureError || record(error)?.type === "trajectory_history_unavailable"
-  )
-}
-
-function requestFailureMessage(error: unknown, fallback: string) {
-  if (error instanceof Error) return safeText(error.message, privacyStats(), 400) || fallback
-  return fallback
-}
-
-export class TrajectoryPanelState {
-  data = blank()
-  private controller = new AbortController()
-  private taskController = new AbortController()
-  private generation = 0
-  private snapshotRequest = 0
-  private taskRequest = 0
-  private activityRequest = 0
-  private statusRequest = 0
-  private statusCursor?: string
-  private historyRequest = 0
-  private transport?: TrajectoryTransport
-  private scope?: ObservationScope
-  private projectID = ""
-  private projectDirectory = ""
-  private target?: TaskTrajectoryTarget
-  private targetError = ""
-  private cancelRetry?: () => void
-  private retryDelay = 1_000
-  private pendingSequence = 0
-  private refreshing = false
-  private pendingRefresh = false
-  private pendingResnapshot = false
-  private pendingForce = false
-  private drainToken = 0
-  /** Task snapshot facts when status or history was last read for the selected task. */
-  private readFingerprint: string | null = null
-
-  constructor(
-    private readonly changed: (data: PanelData) => void,
-    private readonly selected: (preferences: PanelPreferences) => void = () => {},
-    private readonly schedule: (callback: () => void, delayMs: number) => () => void = (
-      callback,
-      delayMs,
-    ) => {
-      const timer = setTimeout(callback, delayMs)
-      return () => clearTimeout(timer)
-    },
-    private readonly options: {
-      autoContinue?: boolean
-      firstReadTimeoutMs?: number
-      cache?: TrajectoryViewCache
-    } = {},
-  ) {}
-
-  private update(change: Partial<PanelData>) {
-    this.data = { ...this.data, ...change }
-    this.remember()
-    this.changed(this.data)
-  }
-
-  /** Keep what a re-mounted panel can show at once; transient flags are not part of it. */
-  private remember() {
-    const cache = this.options.cache
-    const data = this.data
-    const scope = this.scope
-    if (!cache || !scope || !data.report || !data.taskID || data.loading) return
-    cache.noteTask(this.projectID, scope, data.taskID)
-    cache.set(TrajectoryViewCache.key(this.projectID, scope, data.taskID, data.selection), {
-      ...data,
-      key: "",
-      loading: false,
-      loadingActivity: false,
-      recapturingHistory: false,
-      stale: false,
-      error: "",
-      historyError: "",
-    })
-  }
-
-  connect(
-    key: string,
-    projectID: string,
-    projectDirectory: string,
-    scope: ObservationScope,
-    transport: TrajectoryTransport,
-    preferences: PanelPreferences,
-  ) {
-    this.close()
-    this.controller = new AbortController()
-    this.taskController = new AbortController()
-    this.transport = transport
-    this.scope = scope
-    this.projectID = projectID
-    this.projectDirectory = projectDirectory
-    this.target = preferences.target ?? undefined
-    this.targetError =
-      this.target &&
-      (this.target.projectID !== projectID ||
-        this.target.projectDirectory !== projectDirectory ||
-        scope.kind !== "project")
-        ? `Task ${this.target.reference} is unavailable in this project or scope.`
-        : ""
-    // A task from the opener, then this view's last task, then the last one shown here; only a
-    // panel with none of these asks the person to pick.
-    const taskID =
-      this.target?.taskID ??
-      preferences.taskID ??
-      this.options.cache?.lastTask(projectID, scope) ??
-      null
-    const cached =
-      !this.targetError && taskID
-        ? this.options.cache?.get(
-            TrajectoryViewCache.key(projectID, scope, taskID, preferences.selection),
-          )
-        : undefined
-    this.data = blank(key)
-    // A cache hit keeps the last content on screen; the forced read below refreshes it in place.
-    this.update({
-      ...(cached ?? {}),
-      key,
-      taskID,
-      taskReference: this.target?.reference ?? cached?.taskReference ?? null,
-      selection: this.target
-        ? (cached?.selection ?? null)
-        : (preferences.selection ?? cached?.selection ?? null),
-      ...(this.targetError ? { loading: false, error: this.targetError } : {}),
-    })
-    const generation = this.generation
-    void this.watch(generation, transport, this.controller.signal)
-    if (!this.targetError) {
-      void this.refresh({ force: cached !== undefined })
-      if (cached?.eventCursor) void this.drainActivity()
-    }
-  }
-
-  private retryRefresh() {
-    if (this.cancelRetry || this.controller.signal.aborted) return
-    const generation = this.generation
-    this.cancelRetry = this.schedule(() => {
-      if (generation !== this.generation) return
-      this.cancelRetry = undefined
-      void this.refresh({ force: true })
-    }, this.retryDelay)
-    this.retryDelay = Math.min(30_000, this.retryDelay * 2)
-  }
-
-  /**
-   * Change events refresh live histories only. `force` is for reconnects, resnapshots,
-   * retries and explicit user refresh: it always reads status again.
-   */
-  async refresh(options: { force?: boolean } = {}) {
-    const force = options.force === true
-    const transport = this.transport
-    const scope = this.scope
-    if (!transport || !scope || this.controller.signal.aborted || this.targetError) return
-    if (this.refreshing) {
-      this.pendingRefresh = true
-      this.pendingForce ||= force
-      return
-    }
-    this.cancelRetry?.()
-    this.cancelRetry = undefined
-    if (!transport.online()) {
-      this.update({ stale: true, loading: false, error: "Trajectory updates are disconnected." })
-      this.retryRefresh()
-      return
-    }
-
-    this.refreshing = true
-    const generation = this.generation
-    const request = ++this.snapshotRequest
-    const signal = this.controller.signal
-    try {
-      if (this.target) {
-        const target = this.target
-        const taskID = target.taskID
-        const taskChanged = taskID !== this.data.taskID
-        if (taskChanged) this.beginTask(taskID)
-        const taskSignal = AbortSignal.any([signal, this.taskController.signal])
-        const taskRequest = this.taskRequest
-        if (
-          generation !== this.generation ||
-          request !== this.snapshotRequest ||
-          taskSignal.aborted
-        )
-          return
-
-        const tasks = [
-          ...this.data.tasks.filter((task) => task.taskID !== taskID),
-          {
-            taskID,
-            title: target.reference,
-            status: this.data.report ? currentTaskState(this.data.report) : "loading",
-          },
-        ]
-        this.update({ tasks, taskID, taskReference: target.reference, error: "" })
-
-        if (
-          this.data.historyError &&
-          this.data.taskID === taskID &&
-          (!this.data.report || this.data.historyCapturedAt === null)
-        ) {
-          this.update({ loading: false, stale: true, error: "" })
-        } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
-          await this.captureHistory(taskID, taskSignal, !taskChanged)
-        } else if (force || !settledHistory(this.data.report)) {
-          await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
-        } else {
-          this.update({ loading: false, stale: Boolean(this.data.historyError), error: "" })
-        }
-        return
-      }
-
-      const read = transport.snapshot(scope, signal)
-      const response = await (this.data.snapshot
-        ? read
-        : withDeadline(
-            read,
-            this.options.firstReadTimeoutMs ?? FIRST_READ_TIMEOUT_MS,
-            "the LAZERS service",
-          ))
-      if (generation !== this.generation || request !== this.snapshotRequest || signal.aborted)
-        return
-      if (response.projectID !== this.projectID)
-        throw new Error("Observation belongs to another project")
-      const snapshot = parseProjectedSnapshot(response)
-      const tasks = taskChoices(snapshot)
-      const previousTaskID = this.data.taskID
-      // Nothing is chosen for the person: with no (or a vanished) selection the panel asks.
-      const taskID = tasks.some((task) => task.taskID === previousTaskID) ? previousTaskID : null
-      const taskChanged = taskID !== previousTaskID
-      if (taskChanged) this.beginTask(taskID)
-      const taskSignal = AbortSignal.any([signal, this.taskController.signal])
-      const taskRequest = this.taskRequest
-      if (generation !== this.generation || request !== this.snapshotRequest || taskSignal.aborted)
-        return
-
-      this.update({
-        snapshot,
-        eventSequence: this.observeEventSequence(snapshot.boundary.eventSequence),
-        tasks,
-        taskID,
-        taskReference: null,
-        error: "",
-        asOf: Date.now(),
-      })
-
-      if (!taskID) {
-        this.update({
-          report: undefined,
-          selection: null,
-          events: [],
-          liveEvents: [],
-          capturedEventIDs: [],
-          eventCursor: null,
-          totalEvents: 0,
-          historyCapturedAt: null,
-          historyExpiresAt: null,
-          historyError: "",
-          pageRecaptureRequired: false,
-          recapturingHistory: false,
-          loading: false,
-          loadingActivity: false,
-          stale: false,
-          error: "",
-        })
-      } else if (
-        this.data.historyError &&
-        this.data.taskID === taskID &&
-        (!this.data.report || this.data.historyCapturedAt === null)
-      ) {
-        this.update({ loading: false, stale: true, error: "" })
-      } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
-        await this.captureHistory(taskID, taskSignal, !taskChanged)
-      } else if (
-        force ||
-        !settledHistory(this.data.report) ||
-        taskSnapshotFingerprint(snapshot, taskID) !== this.readFingerprint
-      ) {
-        await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
-      } else {
-        this.update({ loading: false, stale: Boolean(this.data.historyError), error: "" })
-      }
-    } catch (error) {
-      if (generation === this.generation && request === this.snapshotRequest && !signal.aborted) {
-        const message = requestFailureMessage(error, "Trajectory snapshot could not be refreshed.")
-        this.update({
-          loading: false,
-          stale: true,
-          error: this.target
-            ? `Trajectory for ${this.target.reference} is unavailable: ${message}`
-            : message,
-        })
-        this.retryRefresh()
-      }
-    } finally {
-      if (generation === this.generation) {
-        this.refreshing = false
-        if (!this.data.error) this.retryDelay = 1_000
-        const pendingSequence = this.pendingSequence
-        this.pendingSequence = 0
-        let pendingForce = this.pendingForce
-        this.pendingForce = false
-        if (this.pendingResnapshot) {
-          this.pendingResnapshot = false
-          pendingForce = true
-          this.update({ eventSequence: null })
-        }
-        if (
-          this.pendingRefresh ||
-          pendingForce ||
-          (pendingSequence > 0 &&
-            (typeof this.data.eventSequence !== "number" ||
-              pendingSequence > this.data.eventSequence))
-        ) {
-          this.pendingRefresh = false
-          void this.refresh({ force: pendingForce })
-        }
-      }
-    }
-  }
-
-  private beginTask(taskID: string | null) {
-    this.statusCursor = undefined
-    this.readFingerprint = null
-    this.taskController.abort()
-    this.taskController = new AbortController()
-    this.taskRequest++
-    this.statusRequest++
-    this.historyRequest++
-    this.activityRequest++
-    this.update({
-      taskID,
-      taskReference: this.target?.reference ?? null,
-      report: undefined,
-      selection: null,
-      selectionEventSnapshot: undefined,
-      events: [],
-      liveEvents: [],
-      capturedEventIDs: [],
-      eventCursor: null,
-      totalEvents: 0,
-      historyCapturedAt: null,
-      historyExpiresAt: null,
-      historyError: "",
-      pageRecaptureRequired: false,
-      statusReadAt: null,
-      recapturingHistory: false,
-      loading: taskID !== null,
-      loadingActivity: false,
-      error: "",
-      asOf: null,
-    })
-  }
-
-  private observeEventSequence(sequence: number) {
-    return typeof this.data.eventSequence !== "number"
-      ? sequence
-      : Math.max(this.data.eventSequence, sequence)
-  }
-
-  private async refreshStatus(
-    taskID: string,
-    signal: AbortSignal,
-    generation = this.generation,
-    taskRequest = this.taskRequest,
-  ) {
-    const transport = this.transport
-    const scope = this.scope
-    if (!transport || !scope || signal.aborted) return
-    const request = ++this.statusRequest
-    try {
-      const response = await transport.status(scope, taskID, signal, this.statusCursor)
-      if (
-        generation !== this.generation ||
-        taskRequest !== this.taskRequest ||
-        request !== this.statusRequest ||
-        signal.aborted
-      )
-        return
-      if (response.projectID !== this.projectID)
-        throw new Error("Trajectory status belongs to another project")
-      if (!responseMatchesScope(response, scope))
-        throw new Error("Trajectory status belongs to another scope")
-      const statusReport = parseTrajectoryReport(response)
-      if (statusReport.task.id !== taskID)
-        throw new Error("Trajectory status belongs to another task")
-      const captured = this.data.report
-      if (!captured || this.data.taskID !== taskID) return
-      const report: TrajectoryReport = {
-        ...statusReport,
-        effort: {
-          ...statusReport.effort,
-          ...(captured.effort.marketEquivalentCost
-            ? {
-                marketEquivalentCost: captured.effort.marketEquivalentCost,
-                recordedCost: {
-                  ...statusReport.effort.recordedCost,
-                  apiEquivalentTotalUsd: captured.effort.recordedCost.apiEquivalentTotalUsd,
-                  ...(captured.effort.recordedCost.apiEquivalentSubtotalUsd === undefined
-                    ? {}
-                    : {
-                        apiEquivalentSubtotalUsd:
-                          captured.effort.recordedCost.apiEquivalentSubtotalUsd,
-                      }),
-                  ...(captured.effort.recordedCost.apiEquivalentStatus === undefined
-                    ? {}
-                    : { apiEquivalentStatus: captured.effort.recordedCost.apiEquivalentStatus }),
-                },
-              }
-            : {}),
-        },
-        coverage: {
-          ...statusReport.coverage,
-          ...captured.coverage,
-          workerProgress: statusReport.coverage.workerProgress,
-        },
-        trajectory: captured.trajectory,
-      }
-      const incoming = statusReport.trajectory.events.filter(
-        (event) => event.kind === "commentary" || event.kind.startsWith("worker-"),
-      )
-      let liveEvents = incoming
-      if (response.live?.mode === "patch") {
-        if (!this.statusCursor || response.live.baseCursor !== this.statusCursor)
-          throw new Error("Live Trajectory baseline changed; resynchronizing")
-        const events = new Map(this.data.liveEvents.map((event) => [event.id, event]))
-        for (const id of response.live.removed) events.delete(id)
-        for (const event of statusReport.trajectory.events) events.delete(event.id)
-        for (const event of incoming) events.set(event.id, event)
-        liveEvents = [...events.values()].sort(
-          (a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || a.id.localeCompare(b.id),
-        )
-      }
-      this.statusCursor = response.live?.cursor ?? undefined
-      this.readFingerprint = taskSnapshotFingerprint(this.data.snapshot, taskID)
-      const tasks = this.data.tasks.map((task) =>
-        task.taskID === taskID ? { ...task, status: currentTaskState(statusReport) } : task,
-      )
-      this.update({
-        report,
-        tasks,
-        liveEvents,
-        statusReadAt: Date.now(),
-        asOf: Date.now(),
-        eventSequence: this.observeEventSequence(response.boundary.eventSequence),
-        loading: false,
-        stale: Boolean(this.data.historyError),
-        error: "",
-      })
-      const selection = this.reconcileSelection(
-        this.data.selection,
-        report,
-        [
-          ...this.data.events,
-          ...liveEvents,
-          ...(this.data.selectionEventSnapshot &&
-          this.data.selection?.kind === "event" &&
-          this.data.selectionEventSnapshot.id === this.data.selection.id
-            ? [this.data.selectionEventSnapshot]
-            : []),
-        ],
-        this.data.capturedEventIDs,
-      )
-      if (JSON.stringify(selection) !== JSON.stringify(this.data.selection)) {
-        this.update({
-          selection,
-          ...(selection?.kind === "event" ? {} : { selectionEventSnapshot: undefined }),
-        })
-        this.selected({ taskID, selection })
-      }
-    } catch (error) {
-      if (
-        generation === this.generation &&
-        taskRequest === this.taskRequest &&
-        request === this.statusRequest &&
-        !signal.aborted
-      ) {
-        this.statusCursor = undefined
-        this.update({
-          loading: false,
-          stale: true,
-          error: requestFailureMessage(error, "Live Trajectory status could not be refreshed."),
-        })
-        this.retryRefresh()
-      }
-    }
-  }
-
-  private async captureHistory(
-    taskID: string,
-    signal: AbortSignal,
-    preserveSelection: boolean,
-    explicitRecapture = false,
-  ) {
-    const transport = this.transport
-    const scope = this.scope
-    if (!transport || !scope || signal.aborted) return
-    const generation = this.generation
-    const taskRequest = this.taskRequest
-    const failureKey = JSON.stringify([this.projectID, scope, taskID])
-    const failures = this.options.cache?.captureFailures
-    const failure = failures?.get(failureKey)
-    if (!explicitRecapture && failure && Date.now() - failure.at < failure.delayMs) {
-      // The identical request just failed; wait for Retry or for the pacing window to pass.
-      this.update({
-        loading: false,
-        loadingActivity: false,
-        stale: true,
-        historyError: failure.message,
-      })
-      return
-    }
-    const request = ++this.historyRequest
-    this.activityRequest++
-    this.update({
-      loading: !this.data.report,
-      loadingActivity: false,
-      ...(explicitRecapture ? { recapturingHistory: true } : {}),
-    })
-    try {
-      const read = transport.history(scope, taskID, signal)
-      const response = await (this.data.report
-        ? read
-        : withDeadline(
-            read,
-            this.options.firstReadTimeoutMs ?? FIRST_READ_TIMEOUT_MS,
-            "the LAZERS service",
-          ))
-      if (
-        generation !== this.generation ||
-        taskRequest !== this.taskRequest ||
-        request !== this.historyRequest ||
-        signal.aborted
-      )
-        return
-      if (response.projectID !== this.projectID)
-        throw new Error("Captured history belongs to another project")
-      if (!responseMatchesScope(response, scope))
-        throw new Error("Captured history belongs to another scope")
-      let report = parseTrajectoryReport(response)
-      if (report.task.id !== taskID) throw new Error("Captured history belongs to another task")
-      const previousSelection = preserveSelection ? this.data.selection : null
-      const previousEvent =
-        this.data.selection?.kind === "event"
-          ? (this.data.events.find((event) => event.id === this.data.selection!.id) ??
-            (this.data.selectionEventSnapshot?.id === this.data.selection.id
-              ? this.data.selectionEventSnapshot
-              : undefined))
-          : undefined
-      const eventIDs = response.eventIDs ?? report.trajectory.events.map((event) => event.id)
-      const previousIDs = preserveSelection ? this.data.events.map((event) => event.id) : []
-      const selectedID = previousSelection?.kind === "event" ? previousSelection.id : undefined
-      const targetCount = Math.max(
-        preserveSelection ? this.data.events.length : 0,
-        ...[...previousIDs, ...(selectedID ? [selectedID] : [])].flatMap((id) => {
-          const index = eventIDs.indexOf(id)
-          return index < 0 ? [] : [index + 1]
+/** A value made inside its own reactive root for as long as `key` holds one, then disposed. */
+function keyedRoot<K, T>(
+  key: Accessor<K | undefined>,
+  make: (key: K) => T,
+): Accessor<T | undefined> {
+  const owner = getOwner()
+  const [value, setValue] = createSignal<T>()
+  let release: (() => void) | undefined
+  createEffect(
+    on(key, (next) => {
+      release?.()
+      release = undefined
+      setValue(undefined)
+      if (next === undefined) return
+      runWithOwner(owner, () =>
+        createRoot((dispose) => {
+          release = dispose
+          setValue(() => make(next))
         }),
       )
-      const events = [...report.trajectory.events]
-      let eventCursor = report.trajectory.nextCursor
-      const continuationCursors = new Set<string>()
-      while (preserveSelection && events.length < targetCount && eventCursor) {
-        const requestedCursor = eventCursor
-        if (continuationCursors.has(requestedCursor))
-          throw new Error("Recaptured history cursor did not advance; recapture explicitly")
-        continuationCursors.add(requestedCursor)
-        const continuation = await transport.history(
-          scope,
-          taskID,
-          signal,
-          requestedCursor,
-          report.trajectory.limit ?? 50,
-        )
-        if (
-          generation !== this.generation ||
-          taskRequest !== this.taskRequest ||
-          request !== this.historyRequest ||
-          signal.aborted
-        )
-          return
-        const continuationReport = parseTrajectoryReport(continuation)
-        if (
-          continuation.projectID !== this.projectID ||
-          !responseMatchesScope(continuation, scope) ||
-          continuationReport.task.id !== taskID ||
-          continuation.capturedAt !== response.capturedAt ||
-          continuation.expiresAt !== response.expiresAt
-        )
-          throw new Error("Recaptured history continuation belongs to another capture")
-        const pageEvents = continuationReport.trajectory.events
-        const expectedIDs = eventIDs.slice(events.length, events.length + pageEvents.length)
-        const nextCursor = continuationReport.trajectory.nextCursor
-        if (
-          pageEvents.length === 0 ||
-          expectedIDs.length !== pageEvents.length ||
-          expectedIDs.some((id, index) => id !== pageEvents[index]?.id) ||
-          nextCursor === requestedCursor ||
-          (nextCursor !== null && continuationCursors.has(nextCursor))
-        )
-          throw new Error(
-            "Recaptured history page order changed or cursor did not advance; recapture explicitly",
-          )
-        events.push(...pageEvents)
-        eventCursor = nextCursor
-      }
-      if (preserveSelection && events.length < targetCount)
-        throw new Error("Recaptured history ended before loaded activity could be preserved")
-      if (preserveSelection)
-        report = {
-          ...report,
-          trajectory: {
-            ...report.trajectory,
-            page: Math.max(1, Math.ceil(events.length / (report.trajectory.limit ?? 50))),
-            events,
-            nextCursor: eventCursor,
-            hasMore: eventCursor !== null,
-          },
-        }
-      const selection = this.reconcileSelection(previousSelection, report, events, eventIDs)
-      const selectionEventSnapshot =
-        selection?.kind === "event"
-          ? (events.find((event) => event.id === selection.id) ??
-            (eventIDs.includes(selection.id) ? previousEvent : undefined))
-          : undefined
-      const tasks = this.data.tasks.map((task) =>
-        task.taskID === taskID ? { ...task, status: currentTaskState(report) } : task,
-      )
-      this.statusCursor = undefined
-      this.readFingerprint = taskSnapshotFingerprint(this.data.snapshot, taskID)
-      this.update({
-        report,
-        tasks,
-        eventSequence: this.observeEventSequence(response.boundary.eventSequence),
-        statusReadAt: null,
-        selection,
-        selectionEventSnapshot,
-        events,
-        liveEvents: [],
-        capturedEventIDs: eventIDs,
-        eventCursor,
-        totalEvents: report.trajectory.totalEvents,
-        historyCapturedAt: response.capturedAt,
-        historyExpiresAt: response.expiresAt,
-        historyError: "",
-        pageRecaptureRequired: false,
-        recapturingHistory: false,
-        loading: false,
-        loadingActivity: false,
-        stale: Boolean(this.data.error),
-        asOf: Date.now(),
-      })
-      failures?.delete(failureKey)
-      this.selected({ taskID, selection })
-      void this.drainActivity()
-    } catch (error) {
-      if (
-        generation === this.generation &&
-        taskRequest === this.taskRequest &&
-        request === this.historyRequest &&
-        !signal.aborted
-      ) {
-        const message =
-          this.target?.taskID === taskID
-            ? `Trajectory for ${this.target.reference} is unavailable: ${historyFailureMessage(error)}`
-            : historyFailureMessage(error)
-        failures?.set(failureKey, {
-          message,
-          at: Date.now(),
-          delayMs: Math.min(
-            CAPTURE_RETRY_LAST_MS,
-            failure ? failure.delayMs * 2 : CAPTURE_RETRY_FIRST_MS,
-          ),
-        })
-        this.update({
-          loading: false,
-          loadingActivity: false,
-          recapturingHistory: false,
-          stale: true,
-          historyError: message,
-        })
-      }
-    }
-  }
+    }),
+  )
+  onCleanup(() => release?.())
+  return value
+}
 
-  private reconcileSelection(
-    selected: Selection | null,
-    report: TrajectoryReport | undefined,
-    events: TrajectoryEvent[],
-    knownEventIDs: string[] = [],
-  ): Selection | null {
-    if (!report) return null
-    if (selected) {
-      if (
-        selected.kind === "attempt" &&
-        report.attempts.some((attempt) => attempt.id === selected.id)
-      )
-        return selected
-      if (
-        selected.kind === "event" &&
-        (events.some((event) => event.id === selected.id) || knownEventIDs.includes(selected.id))
-      )
-        return selected
-      if (
-        selected.kind === "check" &&
-        detailedChecks(report).some((check) => checkKey(check) === selected.id)
-      )
-        return selected
-    }
-    return defaultSelection(report)
-  }
+const messageOf = (error: Error | undefined) =>
+  error ? safeText(error.message, privacyStats(), 400) || "Trajectory could not be read." : ""
 
-  selectTask(taskID: string) {
-    if (!this.data.tasks.some((task) => task.taskID === taskID) || taskID === this.data.taskID)
-      return
-    this.snapshotRequest++
-    this.target = undefined
-    this.targetError = ""
-    this.beginTask(taskID)
-    this.selected({ taskID, selection: null })
-    void this.loadSelectedTask(taskID)
-  }
+export type TrajectoryModelInput = {
+  key: string
+  transport: StreamsTransport
+  /** The canonical project path, the filter of the Tasks sources. */
+  project: string
+  projectID: string
+  projectDirectory: string
+  scope: TrajectoryScope
+  preferences: PanelPreferences
+  selected?: (preferences: PanelPreferences) => void
+  /** The time range in view, epoch ms; the windows follow it. Absent until the plot is measured. */
+  visibleRange?: Accessor<{ from: number; to: number } | undefined>
+}
 
-  selectTarget(target: TaskTrajectoryTarget) {
-    this.target = target
-    this.targetError =
-      target.projectID !== this.projectID ||
-      target.projectDirectory !== this.projectDirectory ||
-      this.scope?.kind !== "project"
-        ? `Task ${target.reference} is unavailable in this project or scope.`
-        : ""
-    this.snapshotRequest++
-    this.update({
-      tasks: [
-        ...this.data.tasks.filter((task) => task.taskID !== target.taskID),
-        { taskID: target.taskID, title: target.reference, status: "loading" },
-      ],
-      stale: Boolean(this.targetError),
-      error: this.targetError,
+export type TrajectoryModel = {
+  data: Accessor<PanelData>
+  selectTask(taskID: string): void
+  selectTarget(target: TaskTrajectoryTarget): void
+  selectAttempt(id: string): void
+  selectCheck(id: string): void
+  selectEvent(id: string): void
+}
+
+/**
+ * The Trajectory panel's data: stream windows over the stored projection and the host, no cursor
+ * and no cache beside them. Must be created inside a reactive owner.
+ *
+ * ```
+ * tasks.schedule  (list)     task choices, when no task is pinned     doubles to read all
+ * tasks.schedule  (1)        the task header, plan state, concern     window 1
+ * trajectory.attempts        every attempt of the task                doubles to read all
+ * trajectory.events (check)  every check result of the task           doubles to read all
+ * trajectory.events          the timeline: 60 rows + 30 each side     follows the viewport
+ * trajectory.effort (1)      the composed effort                      window 1
+ * trajectory.transcript      selected attempt's messages: 60 + 30+30  follows the viewport
+ * trajectory.events (1)      the selected stored event or check       window 1 on its key
+ * ```
+ */
+export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryModel {
+  const { transport, scope } = input
+  const [target, setTarget] = createSignal<TaskTrajectoryTarget | undefined>(
+    input.preferences.target ?? undefined,
+  )
+  const targetError = (value: TaskTrajectoryTarget | undefined) =>
+    value &&
+    (value.projectID !== input.projectID ||
+      value.projectDirectory !== input.projectDirectory ||
+      scope.kind !== "project")
+      ? `Task ${value.reference} is unavailable in this project or scope.`
+      : ""
+  const [pinned, setPinned] = createSignal<string | null>(
+    input.preferences.target?.taskID ?? input.preferences.taskID,
+  )
+  const [selection, setSelection] = createSignal<Selection | null>(
+    input.preferences.target ? null : input.preferences.selection,
+  )
+  const [snapshot, setSnapshot] = createSignal<TrajectoryEvent>()
+  const failure = createMemo(() => targetError(target()))
+  const taskID = createMemo(() => (failure() ? undefined : (pinned() ?? undefined)))
+
+  const choices = wholeStream(
+    transport,
+    taskScheduleRef,
+    () => ({ filter: { project: input.project, scope }, order: "schedule" }),
+    50,
+  )
+
+  // The windows follow the viewport: a range wholly outside the loaded rows moves them that way.
+  const follow = (stream: {
+    items: Accessor<readonly unknown[]>
+    loaded: Accessor<boolean>
+    before: Accessor<number | "more">
+    after: Accessor<number | "more">
+    slide(delta: number): void
+  }) => {
+    const visible = input.visibleRange
+    if (!visible) return
+    createEffect(() => {
+      const view = visible()
+      const rows = stream.items()
+      if (!view || !stream.loaded() || rows.length === 0) return
+      const times = rows
+        .map((row) => rowOf(row).at)
+        .filter((at): at is number => typeof at === "number")
+      if (times.length === 0) return
+      if (view.to < Math.min(...times) && stream.before() !== 0) stream.slide(-SLIDE_ROWS)
+      else if (view.from > Math.max(...times) && stream.after() !== 0) stream.slide(SLIDE_ROWS)
     })
-    this.beginTask(target.taskID)
-    this.update({
-      loading: !this.targetError,
-      stale: Boolean(this.targetError),
-      error: this.targetError,
+  }
+
+  const base = (id: string) => ({ projectDirectory: input.projectDirectory, scope, taskID: id })
+  const bundle = keyedRoot(taskID, (id) => {
+    const schedule = createStream(transport, taskScheduleRef, () => ({
+      filter: { project: input.project, scope, taskID: id, includeRetired: true },
+      order: "schedule",
+      window: 1,
+    }))
+    const attempts = wholeStream(
+      transport,
+      trajectoryAttemptsRef,
+      () => ({ filter: base(id), order: "number" }),
+      16,
+    )
+    const checks = wholeStream(
+      transport,
+      trajectoryEventsRef,
+      () => ({ filter: { ...base(id), kinds: ["check"] }, order: "timeline" }),
+      32,
+    )
+    const timeline = createStream(transport, trajectoryEventsRef, () => ({
+      filter: base(id),
+      order: "timeline",
+      window: WINDOW_ROWS,
+      anchor: "tail" as const,
+    }))
+    const effort = createStream(transport, trajectoryEffortRef, () => ({
+      filter: base(id),
+      order: "effort",
+      window: 1,
+    }))
+    // The attempt whose messages are read: the selected one, or the one the selection belongs to.
+    const sessionOf = createMemo(() => {
+      const picked = selection()
+      let attemptID: string | undefined
+      if (picked?.kind === "attempt") attemptID = picked.id
+      else if (picked?.kind === "check")
+        attemptID =
+          checks
+            .items()
+            .map((row) => checkFromRow(rowOf(row)))
+            .find((check) => checkKey(check) === picked.id)?.attemptID ?? undefined
+      else if (picked?.kind === "event") {
+        const row = timeline.items().find((item) => timelineEventID(rowOf(item)) === picked.id)
+        attemptID = row ? (rowOf(row).attempt_id as string | undefined) : undefined
+      }
+      const list = attempts.items().map(rowOf)
+      const attempt = attemptID ? list.find((item) => item.id === attemptID) : list.at(-1)
+      return attempt && !attempt.takeover && attempt.session_id
+        ? { attemptID: String(attempt.id), sessionID: String(attempt.session_id) }
+        : undefined
     })
-    this.selected({ taskID: target.taskID, selection: null })
-    if (!this.targetError) void this.loadSelectedTask(target.taskID)
-  }
-
-  private async loadSelectedTask(taskID: string) {
-    const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    await this.captureHistory(taskID, signal, false)
-  }
-
-  selectAttempt(id: string) {
-    if (!this.data.report?.attempts.some((attempt) => attempt.id === id)) return
-    this.setSelection({ kind: "attempt", id })
-  }
-
-  selectCheck(id: string) {
-    if (
-      !this.data.report ||
-      !detailedChecks(this.data.report).some((check) => checkKey(check) === id)
-    )
-      return
-    this.setSelection({ kind: "check", id })
-  }
-
-  selectEvent(id: string) {
-    const event =
-      this.data.events.find((item) => item.id === id) ??
-      this.data.liveEvents.find((item) => item.id === id) ??
-      (this.data.selectionEventSnapshot?.id === id ? this.data.selectionEventSnapshot : undefined)
-    if (!event) return
-    this.update({ selectionEventSnapshot: event })
-    this.setSelection({ kind: "event", id })
-  }
-
-  private setSelection(selection: Selection) {
-    this.update({
-      selection,
-      ...(selection.kind === "event" ? {} : { selectionEventSnapshot: undefined }),
+    const transcriptSession = createMemo(() => sessionOf()?.sessionID)
+    const transcript = keyedRoot(transcriptSession, (sessionID) => {
+      const stream = createStream(transport, trajectoryTranscriptRef, () => ({
+        filter: { ...base(id), sessionID },
+        order: "transcript",
+        window: WINDOW_ROWS,
+        anchor: "tail" as const,
+      }))
+      follow(stream)
+      return stream
     })
-    this.selected({ taskID: this.data.taskID, selection })
-  }
-
-  async recaptureActivity() {
-    const taskID = this.data.taskID
-    const transport = this.transport
-    if (
-      !taskID ||
-      !transport ||
-      !this.scope ||
-      this.controller.signal.aborted ||
-      this.data.recapturingHistory
+    // The selected stored event or check: one row with its detail JSON, found by its key.
+    const detailRef = createMemo(() => {
+      const value = selection()
+      if (!value || value.kind === "attempt") return undefined
+      if (value.kind === "check")
+        return checks
+          .items()
+          .map((row) => checkFromRow(rowOf(row)))
+          .find((check) => checkKey(check) === value.id)?.ref
+      const row = timeline.items().find((item) => timelineEventID(rowOf(item)) === value.id)
+      const ref = row ? String(rowOf(row).ref) : value.id
+      return STORED_REF.test(ref) ? ref : undefined
+    })
+    const detail = keyedRoot(detailRef, (ref) =>
+      createStream(transport, trajectoryEventsRef, () => ({
+        filter: base(id),
+        order: "timeline",
+        window: 1,
+        anchor: { key: [ref], place: "start" as const },
+      })),
     )
-      return
-    if (!transport.online()) {
-      this.update({
-        stale: true,
-        historyError: "Trajectory updates are disconnected. Reconnect and recapture history.",
-      })
-      return
-    }
-    const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    await this.captureHistory(taskID, signal, true, true)
-  }
+    follow(timeline)
+    return { schedule, attempts, checks, timeline, effort, transcript, detail, sessionOf }
+  })
+  type Bundle = NonNullable<ReturnType<typeof bundle>>
 
-  /**
-   * Reads the remaining captured pages in the background until the cursor is exhausted. Stops on
-   * the first page that does not advance (error, recapture needed) and on any new capture, task
-   * or close; `resumeActivity` starts it again.
-   */
-  private async drainActivity() {
-    if (this.options.autoContinue === false) return
-    const token = ++this.drainToken
-    const generation = this.generation
-    const taskRequest = this.taskRequest
-    while (
-      token === this.drainToken &&
-      generation === this.generation &&
-      taskRequest === this.taskRequest &&
-      this.data.eventCursor &&
-      !this.data.pageRecaptureRequired &&
-      !this.data.recapturingHistory &&
-      !this.data.historyError
-    ) {
-      const before = this.data.events.length
-      await this.loadMoreActivity()
-      if (this.data.events.length === before) return
-    }
-  }
-
-  /** Retry after a failed background page. */
-  async resumeActivity() {
-    if (this.data.historyError && !this.data.pageRecaptureRequired)
-      this.update({ historyError: "" })
-    await this.drainActivity()
-  }
-
-  async loadMoreActivity() {
-    const transport = this.transport
-    const scope = this.scope
-    const taskID = this.data.taskID
-    const cursor = this.data.eventCursor
-    if (
-      !transport ||
-      !scope ||
-      !taskID ||
-      !cursor ||
-      this.data.pageRecaptureRequired ||
-      this.data.loadingActivity ||
-      this.data.recapturingHistory
+  function buildReport(
+    attempts: GuiStream<(typeof trajectoryAttemptsRef)["columns"]>,
+    checks: GuiStream<(typeof trajectoryEventsRef)["columns"]>,
+    schedule: GuiStream<(typeof taskScheduleRef)["columns"]>,
+    effort: GuiStream<(typeof trajectoryEffortRef)["columns"]> | undefined,
+    detail: GuiStream<(typeof trajectoryEventsRef)["columns"]> | undefined,
+  ) {
+    const row = schedule.items()[0] ? rowOf(schedule.items()[0]) : undefined
+    if (!row) return {}
+    const concern = concernFromSchedule(row)
+    const attemptRows = attempts.items().map(rowOf)
+    const attemptList: TrajectoryAttempt[] = attemptRows.map((item, index) =>
+      attemptFromRow(item, index === attemptRows.length - 1 ? concern : undefined),
     )
-      return
-    const generation = this.generation
-    const request = ++this.activityRequest
-    const taskRequest = this.taskRequest
-    const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    const capturedAt = this.data.historyCapturedAt
-    const expiresAt = this.data.historyExpiresAt
-    const limit = this.data.report?.trajectory.limit ?? 50
-    const capturedEventIDs = [...this.data.capturedEventIDs]
-    const loadedEventIDs = this.data.events.map((event) => event.id)
-    if (
-      capturedAt === null ||
-      expiresAt === null ||
-      loadedEventIDs.length > capturedEventIDs.length ||
-      loadedEventIDs.some((id, index) => capturedEventIDs[index] !== id)
-    ) {
-      this.update({
-        stale: true,
-        pageRecaptureRequired: true,
-        historyError: "Captured activity pages are inconsistent. Recapture history to continue.",
-      })
-      return
+    const detailed = detail?.items()[0] ? rowOf(detail.items()[0]) : undefined
+    const checkList = checks.items().map((item) => {
+      const check = checkFromRow(rowOf(item))
+      return detailed && detailed.ref === check.ref
+        ? { ...check, ...checkFromDetail(detailed.detail) }
+        : check
+    })
+    const planID = String(row.plan_id ?? "")
+    const planIDs = new Set<string>([
+      ...(planID ? [planID] : []),
+      ...attemptList.map((attempt) => attempt.planID),
+      ...checkList.map((check) => check.planID).filter(Boolean),
+    ])
+    const plans = [...planIDs].map((id) => ({
+      id,
+      ...(id === planID
+        ? {
+            ...(row.plan_state ? { state: String(row.plan_state) } : {}),
+            reason: (row.plan_reason as string | null) ?? null,
+            taskReason: (row.node_reason as string | null) ?? null,
+          }
+        : {}),
+      checks: checkList.filter((check) => check.scope === "plan" && check.planID === id),
+    }))
+    for (const attempt of attemptList)
+      attempt.checks = checkList.filter((check) => check.attemptID === attempt.id)
+    const parsedEffort = (() => {
+      const stored = effort?.items()[0]
+      if (!stored) return undefined
+      const result = reportEffortSchema.safeParse(rowOf(stored).effort)
+      return result.success ? result.data : undefined
+    })()
+    const report: TrajectoryReport = {
+      task: {
+        id: String(row.task_id),
+        ...(row.reference ? { reference: String(row.reference) } : {}),
+        ...(typeof row.revision === "number" && row.revision > 0 ? { revision: row.revision } : {}),
+        status: String(row.status ?? ""),
+        ...(row.node_state ? { recordedState: String(row.node_state) } : {}),
+        hold: holdFromSchedule(row),
+        specification: { objective: String(row.objective ?? row.title ?? "") },
+      },
+      plans,
+      attempts: attemptList,
+      effort:
+        parsedEffort ??
+        emptyEffort(attemptList.reduce((total, attempt) => total + attempt.toolCount.value, 0)),
     }
-    this.update({ loadingActivity: true })
-    try {
-      const response = await transport.history(scope, taskID, signal, cursor, limit)
-      if (
-        generation !== this.generation ||
-        taskRequest !== this.taskRequest ||
-        request !== this.activityRequest ||
-        signal.aborted
-      )
-        return
-      let report: TrajectoryReport
-      try {
-        report = parseTrajectoryReport(response)
-      } catch (error) {
-        throw new PageRecaptureError(error instanceof Error ? error.message : "Unsupported page")
-      }
-      if (
-        response.projectID !== this.projectID ||
-        !responseMatchesScope(response, scope) ||
-        report.task.id !== taskID ||
-        response.capturedAt !== capturedAt ||
-        response.expiresAt !== expiresAt
-      )
-        throw new PageRecaptureError("Activity page belongs to another project or task")
-      const pageEvents = report.trajectory.events
-      const pageIDs = pageEvents.map((event) => event.id)
-      const offset = this.data.events.length
-      const expectedIDs = capturedEventIDs.slice(offset, offset + pageIDs.length)
-      const nextOffset = offset + pageIDs.length
-      const hasExpectedNextPage = nextOffset < capturedEventIDs.length
-      if (
-        report.trajectory.limit !== limit ||
-        report.trajectory.totalEvents !== capturedEventIDs.length ||
-        pageIDs.length === 0 ||
-        expectedIDs.length !== pageIDs.length ||
-        expectedIDs.some((id, index) => id !== pageIDs[index]) ||
-        (report.trajectory.page !== undefined &&
-          report.trajectory.page !== Math.floor(offset / limit) + 1) ||
-        Boolean(report.trajectory.nextCursor) !== hasExpectedNextPage ||
-        report.trajectory.nextCursor === cursor
-      )
-        throw new PageRecaptureError(
-          "Activity page order changed or cursor did not advance; recapture explicitly",
-        )
-      if (
-        response.eventIDs &&
-        (response.eventIDs.length !== capturedEventIDs.length ||
-          response.eventIDs.some((id, index) => id !== capturedEventIDs[index]))
-      )
-        throw new PageRecaptureError("Activity page belongs to another captured event sequence")
-      const events = [...this.data.events, ...pageEvents]
-      this.update({
-        events,
-        eventCursor: report.trajectory.nextCursor,
-        totalEvents: report.trajectory.totalEvents,
-        loadingActivity: false,
-        historyError: "",
-      })
-    } catch (error) {
-      if (
-        generation === this.generation &&
-        taskRequest === this.taskRequest &&
-        request === this.activityRequest &&
-        !signal.aborted
-      ) {
-        const pageRecaptureRequired = requiresRecapture(error)
-        this.update({
-          loadingActivity: false,
-          stale: this.data.stale || pageRecaptureRequired,
-          pageRecaptureRequired,
-          historyError: historyFailureMessage(error),
-        })
-      }
-    }
+    return { report, checkList, attemptList }
   }
 
-  private async watch(generation: number, transport: TrajectoryTransport, signal: AbortSignal) {
-    while (!signal.aborted) {
-      try {
-        for await (const event of transport.changes(signal)) {
-          if (generation !== this.generation || signal.aborted) return
-          if (event.projectID !== this.projectID) continue
-          // A reconnect may reset the producer sequence below the old snapshot.
-          // Buffer in-flight events before comparing them with that old boundary.
-          if (this.refreshing) {
-            if (event.resnapshotRequired) {
-              this.pendingRefresh = true
-              this.pendingResnapshot = true
-            } else this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
-          } else if (event.resnapshotRequired) {
-            this.update({ eventSequence: null })
-            void this.refresh({ force: true })
-          } else if (
-            typeof this.data.eventSequence !== "number" ||
-            event.sequence > this.data.eventSequence
-          )
-            void this.refresh()
-        }
-        if (!signal.aborted) throw new Error("Observation update stream closed")
-      } catch {
-        if (generation !== this.generation || signal.aborted) return
-        this.update({ stale: true })
-        await delay(signal)
-        if (signal.aborted) return
-        // Events may have been missed while the stream was down.
-        if (transport.online()) void this.refresh({ force: true })
-      }
-    }
-  }
+  const attemptOf = (items: readonly TrajectoryAttempt[], session: string) =>
+    items.find((attempt) => attempt.sessionID === session)
 
-  close() {
-    this.drainToken++
-    this.statusCursor = undefined
-    this.generation++
-    this.snapshotRequest++
-    this.taskRequest++
-    this.activityRequest++
-    this.statusRequest++
-    this.historyRequest++
-    this.controller.abort()
-    this.taskController.abort()
-    this.cancelRetry?.()
-    this.cancelRetry = undefined
-    this.retryDelay = 1_000
-    this.pendingSequence = 0
-    this.pendingResnapshot = false
-    this.pendingForce = false
-    this.readFingerprint = null
-    this.transport = undefined
-    this.scope = undefined
-    this.projectDirectory = ""
-    this.target = undefined
-    this.targetError = ""
-    this.refreshing = false
-    this.pendingRefresh = false
+  const data = createMemo((): PanelData => {
+    const id = taskID()
+    const value: Bundle | undefined = bundle()
+    const row = value?.schedule.items()[0]
+    const built = value
+      ? buildReport(value.attempts, value.checks, value.schedule, value.effort, value.detail())
+      : {}
+    const report = built.report
+    const attemptList = built.attemptList ?? []
+    const timelineRows = value?.timeline.items() ?? []
+    const transcript = value?.transcript()
+    const merged = new Map<string, TrajectoryEvent>()
+    const put = (event: TrajectoryEvent) =>
+      merged.set(event.id, { ...merged.get(event.id), ...event })
+    for (const item of timelineRows) put(eventFromRow(rowOf(item), id ?? ""))
+    for (const item of transcript?.items() ?? []) {
+      const session = value?.sessionOf()?.sessionID
+      put(eventFromTranscript(rowOf(item), session ? attemptOf(attemptList, session) : undefined))
+    }
+    const selected = selection()
+    const detailed = value?.detail()?.items()[0]
+    const full = detailed ? eventFromDetail(rowOf(detailed).detail) : undefined
+    if (full && selected?.kind === "event") {
+      const existing = merged.get(selected.id)
+      const key = existing?.id ?? full.id
+      merged.set(key, { ...full, ...existing, id: key })
+    }
+    const ordered = [...merged.values()]
+      .map((event, index) => ({ event, index }))
+      .sort(
+        (a, b) =>
+          (a.event.at ?? Number.POSITIVE_INFINITY) - (b.event.at ?? Number.POSITIVE_INFINITY) ||
+          a.index - b.index,
+      )
+      .map(({ event }) => event)
+    const count = (side: number | "more") => (typeof side === "number" ? side : 0)
+    const errors = [
+      choices.error(),
+      value?.schedule.error(),
+      value?.attempts.error(),
+      value?.checks.error(),
+      value?.timeline.error(),
+      value?.effort.error(),
+      transcript?.error(),
+      value?.detail()?.error(),
+    ].filter((error): error is Error => error !== undefined)
+    const error = failure() || messageOf(errors[0])
+    const revision = [
+      value?.schedule.revision(),
+      value?.attempts.revision(),
+      value?.timeline.revision(),
+      value?.effort.revision(),
+      transcript?.revision(),
+    ]
+    void revision
+    const tasks = choices.items().map((item) => choiceFromRow(rowOf(item)))
+    const pin = target()
+    const withTarget =
+      pin && !tasks.some((task) => task.taskID === pin.taskID)
+        ? [
+            ...tasks,
+            {
+              taskID: pin.taskID,
+              title: pin.reference,
+              status: row ? String(rowOf(row).node_state ?? rowOf(row).status ?? "") : "",
+            },
+          ]
+        : tasks
+    const snap = snapshot()
+    return {
+      key: input.key,
+      tasks: withTarget,
+      taskID: id ?? null,
+      taskReference: pin?.reference ?? null,
+      ...(report ? { report } : {}),
+      recorded: {
+        attempts: attemptList.map((attempt) => recordedAttempt(attempt, id ?? "")),
+        checks: (built.checkList ?? []).map((check) => recordedCheck(check, id ?? "")),
+      },
+      selection: selected,
+      events: ordered,
+      ...(snap && selected?.kind === "event" && snap.id === selected.id
+        ? { selectionEventSnapshot: snap }
+        : {}),
+      totalEvents:
+        timelineRows.length +
+        count(value?.timeline.before() ?? 0) +
+        count(value?.timeline.after() ?? 0),
+      partial: value ? value.timeline.before() !== 0 || value.timeline.after() !== 0 : false,
+      loadingTranscript: transcript ? !transcript.loaded() : false,
+      loading: Boolean(id) && !failure() && !(value?.schedule.loaded() && value.attempts.loaded()),
+      stale: Boolean(error) && Boolean(report),
+      error,
+      asOf: value?.timeline.loaded() ? Date.now() : null,
+    }
+  })
+
+  // The last resolved selected event survives the window moving off it.
+  createEffect(() => {
+    const current = data()
+    const event = selectedEventFor(current)
+    if (event) setSnapshot(event)
+  })
+
+  const choose = (next: Selection) => {
+    setSelection(next)
+    input.selected?.({ taskID: taskID() ?? null, selection: next })
+  }
+  const begin = (id: string) => {
+    setSelection(null)
+    setSnapshot(undefined)
+    setPinned(id)
+    input.selected?.({ taskID: id, selection: null })
+  }
+  return {
+    data,
+    selectTask(id) {
+      if (id === taskID() || !data().tasks.some((task) => task.taskID === id)) return
+      setTarget(undefined)
+      begin(id)
+    },
+    selectTarget(next) {
+      setTarget(next)
+      begin(next.taskID)
+    },
+    selectAttempt(id) {
+      if (data().report?.attempts.some((attempt) => attempt.id === id))
+        choose({ kind: "attempt", id })
+    },
+    selectCheck(id) {
+      const report = data().report
+      if (report && detailedChecks(report).some((check) => checkKey(check) === id))
+        choose({ kind: "check", id })
+    },
+    selectEvent(id) {
+      const event = data().events.find((item) => item.id === id)
+      if (!event) return
+      setSnapshot(event)
+      choose({ kind: "event", id })
+    },
   }
 }

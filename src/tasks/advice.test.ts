@@ -9,7 +9,7 @@ import {
   taskAdviceSnapshot,
   TASK_ADVICE_HISTORY_PROJECTION_LIMIT,
 } from "./advice.ts"
-import { TaskReads } from "./read.ts"
+import { getTaskDetail } from "./stream-query.ts"
 import { taskInstructions } from "./instructions.ts"
 
 const cleanups: (() => void)[] = []
@@ -76,7 +76,7 @@ function input(taskID: string, requestID: string, expectedRevision = 0) {
   }
 }
 
-test("advice persists append-only with exact replay, correction, conflicts, provenance, and reopen", () => {
+test("advice persists append-only with exact replay, correction, conflicts, provenance, and reopen", async () => {
   const { open } = fixture()
   const repository = open()
   const task = insert(repository)
@@ -112,7 +112,7 @@ test("advice persists append-only with exact replay, correction, conflicts, prov
       agent: "architect",
     },
   })
-  const instructions = taskInstructions(new TaskReads(repository).get({ taskID: task.id }))
+  const instructions = taskInstructions(await getTaskDetail(repository, { taskID: task.id }))
   expect(instructions).toContain(firstInput.findings[0]!)
   expect(instructions).toContain(firstInput.implementationAdvice[0]!)
   const replay = recordTaskAdvice(repository, firstInput, {
@@ -219,7 +219,7 @@ test("foreign-project reads and writes do not expose or create attachment receip
   expect(taskAdviceSnapshot(foreign, task.id)).toBeNull()
 })
 
-test("corrections continue past the bounded read projection without dropping history or changing task bytes", () => {
+test("corrections continue past the bounded read projection without dropping history or changing task bytes", async () => {
   const repository = fixture().open()
   const task = insert(repository)
   const originalBody = repository.atomic(
@@ -273,7 +273,7 @@ test("corrections continue past the bounded read projection without dropping his
           .body,
     ),
   ).toBe(originalBody)
-  const detail = new TaskReads(repository).get({ taskID: task.id })
+  const detail = await getTaskDetail(repository, { taskID: task.id })
   expect(detail).toMatchObject({
     status: "found",
     advice: {

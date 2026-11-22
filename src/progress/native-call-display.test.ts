@@ -1,0 +1,265 @@
+import { afterEach, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { startProjection } from "../projections/owner.ts"
+import { RunnerStore } from "../runner/store.ts"
+import { TaskRepository } from "../storage.ts"
+import {
+  NATIVE_CALL_DISPLAY,
+  NATIVE_CALL_PAGE_ROWS,
+  nativeCallDisplayProjection,
+} from "./native-call-display.ts"
+
+const cleanups: (() => void)[] = []
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup()
+})
+
+const slow = {
+  startMs: 60_000,
+  quiet: { sliceMs: 1, waitMs: 1 },
+  busy: { sliceMs: 1, waitMs: 1 },
+  retryMs: 60_000,
+}
+
+function store() {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-native-display-"))
+  const path = join(directory, "tasks.sqlite")
+  const repository = new TaskRepository(path, directory)
+  new RunnerStore(repository)
+  cleanups.push(() => {
+    repository.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  return { directory, path, repository }
+}
+
+type Call = {
+  session: string
+  kind?: "native-call" | "local-invocation"
+  invocation: string
+  native?: string | null
+  context?: string
+  tool?: string
+  at: number
+  payload: Record<string, unknown>
+}
+
+function insert(repository: TaskRepository, calls: readonly Call[]) {
+  repository.atomic((db) => {
+    const statement = db.query(
+      `INSERT INTO native_tool_calls(project_directory,project_id,session_id,identity_kind,invocation_id,
+         native_call_id,context_call_id,message_id,agent,tool,first_observed_at,last_observed_at,
+         sources_json,event_ids_json,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'[]','[]',?)`,
+    )
+    for (const call of calls)
+      statement.run(
+        repository.projectDirectory,
+        "project",
+        call.session,
+        call.kind ?? "native-call",
+        call.invocation,
+        call.native === undefined ? call.invocation : call.native,
+        call.context ?? call.invocation,
+        `msg-${call.invocation}`,
+        "lazers-architect",
+        call.tool ?? "read",
+        call.at,
+        call.at,
+        JSON.stringify(call.payload),
+      )
+  })
+}
+
+const corpus: Call[] = [
+  ...Array.from({ length: 25 }, (_, i) => ({
+    session: "ses-architect",
+    invocation: `call-${i}`,
+    at: 1_000 + i,
+    payload: { status: i % 3 ? "succeeded" : "failed", detail: `read ${"x".repeat(300)} ${i}` },
+  })),
+  {
+    session: "ses-architect",
+    invocation: "call-error",
+    at: 2_000,
+    payload: { status: "failed", error: { message: `boom ${"y".repeat(400)}` } },
+  },
+  // A local invocation that the native read leaves out, but whose detail the tool details keep.
+  {
+    session: "ses-architect",
+    kind: "local-invocation",
+    invocation: "local-1",
+    native: null,
+    context: "ctx-1",
+    at: 2_100,
+    payload: { detail: "local detail" },
+  },
+  { session: "ses-other", invocation: "other-1", at: 1_500, payload: { status: "running" } },
+]
+
+type DisplayRow = {
+  session_id: string
+  call_id: string
+  detail_call_id: string
+  identity_kind: string
+  message_id: string | null
+  tool: string | null
+  first_observed_at: number
+  last_observed_at: number
+  status: string | null
+  detail: string | null
+  error: string | null
+}
+const display = (repository: TaskRepository) =>
+  repository.read((db) =>
+    db
+      .query<DisplayRow, [string]>(
+        `SELECT session_id,call_id,detail_call_id,identity_kind,message_id,tool,first_observed_at,
+           last_observed_at,status,detail,error
+         FROM native_tool_call_display WHERE project_directory=? ORDER BY id LIMIT 5000`,
+      )
+      .all(repository.projectDirectory),
+  )
+
+/**
+ * What the old live read returned for a call (`LiveReadStore.nativeCalls` and `toolDetails`,
+ * deleted with the read): the stored identity fields, the payload's status, its detail cut to 200
+ * characters and its error message cut to 240. Each display row must carry exactly that.
+ */
+function parity(repository: TaskRepository) {
+  const rows = display(repository)
+  const stored = repository.read((db) =>
+    db
+      .query<
+        {
+          session_id: string
+          identity_kind: string
+          invocation_id: string
+          native_call_id: string | null
+          context_call_id: string | null
+          message_id: string | null
+          tool: string | null
+          first_observed_at: number
+          last_observed_at: number
+          payload: string
+        },
+        [string]
+      >(
+        `SELECT session_id,identity_kind,invocation_id,native_call_id,context_call_id,message_id,tool,
+           first_observed_at,last_observed_at,payload
+         FROM native_tool_calls WHERE project_directory=?`,
+      )
+      .all(repository.projectDirectory),
+  )
+  let natives = 0
+  for (const call of stored) {
+    const payload = JSON.parse(call.payload) as {
+      status?: string
+      detail?: string
+      error?: { message?: string }
+    }
+    const detailKey = call.native_call_id ?? call.context_call_id ?? call.invocation_id
+    const detail = payload.detail ? Array.from(payload.detail).slice(0, 200).join("") : null
+    // The tool detail of every call, local invocations included, under its detail key.
+    expect(
+      rows.find((row) => row.session_id === call.session_id && row.detail_call_id === detailKey)
+        ?.detail ?? null,
+    ).toBe(detail)
+    if (call.identity_kind !== "native-call") continue
+    natives++
+    expect(
+      rows.find(
+        (row) =>
+          row.identity_kind === "native-call" &&
+          row.session_id === call.session_id &&
+          row.call_id === call.invocation_id,
+      ),
+    ).toMatchObject({
+      message_id: call.message_id,
+      tool: call.tool,
+      first_observed_at: call.first_observed_at,
+      last_observed_at: call.last_observed_at,
+      status: payload.status ?? null,
+      detail,
+      error: payload.error?.message
+        ? Array.from(payload.error.message).slice(0, 240).join("")
+        : null,
+    })
+  }
+  return natives
+}
+
+test("parity: display rows carry what the live native-call and tool-detail reads returned, kept by triggers", () => {
+  const { repository } = store()
+  insert(repository, corpus)
+  expect(display(repository).length).toBe(corpus.length)
+  expect(parity(repository)).toBeGreaterThan(10)
+  // The recorder's merge, an identity promotion and retention keep the rows current.
+  repository.atomic((db) => {
+    db.query(
+      `UPDATE native_tool_calls SET last_observed_at=3000,payload=? WHERE invocation_id='call-1'`,
+    ).run(JSON.stringify({ status: "succeeded", detail: "merged" }))
+    db.query(
+      `UPDATE native_tool_calls SET identity_kind='native-call',invocation_id='native-9',native_call_id='native-9'
+       WHERE invocation_id='local-1'`,
+    ).run()
+    db.query("DELETE FROM native_tool_calls WHERE invocation_id='call-2'").run()
+  })
+  const rows = display(repository)
+  expect(rows.find((row) => row.call_id === "call-1")).toMatchObject({
+    detail: "merged",
+    last_observed_at: 3000,
+  })
+  expect(rows.find((row) => row.call_id === "native-9")?.identity_kind).toBe("native-call")
+  expect(rows.some((row) => row.call_id === "call-2")).toBe(false)
+  expect(rows.length).toBe(corpus.length - 1)
+  parity(repository)
+})
+
+test("backfill: calls from before the table are displayed newest first, resuming after a kill", async () => {
+  const { directory, path, repository } = store()
+  const many: Call[] = Array.from({ length: NATIVE_CALL_PAGE_ROWS * 2 + 7 }, (_, i) => ({
+    session: `ses-${i % 3}`,
+    invocation: `c-${i}`,
+    at: i,
+    payload: { status: "succeeded", detail: `d-${i}` },
+  }))
+  insert(repository, many)
+  const expected = display(repository)
+  repository.atomic((db) => db.exec("DELETE FROM native_tool_call_display"))
+  const first = startProjection(path, directory, nativeCallDisplayProjection, { pacing: slow })
+  expect(first.owner.backfillPage()).toBe(true)
+  first.release()
+  const shown = display(repository)
+  expect(shown.length).toBe(NATIVE_CALL_PAGE_ROWS)
+  // The newest calls came first.
+  expect(Math.min(...shown.map((row) => row.first_observed_at))).toBe(
+    many.length - NATIVE_CALL_PAGE_ROWS,
+  )
+  const lease = startProjection(path, directory, nativeCallDisplayProjection, { pacing: slow })
+  cleanups.push(() => lease.release())
+  await lease.owner.settle()
+  expect(lease.owner.status()).toMatchObject({ name: NATIVE_CALL_DISPLAY, state: "ready" })
+  expect(display(repository)).toEqual(expected)
+  expect(lease.owner.idle()).toBe(true)
+})
+
+test("an upsert on native_tool_calls keeps its display row: the trigger body never conflicts", () => {
+  const { repository } = store()
+  const upsert = (status: string) =>
+    repository.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO native_tool_calls(project_directory,project_id,session_id,identity_kind,invocation_id,
+             native_call_id,context_call_id,first_observed_at,last_observed_at,sources_json,event_ids_json,payload)
+           VALUES(?,'project','ses-a','native-call','c1','c1','c1',1,2,'[]','[]',?)
+           ON CONFLICT(project_directory,session_id,identity_kind,invocation_id)
+           DO UPDATE SET payload=excluded.payload,last_observed_at=excluded.last_observed_at`,
+        )
+        .run(repository.projectDirectory, JSON.stringify({ status })),
+    )
+  upsert("running")
+  upsert("succeeded")
+  expect(display(repository).map((row) => [row.call_id, row.status])).toEqual([["c1", "succeeded"]])
+})

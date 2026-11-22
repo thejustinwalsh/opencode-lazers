@@ -243,6 +243,17 @@ const identityKeysMachine = defineLifecycle("lazers-identity-keys", "backfilling
   keyed: ["text-retired"],
   "text-retired": [],
 })
+/**
+ * A stored projection's readiness (`src/projections/`): its paged backfill walks the source rows
+ * already written, then it is `ready` and only its dirty queue keeps it current. A generation bump
+ * of its derivation sends it back to `backfilling`, which rewrites every row. Both states exit on
+ * an observable fact: the backfill passed the last source row, or the stored generation is older
+ * than the code's.
+ */
+const projectionMachine = defineLifecycle("lazers-projection", "backfilling", {
+  backfilling: ["ready"],
+  ready: ["backfilling"],
+})
 export const lifecycleMachines = {
   task: taskMachine,
   dispatch: dispatchControlMachine,
@@ -266,6 +277,7 @@ export const lifecycleMachines = {
   planningRun: planningRunMachine,
   capacity: capacityMachine,
   identityKeys: identityKeysMachine,
+  projection: projectionMachine,
 } as const
 
 /** SQL invokes the same XState transition against the row's current persisted value. */

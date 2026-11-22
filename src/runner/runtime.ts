@@ -78,8 +78,6 @@ import type { PlanRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
-import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
-import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
 
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
@@ -227,7 +225,6 @@ export class TaskRuntime {
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly beforeRetainedCheckBegin: TaskRuntimeOptions["beforeRetainedCheckBegin"]
   private readonly modelMappingResolver: ModelMappingResolver
-  private readonly schedulingRead: TaskSchedulingRead
   readonly delegatedAgentCapacity: DelegatedAgentCapacity
   constructor(
     readonly store: RunnerStore,
@@ -243,13 +240,6 @@ export class TaskRuntime {
     this.delegatedAgentCapacity = new DelegatedAgentCapacity(
       store.repository,
       options.delegatedAgentProjectKey,
-    )
-    this.schedulingRead = new TaskSchedulingRead(
-      store,
-      this.now,
-      {},
-      undefined,
-      this.delegatedAgentCapacity,
     )
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
     this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
@@ -800,10 +790,6 @@ export class TaskRuntime {
         ? activeProfile(this.store.repository, this.directory)
         : profileRevisionByID(this.store.repository, revisionID)
     return active ? checkRunProfile(active) : undefined
-  }
-
-  readScheduling(input: SchedulingInput): Promise<SchedulingPage> {
-    return this.schedulingRead.read(input)
   }
 
   async command(input: unknown, caller: string): Promise<unknown> {
