@@ -1674,7 +1674,7 @@ function TaskPanel(
         >
           {selectedPresentation().label}
         </span>
-        <span class="lazers-tasks-inspector-title" title={taskTitle(task.proposal.objective)}>
+        <span class="lazers-tasks-inspector-title" title={taskHeading(task.proposal.objective)}>
           {" · "}
           {taskTitle(task.proposal.objective)}
         </span>
