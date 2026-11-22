@@ -1,4 +1,5 @@
 import { Streams } from "../streams/contract.ts"
+import { pricesLabel } from "./prices-label.ts"
 import {
   createStream,
   readWindow,
@@ -82,7 +83,6 @@ import {
   selectedModelFacts,
 } from "./comparison-presentation.ts"
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
-import { panelClock } from "../panel-status.ts"
 import {
   marketSummarySource,
   modelPersonaLabels,
@@ -938,10 +938,19 @@ export function createModelsController(props: ModelsProps) {
       .filter((time) => Number.isFinite(time))
     return times.length ? Math.min(...times) : undefined
   }
-  const pricesAsOf = () => {
-    const time = pricesAsOfTime()
-    return time === undefined ? undefined : panelClock(time)
-  }
+  /** The header's price line: sources used, retrieval time (dated unless today), staleness. */
+  const pricesAsOf = () =>
+    pricesLabel(
+      sources(),
+      priceSourceOrder().sources.map((source) =>
+        source === "openrouter"
+          ? "openrouter-models"
+          : source === "opencode"
+            ? "native-catalog"
+            : source,
+      ),
+      Date.now(),
+    )
   const disconnected = () => !props.session.server.connected
   const refreshAll = () => {
     setPriceSourceRevision((revision) => revision + 1)

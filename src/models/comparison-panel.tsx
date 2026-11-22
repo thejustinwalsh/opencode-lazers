@@ -81,7 +81,16 @@ function PanelHeader(props: { ctl: ModelsController }) {
           }
         >
           <Show when={pricesAsOf()}>
-            {(time) => <span class="lazers-models-prices">Prices {time()}</span>}
+            {(label) => (
+              <span
+                class="lazers-models-prices"
+                data-stale={label().stale ? "" : undefined}
+                title={label().stale ?? label().text}
+              >
+                {label().text}
+                <Show when={label().stale}>{(stale) => <> · {stale()}</>}</Show>
+              </span>
+            )}
           </Show>
         </Show>
         <Ui.IconButton
