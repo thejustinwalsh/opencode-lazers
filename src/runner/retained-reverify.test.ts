@@ -1880,13 +1880,16 @@ test("owner verifies an exact failed-attempt candidate with zero replacement pro
   }
 })
 
-test.each(["success", "failed check", "interruption"] as const)(
+test.each(["success", "failed check", "failed install", "interruption"] as const)(
   "retained verification stages native/profile pkce-challenge dependencies with truthful %s outcome",
   async (outcome) => {
     const installCommand = "npm ci --ignore-scripts --no-audit --no-fund"
     const failedCheck = outcome === "failed check"
+    const failedInstall = outcome === "failed install"
     const interrupted = outcome === "interruption"
     const setupStarted = deferred()
+    const storeRef: { current?: RunnerStore } = {}
+    let installWorkspace: string | undefined
     let installCount = 0
     const installer: RetainedDependencyInstaller = async ({
       candidateWorkspace,
@@ -1894,18 +1897,34 @@ test.each(["success", "failed check", "interruption"] as const)(
       signal,
     }) => {
       installCount++
+      installWorkspace = candidateWorkspace
       expect(command).toEqual(["/bin/sh", "-c", installCommand])
       expect(readFileSync(join(candidateWorkspace, "package-lock.json"), "utf8")).toContain(
         '"lockfileVersion":3',
       )
-      if (interrupted) {
-        setupStarted.resolve()
-        await new Promise<void>((resolve) => {
-          if (signal.aborted) resolve()
-          else signal.addEventListener("abort", () => resolve(), { once: true })
-        })
-        throw new Error("fixture profile install cancelled")
-      }
+      const reservation = storeRef.current?.atomic((db) =>
+        db
+          .query<
+            {
+              canonical_path: string
+              device: number
+              inode: number
+              state: string
+            },
+            []
+          >(
+            `SELECT canonical_path,device,inode,state
+             FROM runner_retained_verification_resources
+             WHERE resource_name='dependency-install'`,
+          )
+          .get(),
+      )
+      expect(reservation).toEqual({
+        canonical_path: join(candidateWorkspace, "node_modules"),
+        device: -1,
+        inode: -1,
+        state: "creating",
+      })
       const packageDirectory = join(candidateWorkspace, "node_modules", "pkce-challenge")
       mkdirSync(packageDirectory, { recursive: true })
       writeFileSync(
@@ -1916,6 +1935,15 @@ test.each(["success", "failed check", "interruption"] as const)(
         join(packageDirectory, "index.mjs"),
         'export const marker = "profile-installed"\n',
       )
+      if (interrupted) {
+        setupStarted.resolve()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener("abort", () => resolve(), { once: true })
+        })
+        throw new Error("fixture profile install cancelled")
+      }
+      if (failedInstall) throw new Error("fixture profile install failed after writing packages")
     }
     const f = await failedFixture({
       taskCheckCommand: "bun test src/runner/retained-check.test.ts",
@@ -1924,6 +1952,7 @@ test.each(["success", "failed check", "interruption"] as const)(
       retainedProfileDependency: true,
       failRetainedCheck: failedCheck,
     })
+    storeRef.current = f.store
     const originalWorkerDependencies = join(f.attempt.workspace, "node_modules", "pkce-challenge")
     mkdirSync(originalWorkerDependencies, { recursive: true })
     writeFileSync(
@@ -1989,7 +2018,11 @@ test.each(["success", "failed check", "interruption"] as const)(
       ),
       "owner",
     )) as { operationID: string }
-    const expectedState = interrupted ? "cancelled" : failedCheck ? "failed" : "accepted"
+    const expectedState = interrupted
+      ? "cancelled"
+      : failedCheck || failedInstall
+        ? "failed"
+        : "accepted"
     if (interrupted) {
       await setupStarted.promise
       await f.runtime.command(
@@ -2030,7 +2063,7 @@ test.each(["success", "failed check", "interruption"] as const)(
         JSON.parse(operation.payload).cleanupState === "complete" &&
         resources.length > 0 &&
         resources.every((resource) => resource.state === "removed") &&
-        (interrupted
+        (interrupted || failedInstall
           ? checks.length === 0
           : checks.length === 1 && checks[0]!.cleanup_state === "complete"),
       )
@@ -2058,7 +2091,7 @@ test.each(["success", "failed check", "interruption"] as const)(
         )
         .all(result.operationID),
     )
-    if (interrupted) {
+    if (interrupted || failedInstall) {
       expect(checks).toHaveLength(0)
     } else {
       expect(checks).toHaveLength(1)
@@ -2080,6 +2113,8 @@ test.each(["success", "failed check", "interruption"] as const)(
     expect(readFileSync(join(originalWorkerDependencies, "index.mjs"), "utf8")).toContain(
       "original-worker",
     )
+    expect(installWorkspace).toBeDefined()
+    expect(existsSync(join(installWorkspace!, "node_modules"))).toBe(false)
     expect(installCount).toBe(1)
     expect(f.prompts).toEqual(prompts)
     expect(f.store.attempts(f.planID)).toHaveLength(1)

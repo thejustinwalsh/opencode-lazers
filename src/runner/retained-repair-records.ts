@@ -448,7 +448,7 @@ export class RetainedRepairRecords {
       const latestNode = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
       const latestRepair = this.retainedRepairForAttempt(attempt)
       return Boolean(
-        latestPlan?.state === "running" &&
+        ["running", "blocked"].includes(latestPlan?.state ?? "") &&
         latestAttempt?.state === "preparing" &&
         latestAttempt.message_id === attempt.message_id &&
         latestAttempt.session_id === attempt.session_id &&

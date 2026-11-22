@@ -667,7 +667,8 @@ export function updateRetainedVerificationResourceIdentity(
       `UPDATE runner_retained_verification_resources
        SET device=?,inode=?,updated_at=?
        WHERE operation_id=? AND phase=? AND check_id=? AND resource_name=?
-         AND canonical_path=? AND state='creating'`,
+         AND canonical_path=?
+         AND (state='creating' OR (state='uncertain' AND device<0 AND inode<0))`,
     )
     .run(
       input.device,
@@ -678,6 +679,36 @@ export function updateRetainedVerificationResourceIdentity(
       input.checkID,
       input.resourceName,
       input.realPath,
+    ).changes
+  return changed === 1
+}
+
+export function settleRetainedVerificationResource(
+  db: Database,
+  input: {
+    operationID: string
+    phase: "task" | "combined"
+    checkID: string
+    resourceName: string
+    state: "removed" | "uncertain"
+    now: number
+  },
+): boolean {
+  ensureRetainedVerificationTables(db)
+  const changed = db
+    .query(
+      `UPDATE runner_retained_verification_resources
+       SET state=lz_runner_transition('resource',state,?),updated_at=?
+       WHERE operation_id=? AND phase=? AND check_id=? AND resource_name=?
+         AND state IN ('creating','active','uncertain')`,
+    )
+    .run(
+      input.state,
+      input.now,
+      input.operationID,
+      input.phase,
+      input.checkID,
+      input.resourceName,
     ).changes
   return changed === 1
 }

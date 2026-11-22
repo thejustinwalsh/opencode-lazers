@@ -18,6 +18,13 @@ function stringList(value: unknown): value is string[] {
   )
 }
 
+/** A recorded permission set remains compatible when the live scope only adds permissions. */
+export function preparationScopeContinues(recorded: unknown, current: unknown): boolean {
+  if (!stringList(recorded) || !stringList(current)) return false
+  const currentScope = new Set(current)
+  return recorded.every((path) => currentScope.has(path))
+}
+
 /** Scope may only grow; every execution and environment identity remains exactly pinned. */
 export function preparationBindingContinues(
   recorded: unknown,
@@ -33,10 +40,8 @@ export function preparationBindingContinues(
     previous.messageID !== current.messageID ||
     previous.repairID !== current.repairID ||
     previous.profileRevisionID !== current.profileRevisionID ||
-    !stringList(previous.scope) ||
-    !stringList(current.scope)
+    !preparationScopeContinues(previous.scope, current.scope)
   )
     return false
-  const currentScope = new Set(current.scope)
-  return previous.scope.every((path) => currentScope.has(path))
+  return true
 }

@@ -6,6 +6,8 @@ import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
 import type { HostSession } from "./host.ts"
 import { RunnerStore } from "./store.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
+import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { getTaskDetail } from "../tasks/stream-query.ts"
 import { taskInstructions } from "../tasks/instructions.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
@@ -456,6 +458,15 @@ test("an additive scope amendment after preparation and checks continues the sam
     },
     "owner",
   )
+  const receiptCheck = (JSON.parse(preparation[0]!.receipt!) as { check: RunnerCheckReceipt }).check
+  const reconciliation = Reflect.get(f.runtime, "effectReconciliation") as EffectReconciliation
+  expect(
+    await reconciliation.checkReceiptMatchesEffect(
+      preparation[0]!,
+      JSON.parse(preparation[0]!.payload),
+      receiptCheck,
+    ),
+  ).toBe(true)
   await drive(f.runtime, 6)
 
   expect(f.store.plan(planID)!.state).toBe("accepted")

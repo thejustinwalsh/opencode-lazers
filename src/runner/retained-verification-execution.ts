@@ -35,6 +35,7 @@ import {
   saveRetainedVerification,
   setRetainedVerificationCheckCleanup,
   setRetainedVerificationWorkspace,
+  settleRetainedVerificationResource,
   settleRetainedVerificationResources,
   updateRetainedVerificationResourceIdentity,
 } from "./retained-verification/store.ts"
@@ -1083,6 +1084,7 @@ export class RetainedVerificationExecution {
     const setup: {
       resource?: RetainedCheckSetupResource
       dependencyLink?: RetainedCheckSetupLink
+      dependencyInstallOutput?: RetainedCheckSetupResource
       temporaryDirectoryLink?: RetainedCheckSetupLink
     } = {}
     try {
@@ -1143,6 +1145,43 @@ export class RetainedVerificationExecution {
             { ...link, realPath: link.path },
             "Retained verification dependency-link ownership reservation changed",
           )
+        },
+        onDependencyInstallReserved: (path) => {
+          setup.dependencyInstallOutput = {
+            path,
+            realPath: path,
+            device: -1,
+            inode: -1,
+          }
+          this.reserveRetainedSetupResource(run, "dependency-install", path, -1, -1)
+        },
+        onDependencyInstallCreated: (resource) => {
+          setup.dependencyInstallOutput = resource
+          this.confirmRetainedSetupResource(
+            run,
+            "dependency-install",
+            resource,
+            "Retained verification dependency-install ownership reservation changed",
+          )
+        },
+        onDependencyInstallRemoved: (path) => {
+          if (setup.dependencyInstallOutput?.path !== path)
+            throw new Error("Retained verification dependency-install path changed")
+          const removed = this.runtime.store.atomic((db) =>
+            settleRetainedVerificationResource(db, {
+              operationID: initial.id,
+              phase,
+              checkID: check.id,
+              resourceName: "dependency-install",
+              state: "removed",
+              now: this.runtime.now(),
+            }),
+          )
+          if (!removed)
+            throw new Error(
+              "Retained verification dependency-install ownership reservation changed",
+            )
+          setup.dependencyInstallOutput = undefined
         },
         onTemporaryDirectoryLinkReserved: (link) => {
           setup.temporaryDirectoryLink = link
@@ -1450,6 +1489,7 @@ export class RetainedVerificationExecution {
     dependencyLink: RetainedCheckSetupLink | undefined,
     temporaryDirectoryLink: RetainedCheckSetupLink | undefined,
   ): Promise<boolean> {
+    let dependencyInstallOutput: RetainedCheckSetupResource | undefined
     try {
       const persisted = this.runtime.store.atomic((db) =>
         db
@@ -1509,6 +1549,17 @@ export class RetainedVerificationExecution {
             inode: persistedTemporaryLink.inode,
           }
         : undefined
+      const persistedInstallOutput = persisted.find(
+        (item) => item.resource_name === "dependency-install" && item.state !== "removed",
+      )
+      dependencyInstallOutput ??= persistedInstallOutput
+        ? {
+            path: persistedInstallOutput.canonical_path,
+            realPath: persistedInstallOutput.canonical_path,
+            device: persistedInstallOutput.device,
+            inode: persistedInstallOutput.inode,
+          }
+        : undefined
       if (!temporaryDirectoryLink) {
         const aliasPath = retainedTemporaryDirectoryAliasPath({
           operationID: operation.id,
@@ -1528,6 +1579,7 @@ export class RetainedVerificationExecution {
         resource,
         candidateWorkspace,
         ...(dependencyLink ? { dependencyLink } : {}),
+        ...(dependencyInstallOutput ? { dependencyInstallOutput } : {}),
         ...(temporaryDirectoryLink ? { temporaryDirectoryLink } : {}),
       })
       this.runtime.store.atomic((db) =>

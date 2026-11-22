@@ -33,7 +33,7 @@ import type {
   RetainedProcedurePlan,
   RetainedProcedureResourceIdentity,
 } from "./procedure.ts"
-import { stageCandidateDependencies } from "./dependency-staging.ts"
+import { installProfileDependencies } from "./profile-dependency-install.ts"
 
 export type RetainedCheckContext = {
   schemaVersion: 1
@@ -578,6 +578,9 @@ export async function createRetainedCheckContext(input: {
   onResourcesCreated?: (resources: RetainedCheckContext["resources"]) => void
   onDependencyLinkReserved?: (link: RetainedCheckSetupLink) => void
   onDependencyLink?: (link: RetainedCheckSetupLink) => void
+  onDependencyInstallReserved?: (path: string) => void
+  onDependencyInstallCreated?: (resource: RetainedCheckSetupResource) => void
+  onDependencyInstallRemoved?: (path: string) => void
   onTemporaryDirectoryLinkReserved?: (link: RetainedCheckSetupLink) => void
   onTemporaryDirectoryLink?: (link: RetainedCheckSetupLink) => void
 }): Promise<RetainedCheckContext> {
@@ -776,26 +779,36 @@ export async function createRetainedCheckContext(input: {
           .find((resolved) => resolved !== undefined)
       if (value !== undefined) environment[name] = value
     }
-    const install = input.dependencyInstaller ?? runProfileInstall
-    for (const entry of input.profile.installs) {
-      if (entry.source === "none") continue
-      await install({
-        candidateWorkspace,
-        environment,
-        signal,
-        command: entry.source === "profile" ? ["/bin/sh", "-c", entry.command] : entry.argv,
-      })
+    const observeDependencyInstall = () => {
+      const info = lstatIfPresent(candidateDependencies)
+      if (info)
+        input.onDependencyInstallCreated?.({
+          path: candidateDependencies,
+          realPath: candidateDependencies,
+          device: info.dev,
+          inode: info.ino,
+        })
+      return info
     }
+    await installProfileDependencies({
+      profile: input.profile,
+      candidateWorkspace,
+      candidateDependencies,
+      candidateManifest: Boolean(candidateManifest),
+      ownedDependencies: resources.find((resource) => resource.name === "dependencies")!.realPath,
+      environment,
+      signal,
+      dependencyInstaller: input.dependencyInstaller,
+      defaultInstaller: runProfileInstall,
+      observeDependencyInstall,
+      assertNotCancelled,
+      onDependencyInstallReserved: input.onDependencyInstallReserved,
+      onDependencyInstallCreated: input.onDependencyInstallCreated,
+      onDependencyInstallRemoved: input.onDependencyInstallRemoved,
+    })
     if (candidateManifest) {
-      // An installer such as `npm ci` replaces node_modules with a real directory in the
-      // candidate. Move what it wrote into the owned resource, then link as for any project.
-      const written = lstatIfPresent(candidateDependencies)
-      if (written) {
-        if (written.isSymbolicLink() || !written.isDirectory())
-          throw new Error("Candidate dependency install left an unexpected node_modules entry")
-        const target = resources.find((resource) => resource.name === "dependencies")!.realPath
-        stageCandidateDependencies(candidateDependencies, target)
-      }
+      if (lstatIfPresent(candidateDependencies))
+        throw new Error("Candidate dependency install output was not moved into its owned resource")
       linkDependencies()
     }
   } else if (candidateManifest && candidateDependencySpecs(candidateManifest).length > 0)
@@ -1118,9 +1131,11 @@ export async function removeRetainedCheckSetupResources(input: {
   resource: RetainedCheckSetupResource
   candidateWorkspace: string
   dependencyLink?: RetainedCheckSetupLink
+  dependencyInstallOutput?: RetainedCheckSetupResource
   temporaryDirectoryLink?: RetainedCheckSetupLink
 }): Promise<void> {
   const root = realpathSync(input.rootDirectory)
+  const candidateDependencies = join(realpathSync(input.candidateWorkspace), "node_modules")
   const setupPath = input.resource.path
   const setupRelativePath = relative(root, setupPath)
   if (
@@ -1135,8 +1150,11 @@ export async function removeRetainedCheckSetupResources(input: {
 
   if (
     (input.dependencyLink &&
-      (input.dependencyLink.path !== join(realpathSync(input.candidateWorkspace), "node_modules") ||
+      (input.dependencyLink.path !== candidateDependencies ||
         input.dependencyLink.target !== join(setupPath, "dependencies"))) ||
+    (input.dependencyInstallOutput &&
+      (input.dependencyInstallOutput.path !== candidateDependencies ||
+        input.dependencyInstallOutput.realPath !== candidateDependencies)) ||
     (input.temporaryDirectoryLink && input.temporaryDirectoryLink.target !== join(setupPath, "tmp"))
   )
     throw new Error("Verification setup link binding changed; preserve the partial context")
@@ -1153,10 +1171,24 @@ export async function removeRetainedCheckSetupResources(input: {
     unlinkSync(link.path)
   }
 
-  if (
-    !input.dependencyLink &&
-    lstatIfPresent(join(realpathSync(input.candidateWorkspace), "node_modules"))
-  )
+  if (input.dependencyInstallOutput) {
+    const info = lstatIfPresent(candidateDependencies)
+    if (info) {
+      if (
+        input.dependencyInstallOutput.device < 0 ||
+        input.dependencyInstallOutput.inode < 0 ||
+        info.isSymbolicLink() ||
+        !info.isDirectory() ||
+        info.dev !== input.dependencyInstallOutput.device ||
+        info.ino !== input.dependencyInstallOutput.inode ||
+        realpathSync(candidateDependencies) !== candidateDependencies
+      )
+        throw new Error("Verification dependency install ownership changed; preserve the resource")
+      await rm(candidateDependencies, { recursive: true, force: false })
+      if (lstatIfPresent(candidateDependencies))
+        throw new Error("Verification dependency install output remains after cleanup")
+    }
+  } else if (!input.dependencyLink && lstatIfPresent(candidateDependencies))
     throw new Error(
       "Verification dependency link has no persisted ownership witness; preserve the resource",
     )

@@ -11,6 +11,7 @@ import type { WorkerInstruction } from "./host.ts"
 import { hostMessageByID } from "./host-reads.ts"
 import { nativeWorktreeFailureFromReceipt } from "./startup-recovery.ts"
 import { forgetVerificationActivity, verificationActivityKey } from "./verification-activities.ts"
+import { preparationScopeContinues } from "./verification-preparation/binding.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
 import type { CheckActivities } from "./check-activities.ts"
 import type { EffectRow } from "./store.ts"
@@ -287,7 +288,7 @@ export class EffectReconciliation {
       preparation.inputFingerprint === payload.inputFingerprint &&
       JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
       JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
-      JSON.stringify(scope) === JSON.stringify(payload.scope) &&
+      preparationScopeContinues(payload.scope, scope) &&
       preparation.resultingFingerprint ===
         (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
       !protectedPaths(preparation.paths, this.store.effectiveScope(effect.task_id!)).length
