@@ -109,8 +109,6 @@ export class PlanMovedDuringCommand extends Error {
   }
 }
 
-export const PLAN_MOVED_RETRIES = 3
-
 /**
  * Earlier Architect prompts sent an optimistic `expectedVersion`. It no longer
  * decides anything: drop it before validation so an in-flight session whose
