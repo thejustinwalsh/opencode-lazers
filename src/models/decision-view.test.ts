@@ -640,6 +640,70 @@ test("idle: an open view with no revision or evidence change asks the worker not
   }
 })
 
+async function until(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 400 && !predicate(); attempt++) await Bun.sleep(10)
+  expect(predicate()).toBe(true)
+}
+
+test("a price refresh reaches a held view: an evidence write rebuilds it, even past a build that never settled", async () => {
+  const calls: DecisionViewCall[] = []
+  let hang = true
+  const views = new DecisionViews(
+    fixture.path,
+    {
+      async view(_project, call) {
+        calls.push(call)
+        return computedView(call)
+      },
+    },
+    // The first routes read never answers (a host call that hangs), as on the live service.
+    async (_project, _task, signal) => {
+      if (!hang) return routed
+      hang = false
+      return new Promise<never>((_, reject) =>
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+      )
+    },
+    { debounceMs: 5, refreshMs: 0, deadlineMs: 50 },
+  )
+  const shared = acquireSharedConnection(fixture.path)
+  try {
+    const viewID = views.open(fixture.projectDirectory, {
+      filters: filtersOf(null, null),
+      basis: null,
+      taskID: null,
+    })
+    await views.settle()
+    // The stuck build was abandoned at the deadline and the view built again at its cadence.
+    await until(() => views.writes.has(viewID))
+    const written = views.writes.get(viewID)!
+    const before = calls.length
+    // The price sources were fetched: the refresh row moves, and the held view is rebuilt.
+    const retrieved = new Date().toISOString()
+    shared.db.exec(`INSERT OR IGNORE INTO model_evidence_refreshes(project_directory,source,state)
+      VALUES('${fixture.projectDirectory}','openrouter-models','never')`)
+    shared.db
+      .query(
+        `UPDATE model_evidence_refreshes SET state='succeeded', latest_retrieved_at=?,
+           completed_at=? WHERE project_directory=? AND source='openrouter-models'`,
+      )
+      .run(retrieved, retrieved, fixture.projectDirectory)
+    await until(() => calls.length > before && views.writes.get(viewID) !== written)
+    await views.settle()
+    const sources = JSON.parse(
+      shared.db
+        .query<{ sources: string }, [number]>("SELECT sources FROM model_decision_views WHERE id=?")
+        .get(viewID)!.sources,
+    ) as Array<{ source: string; refresh: { latestRetrievedAt: string | null } | null }>
+    expect(sources.find((item) => item.source === "openrouter-models")?.refresh).toMatchObject({
+      latestRetrievedAt: retrieved,
+    })
+  } finally {
+    shared.release()
+    views.close()
+  }
+})
+
 test("a view stays current while a stream holds it, however long; once let go it is not built again", async () => {
   const calls: DecisionViewCall[] = []
   let clock = Date.now()
