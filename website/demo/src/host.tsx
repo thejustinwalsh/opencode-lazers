@@ -98,7 +98,8 @@ export function mountPanel<D>(
               if (!handler)
                 throw new Error(`The demo host has no answer for ${contract.id}.${method}`)
               await new Promise<void>((resolve) => setTimeout(resolve, 12))
-              return structuredClone(handler(input as never))
+              // A handler may answer later (a slow source in a test): the reply is what it settles to.
+              return structuredClone(await handler(input as never))
             }
           },
         },
