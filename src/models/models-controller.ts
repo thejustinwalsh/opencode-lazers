@@ -160,6 +160,7 @@ export function createModelsController(props: ModelsProps) {
   })
   const [pricePolicyStream, setPricePolicyStream] =
     createSignal<GuiStream<typeof modelPricePolicyRef.columns>>()
+  const [pricePolicyStreamProject, setPricePolicyStreamProject] = createSignal<string>()
   const [pricePolicyRetry, setPricePolicyRetry] = createSignal(0)
   // A route carried from Compare into the Assignments editor draft for one persona.
   const [assignmentPrefill, setAssignmentPrefill] = createSignal<{
@@ -329,12 +330,17 @@ export function createModelsController(props: ModelsProps) {
         { location: { directory: value.directory } },
       )
       const scope = { projectDirectory: value.project, sessionID: value.session }
-      const pricePolicyStream = createStream(streams, modelPricePolicyRef, () => {
+      const policyStream = createStream(streams, modelPricePolicyRef, () => {
         pricePolicyRetry()
         return { filter: scope, order: "project", window: 1 }
       })
-      setPricePolicyStream(pricePolicyStream)
-      onCleanup(() => setPricePolicyStream(undefined))
+      setPricePolicyStreamProject(value.project)
+      setPricePolicyStream(policyStream)
+      onCleanup(() => {
+        if (pricePolicyStream() !== policyStream) return
+        setPricePolicyStream(undefined)
+        setPricePolicyStreamProject(undefined)
+      })
       const transport: ModelComparisonTransport = {
         refreshSources: (parent, force) =>
           withReadDeadline(
@@ -861,10 +867,18 @@ export function createModelsController(props: ModelsProps) {
   }
   // Public benchmark baseline. Units (Coding Index vs list price per 1M tokens) differ
   // from observed cost per task, so it is a separate chart mode, never a shared frontier.
-  const priceSourceError = () => pricePolicyStream()?.error()?.message
+  const hasCurrentPricePolicyStream = () => {
+    const projectKey = current()?.project
+    return projectKey !== undefined && pricePolicyStreamProject() === projectKey
+  }
+  const priceSourceError = () =>
+    hasCurrentPricePolicyStream() ? pricePolicyStream()?.error()?.message : undefined
   const pricePolicy = (): ModelPriceSourcePolicy | undefined => {
+    const projectKey = current()?.project
+    if (!projectKey || !hasCurrentPricePolicyStream()) return undefined
     const row = pricePolicyStream()?.items()[0]
-    if (!row || typeof row.revision !== "number") return undefined
+    if (!row || row.project_directory !== projectKey || typeof row.revision !== "number")
+      return undefined
     const parsed = ModelPriceSourcePolicySchema.safeParse({
       schemaVersion: 1,
       revision: row.revision,
