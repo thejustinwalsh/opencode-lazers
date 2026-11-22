@@ -1,5 +1,6 @@
 import type { TaskConcern, TaskSummary } from "./contract.ts"
 import type { TaskScheduleRow } from "../streams/sources/tasks-ref.ts"
+import { integratedOf } from "./schedule/key.ts"
 
 /** A queued task's scheduling decision, as the task schedule projection stores it. */
 type SchedulingDecision = "eligible" | "waiting" | "unknown" | "not-applicable"
@@ -8,6 +9,8 @@ export type ExecutionListRow = {
   taskID: string
   title: string
   status: string
+  /** Accepted and its plan integrated (`integratedOf`): the row shows Integrated. */
+  integrated?: true
   reason: string | null
   waiting: boolean
   holdReason: string | null
@@ -102,6 +105,7 @@ export function listRowOf(
     taskID,
     title: String(f("objective") ?? ""),
     status,
+    ...(integratedOf({ nodeState, planState }) ? { integrated: true as const } : {}),
     reason: waiting ? (nodeReason ?? planReason ?? reason) : (nodeReason ?? reason),
     waiting,
     holdReason: waiting ? (planReason ?? nodeReason ?? reason) : null,

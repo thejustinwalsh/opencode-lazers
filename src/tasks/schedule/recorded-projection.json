@@ -90,22 +90,33 @@
       "recent/legacy": ["t13", "t12", "t10"]
     },
     "tasks": {
-      "t10": {
-        "reference": "LZ-3",
-        "status": "running",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "running",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t13": {
-        "reference": "LZ-5",
-        "status": "submitted",
+      "t2": {
+        "reference": "LZ-2",
+        "status": "incorporated",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t10": {
+        "reference": "LZ-3",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -123,22 +134,11 @@
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
+      "t13": {
+        "reference": "LZ-5",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t2": {
-        "reference": "LZ-2",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -175,6 +175,28 @@
       "recent/legacy": ["t34", "t30", "t26", "t25", "t23", "t18", "t17", "t13", "t10"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t2": {
+        "reference": "LZ-2",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t10": {
         "reference": "LZ-3",
         "status": "running",
@@ -186,6 +208,17 @@
         "paused": 0,
         "waits": []
       },
+      "t13": {
+        "reference": "LZ-5",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p11"]
+      },
       "t17": {
         "reference": "LZ-6",
         "status": "verifying",
@@ -196,6 +229,28 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p3"]
+      },
+      "t18": {
+        "reference": "LZ-7",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t23": {
+        "reference": "LZ-8",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": []
       },
       "t25": {
         "reference": "LZ-9",
@@ -219,39 +274,6 @@
         "paused": 1,
         "waits": ["plan p19"]
       },
-      "t23": {
-        "reference": "LZ-8",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": []
-      },
-      "t13": {
-        "reference": "LZ-5",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p11"]
-      },
-      "t34": {
-        "reference": "LZ-12",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "t30": {
         "reference": "LZ-11",
         "status": "submitted",
@@ -263,33 +285,11 @@
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
+      "t34": {
+        "reference": "LZ-12",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t2": {
-        "reference": "LZ-2",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t18": {
-        "reference": "LZ-7",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -384,67 +384,34 @@
       ]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t2": {
+        "reference": "LZ-2",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t10": {
         "reference": "LZ-3",
         "status": "running",
         "reason": null,
         "recordedState": "running",
         "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t17": {
-        "reference": "LZ-6",
-        "status": "verifying",
-        "reason": null,
-        "recordedState": "verifying",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p3"]
-      },
-      "t23": {
-        "reference": "LZ-8",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t26": {
-        "reference": "LZ-10",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p19"]
-      },
-      "t47": {
-        "reference": "LZ-16",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p46"]
-      },
-      "t45": {
-        "reference": "LZ-15",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -460,6 +427,72 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p11"]
+      },
+      "t17": {
+        "reference": "LZ-6",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p3"]
+      },
+      "t18": {
+        "reference": "LZ-7",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t23": {
+        "reference": "LZ-8",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t25": {
+        "reference": "LZ-9",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p19"]
+      },
+      "t26": {
+        "reference": "LZ-10",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p19"]
+      },
+      "t30": {
+        "reference": "LZ-11",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p24"]
       },
       "t34": {
         "reference": "LZ-12",
@@ -483,39 +516,6 @@
         "paused": 0,
         "waits": ["plan p24"]
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t25": {
-        "reference": "LZ-9",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p19"]
-      },
-      "t30": {
-        "reference": "LZ-11",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p24"]
-      },
       "t38": {
         "reference": "LZ-14",
         "status": "failed",
@@ -527,27 +527,27 @@
         "paused": 0,
         "waits": []
       },
-      "t18": {
-        "reference": "LZ-7",
-        "status": "failed",
+      "t45": {
+        "reference": "LZ-15",
+        "status": "queued",
         "reason": null,
-        "recordedState": "failed",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t2": {
-        "reference": "LZ-2",
-        "status": "cancelled",
+      "t47": {
+        "reference": "LZ-16",
+        "status": "queued",
         "reason": null,
-        "recordedState": "incorporated",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": []
+        "waits": ["plan p46"]
       }
     }
   },
@@ -572,9 +572,9 @@
       "schedule/running": ["t25", "t13", "t23", "t37"],
       "schedule/blocked": [],
       "schedule/paused": ["t47", "t38", "t45", "t18", "t34", "t52"],
-      "schedule/completed": ["t26", "t0"],
-      "schedule/accepted": ["t26", "t0"],
-      "schedule/integrated": [],
+      "schedule/completed": ["t0", "t26"],
+      "schedule/accepted": ["t0"],
+      "schedule/integrated": ["t26"],
       "schedule/failed": ["t10", "t30"],
       "schedule/cancelled": ["t17", "t2"],
       "schedule/all": [
@@ -591,8 +591,8 @@
         "t57",
         "t56",
         "t54",
-        "t26",
         "t0",
+        "t26",
         "t10",
         "t30",
         "t17",
@@ -635,8 +635,8 @@
       "recent/blocked": [],
       "recent/paused": ["t52", "t47", "t45", "t38", "t34", "t18"],
       "recent/completed": ["t26", "t0"],
-      "recent/accepted": ["t26", "t0"],
-      "recent/integrated": [],
+      "recent/accepted": ["t0"],
+      "recent/integrated": ["t26"],
       "recent/failed": ["t30", "t10"],
       "recent/cancelled": ["t17", "t2"],
       "recent/all": [
@@ -679,16 +679,38 @@
       ]
     },
     "tasks": {
-      "t25": {
-        "reference": "LZ-9",
-        "status": "running",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "running",
-        "started": true,
+        "recordedState": "accepted",
+        "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p19"]
+        "waits": []
+      },
+      "t2": {
+        "reference": "LZ-2",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t10": {
+        "reference": "LZ-3",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       },
       "t13": {
         "reference": "LZ-5",
@@ -701,6 +723,28 @@
         "paused": 0,
         "waits": ["plan p11"]
       },
+      "t17": {
+        "reference": "LZ-6",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "ready",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p3"]
+      },
+      "t18": {
+        "reference": "LZ-7",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": []
+      },
       "t23": {
         "reference": "LZ-8",
         "status": "running",
@@ -712,6 +756,50 @@
         "paused": 0,
         "waits": []
       },
+      "t25": {
+        "reference": "LZ-9",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p19"]
+      },
+      "t26": {
+        "reference": "LZ-10",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p19"]
+      },
+      "t30": {
+        "reference": "LZ-11",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p24"]
+      },
+      "t34": {
+        "reference": "LZ-12",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p24"]
+      },
       "t37": {
         "reference": "LZ-13",
         "status": "running",
@@ -722,17 +810,6 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p24"]
-      },
-      "t47": {
-        "reference": "LZ-16",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p46"]
       },
       "t38": {
         "reference": "LZ-14",
@@ -756,8 +833,8 @@
         "paused": 1,
         "waits": []
       },
-      "t18": {
-        "reference": "LZ-7",
+      "t47": {
+        "reference": "LZ-16",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
@@ -765,18 +842,7 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
-        "waits": []
-      },
-      "t34": {
-        "reference": "LZ-12",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p24"]
+        "waits": ["plan p46"]
       },
       "t52": {
         "reference": "LZ-18",
@@ -789,8 +855,8 @@
         "paused": 1,
         "waits": []
       },
-      "t57": {
-        "reference": "LZ-21",
+      "t54": {
+        "reference": "LZ-19",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -811,77 +877,11 @@
         "paused": 0,
         "waits": []
       },
-      "t54": {
-        "reference": "LZ-19",
+      "t57": {
+        "reference": "LZ-21",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t26": {
-        "reference": "LZ-10",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p19"]
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t10": {
-        "reference": "LZ-3",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-11",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p24"]
-      },
-      "t17": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "ready",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p3"]
-      },
-      "t2": {
-        "reference": "LZ-2",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "incorporated",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -911,9 +911,9 @@
       "schedule/running": ["t25", "t13", "t23", "t37"],
       "schedule/blocked": [],
       "schedule/paused": ["t47", "t38", "t45", "t18", "t34", "t52"],
-      "schedule/completed": ["t26", "t0"],
-      "schedule/accepted": ["t26", "t0"],
-      "schedule/integrated": [],
+      "schedule/completed": ["t0", "t26"],
+      "schedule/accepted": ["t0"],
+      "schedule/integrated": ["t26"],
       "schedule/failed": ["t10", "t30"],
       "schedule/cancelled": ["t17", "t2"],
       "schedule/all": [
@@ -930,8 +930,8 @@
         "t57",
         "t56",
         "t54",
-        "t26",
         "t0",
+        "t26",
         "t10",
         "t30",
         "t17",
@@ -974,8 +974,8 @@
       "recent/blocked": [],
       "recent/paused": ["t52", "t47", "t45", "t38", "t34", "t18"],
       "recent/completed": ["t26", "t0"],
-      "recent/accepted": ["t26", "t0"],
-      "recent/integrated": [],
+      "recent/accepted": ["t0"],
+      "recent/integrated": ["t26"],
       "recent/failed": ["t30", "t10"],
       "recent/cancelled": ["t17", "t2"],
       "recent/all": [
@@ -1018,16 +1018,38 @@
       ]
     },
     "tasks": {
-      "t25": {
-        "reference": "LZ-9",
-        "status": "running",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "running",
-        "started": true,
+        "recordedState": "accepted",
+        "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p19"]
+        "waits": []
+      },
+      "t2": {
+        "reference": "LZ-2",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t10": {
+        "reference": "LZ-3",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       },
       "t13": {
         "reference": "LZ-5",
@@ -1040,6 +1062,28 @@
         "paused": 0,
         "waits": ["plan p11"]
       },
+      "t17": {
+        "reference": "LZ-6",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "ready",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p3"]
+      },
+      "t18": {
+        "reference": "LZ-7",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": []
+      },
       "t23": {
         "reference": "LZ-8",
         "status": "running",
@@ -1051,6 +1095,50 @@
         "paused": 0,
         "waits": []
       },
+      "t25": {
+        "reference": "LZ-9",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p19"]
+      },
+      "t26": {
+        "reference": "LZ-10",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p19"]
+      },
+      "t30": {
+        "reference": "LZ-11",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p24"]
+      },
+      "t34": {
+        "reference": "LZ-12",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p24"]
+      },
       "t37": {
         "reference": "LZ-13",
         "status": "running",
@@ -1061,17 +1149,6 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p24"]
-      },
-      "t47": {
-        "reference": "LZ-16",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p46"]
       },
       "t38": {
         "reference": "LZ-14",
@@ -1095,8 +1172,8 @@
         "paused": 1,
         "waits": []
       },
-      "t18": {
-        "reference": "LZ-7",
+      "t47": {
+        "reference": "LZ-16",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
@@ -1104,18 +1181,7 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
-        "waits": []
-      },
-      "t34": {
-        "reference": "LZ-12",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p24"]
+        "waits": ["plan p46"]
       },
       "t52": {
         "reference": "LZ-18",
@@ -1128,8 +1194,8 @@
         "paused": 1,
         "waits": []
       },
-      "t57": {
-        "reference": "LZ-21",
+      "t54": {
+        "reference": "LZ-19",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -1150,77 +1216,11 @@
         "paused": 0,
         "waits": []
       },
-      "t54": {
-        "reference": "LZ-19",
+      "t57": {
+        "reference": "LZ-21",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t26": {
-        "reference": "LZ-10",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p19"]
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t10": {
-        "reference": "LZ-3",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-11",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p24"]
-      },
-      "t17": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "ready",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p3"]
-      },
-      "t2": {
-        "reference": "LZ-2",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "incorporated",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -1257,17 +1257,6 @@
       "recent/legacy": ["t12", "t9", "t6", "t5", "t2", "t0"]
     },
     "tasks": {
-      "t2": {
-        "reference": "LZ-2",
-        "status": "verifying",
-        "reason": null,
-        "recordedState": "verifying",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p1"]
-      },
       "t0": {
         "reference": "LZ-1",
         "status": "queued",
@@ -1279,19 +1268,19 @@
         "paused": 1,
         "waits": []
       },
-      "t12": {
-        "reference": "LZ-7",
-        "status": "submitted",
+      "t2": {
+        "reference": "LZ-2",
+        "status": "verifying",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "verifying",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": []
+        "waits": ["plan p1"]
       },
-      "t9": {
-        "reference": "LZ-6",
+      "t5": {
+        "reference": "LZ-4",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -1312,8 +1301,19 @@
         "paused": 0,
         "waits": []
       },
-      "t5": {
-        "reference": "LZ-4",
+      "t9": {
+        "reference": "LZ-6",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t12": {
+        "reference": "LZ-7",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -1405,13 +1405,13 @@
       ]
     },
     "tasks": {
-      "t13": {
-        "reference": "LZ-8",
+      "t0": {
+        "reference": "LZ-1",
         "status": "verifying",
-        "reason": null,
+        "reason": "why",
         "recordedState": "verifying",
         "started": false,
-        "takeover": 0,
+        "takeover": 1,
         "concern": null,
         "paused": 0,
         "waits": []
@@ -1421,6 +1421,17 @@
         "status": "blocked",
         "reason": null,
         "recordedState": "blocked",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p10"]
+      },
+      "t6": {
+        "reference": "LZ-5",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -1449,52 +1460,19 @@
         "paused": 1,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
+      "t13": {
+        "reference": "LZ-8",
         "status": "verifying",
-        "reason": "why",
+        "reason": null,
         "recordedState": "verifying",
         "started": false,
-        "takeover": 1,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-14",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t28": {
-        "reference": "LZ-13",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t27": {
-        "reference": "LZ-12",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t22": {
-        "reference": "LZ-11",
+      "t14": {
+        "reference": "LZ-9",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -1515,8 +1493,8 @@
         "paused": 0,
         "waits": []
       },
-      "t14": {
-        "reference": "LZ-9",
+      "t22": {
+        "reference": "LZ-11",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -1526,16 +1504,38 @@
         "paused": 0,
         "waits": []
       },
-      "t6": {
-        "reference": "LZ-5",
-        "status": "failed",
+      "t27": {
+        "reference": "LZ-12",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "failed",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p10"]
+        "waits": []
+      },
+      "t28": {
+        "reference": "LZ-13",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t30": {
+        "reference": "LZ-14",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       }
     }
   },
@@ -1681,33 +1681,22 @@
       ]
     },
     "tasks": {
-      "t13": {
-        "reference": "LZ-8",
-        "status": "verifying",
-        "reason": null,
-        "recordedState": "verifying",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
+        "reason": "why",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t28": {
-        "reference": "LZ-13",
-        "status": "verifying",
+      "t6": {
+        "reference": "LZ-5",
+        "status": "failed",
         "reason": null,
-        "recordedState": "verifying",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-14",
-        "status": "verifying",
-        "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -1736,6 +1725,39 @@
         "paused": 1,
         "waits": []
       },
+      "t13": {
+        "reference": "LZ-8",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t14": {
+        "reference": "LZ-9",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p10"]
+      },
+      "t19": {
+        "reference": "LZ-10",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t22": {
         "reference": "LZ-11",
         "status": "queued",
@@ -1757,6 +1779,28 @@
         "concern": null,
         "paused": 1,
         "waits": []
+      },
+      "t28": {
+        "reference": "LZ-13",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t30": {
+        "reference": "LZ-14",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p10"]
       },
       "t34": {
         "reference": "LZ-15",
@@ -1834,50 +1878,6 @@
         "concern": null,
         "paused": 1,
         "waits": []
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
-        "reason": "why",
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t19": {
-        "reference": "LZ-10",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t6": {
-        "reference": "LZ-5",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p10"]
-      },
-      "t14": {
-        "reference": "LZ-9",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p10"]
       }
     }
   },
@@ -2063,27 +2063,16 @@
       ]
     },
     "tasks": {
-      "t13": {
-        "reference": "LZ-8",
-        "status": "verifying",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "blocked",
         "reason": null,
-        "recordedState": "verifying",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-14",
-        "status": "verifying",
-        "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "blocked",
         "started": false,
         "takeover": 1,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p10"]
+        "waits": []
       },
       "t6": {
         "reference": "LZ-5",
@@ -2105,6 +2094,39 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
+        "waits": ["plan p10"]
+      },
+      "t12": {
+        "reference": "LZ-7",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t13": {
+        "reference": "LZ-8",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t14": {
+        "reference": "LZ-9",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "blocked",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
         "waits": ["plan p10"]
       },
       "t19": {
@@ -2129,49 +2151,27 @@
         "paused": 0,
         "waits": []
       },
-      "t52": {
-        "reference": "LZ-22",
-        "status": "queued",
+      "t28": {
+        "reference": "LZ-13",
+        "status": "cancelled",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "blocked",
+      "t30": {
+        "reference": "LZ-14",
+        "status": "verifying",
         "reason": null,
-        "recordedState": "blocked",
+        "recordedState": "verifying",
         "started": false,
         "takeover": 1,
         "concern": null,
         "paused": 0,
-        "waits": []
-      },
-      "t56": {
-        "reference": "LZ-23",
-        "status": "blocked",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t58": {
-        "reference": "LZ-24",
-        "status": "blocked",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
+        "waits": ["plan p10"]
       },
       "t34": {
         "reference": "LZ-15",
@@ -2194,6 +2194,17 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p10"]
+      },
+      "t41": {
+        "reference": "LZ-17",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p35"]
       },
       "t42": {
         "reference": "LZ-18",
@@ -2239,52 +2250,41 @@
         "paused": 0,
         "waits": []
       },
-      "t70": {
-        "reference": "LZ-31",
-        "status": "submitted",
+      "t52": {
+        "reference": "LZ-22",
+        "status": "queued",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t67": {
-        "reference": "LZ-30",
-        "status": "submitted",
+      "t56": {
+        "reference": "LZ-23",
+        "status": "blocked",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t66": {
-        "reference": "LZ-29",
-        "status": "submitted",
+      "t58": {
+        "reference": "LZ-24",
+        "status": "blocked",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t65": {
-        "reference": "LZ-28",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t64": {
-        "reference": "LZ-27",
+      "t60": {
+        "reference": "LZ-25",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -2305,8 +2305,8 @@
         "paused": 0,
         "waits": []
       },
-      "t60": {
-        "reference": "LZ-25",
+      "t64": {
+        "reference": "LZ-27",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -2316,49 +2316,49 @@
         "paused": 0,
         "waits": []
       },
-      "t12": {
-        "reference": "LZ-7",
-        "status": "incorporated",
+      "t65": {
+        "reference": "LZ-28",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "incorporated",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t41": {
-        "reference": "LZ-17",
-        "status": "failed",
+      "t66": {
+        "reference": "LZ-29",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p35"]
-      },
-      "t28": {
-        "reference": "LZ-13",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t14": {
-        "reference": "LZ-9",
-        "status": "cancelled",
+      "t67": {
+        "reference": "LZ-30",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "blocked",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p10"]
+        "waits": []
+      },
+      "t70": {
+        "reference": "LZ-31",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       }
     }
   },
@@ -2544,27 +2544,16 @@
       ]
     },
     "tasks": {
-      "t13": {
-        "reference": "LZ-8",
-        "status": "verifying",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "blocked",
         "reason": null,
-        "recordedState": "verifying",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-14",
-        "status": "verifying",
-        "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "blocked",
         "started": false,
         "takeover": 1,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p10"]
+        "waits": []
       },
       "t6": {
         "reference": "LZ-5",
@@ -2586,6 +2575,39 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
+        "waits": ["plan p10"]
+      },
+      "t12": {
+        "reference": "LZ-7",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t13": {
+        "reference": "LZ-8",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t14": {
+        "reference": "LZ-9",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "blocked",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
         "waits": ["plan p10"]
       },
       "t19": {
@@ -2610,49 +2632,27 @@
         "paused": 0,
         "waits": []
       },
-      "t52": {
-        "reference": "LZ-22",
-        "status": "queued",
+      "t28": {
+        "reference": "LZ-13",
+        "status": "cancelled",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "blocked",
+      "t30": {
+        "reference": "LZ-14",
+        "status": "verifying",
         "reason": null,
-        "recordedState": "blocked",
+        "recordedState": "verifying",
         "started": false,
         "takeover": 1,
         "concern": null,
         "paused": 0,
-        "waits": []
-      },
-      "t56": {
-        "reference": "LZ-23",
-        "status": "blocked",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t58": {
-        "reference": "LZ-24",
-        "status": "blocked",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
+        "waits": ["plan p10"]
       },
       "t34": {
         "reference": "LZ-15",
@@ -2675,6 +2675,17 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p10"]
+      },
+      "t41": {
+        "reference": "LZ-17",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p35"]
       },
       "t42": {
         "reference": "LZ-18",
@@ -2720,52 +2731,41 @@
         "paused": 0,
         "waits": []
       },
-      "t70": {
-        "reference": "LZ-31",
-        "status": "submitted",
+      "t52": {
+        "reference": "LZ-22",
+        "status": "queued",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t67": {
-        "reference": "LZ-30",
-        "status": "submitted",
+      "t56": {
+        "reference": "LZ-23",
+        "status": "blocked",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t66": {
-        "reference": "LZ-29",
-        "status": "submitted",
+      "t58": {
+        "reference": "LZ-24",
+        "status": "blocked",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t65": {
-        "reference": "LZ-28",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t64": {
-        "reference": "LZ-27",
+      "t60": {
+        "reference": "LZ-25",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -2786,8 +2786,8 @@
         "paused": 0,
         "waits": []
       },
-      "t60": {
-        "reference": "LZ-25",
+      "t64": {
+        "reference": "LZ-27",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -2797,49 +2797,49 @@
         "paused": 0,
         "waits": []
       },
-      "t12": {
-        "reference": "LZ-7",
-        "status": "incorporated",
+      "t65": {
+        "reference": "LZ-28",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "incorporated",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t41": {
-        "reference": "LZ-17",
-        "status": "failed",
+      "t66": {
+        "reference": "LZ-29",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p35"]
-      },
-      "t28": {
-        "reference": "LZ-13",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t14": {
-        "reference": "LZ-9",
-        "status": "cancelled",
+      "t67": {
+        "reference": "LZ-30",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "blocked",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p10"]
+        "waits": []
+      },
+      "t70": {
+        "reference": "LZ-31",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       }
     }
   },
@@ -2871,6 +2871,28 @@
       "recent/legacy": ["t13", "t11", "t10", "t5", "t4"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t1": {
+        "reference": "LZ-2",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t4": {
         "reference": "LZ-3",
         "status": "ready",
@@ -2904,17 +2926,6 @@
         "paused": 0,
         "waits": []
       },
-      "t13": {
-        "reference": "LZ-7",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "t11": {
         "reference": "LZ-6",
         "status": "submitted",
@@ -2926,22 +2937,11 @@
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "accepted",
+      "t13": {
+        "reference": "LZ-7",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t1": {
-        "reference": "LZ-2",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -2978,22 +2978,22 @@
       "recent/legacy": ["t26", "t24", "t17", "t14", "t13", "t11", "t10", "t5", "t4", "t0"]
     },
     "tasks": {
-      "t13": {
-        "reference": "LZ-7",
-        "status": "verifying",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "queued",
         "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
+        "paused": 1,
         "waits": []
       },
-      "t17": {
-        "reference": "LZ-9",
-        "status": "running",
+      "t4": {
+        "reference": "LZ-3",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "running",
+        "recordedState": "exhausted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3011,22 +3011,11 @@
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "queued",
+      "t10": {
+        "reference": "LZ-5",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": []
-      },
-      "t26": {
-        "reference": "LZ-13",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
+        "recordedState": "exhausted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3044,11 +3033,33 @@
         "paused": 0,
         "waits": ["plan p3"]
       },
+      "t13": {
+        "reference": "LZ-7",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t14": {
         "reference": "LZ-8",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t17": {
+        "reference": "LZ-9",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3066,22 +3077,11 @@
         "paused": 0,
         "waits": []
       },
-      "t10": {
-        "reference": "LZ-5",
-        "status": "exhausted",
+      "t26": {
+        "reference": "LZ-13",
+        "status": "queued",
         "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t4": {
-        "reference": "LZ-3",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3226,17 +3226,6 @@
       ]
     },
     "tasks": {
-      "t44": {
-        "reference": "LZ-17",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "t0": {
         "reference": "LZ-1",
         "status": "running",
@@ -3248,35 +3237,13 @@
         "paused": 0,
         "waits": []
       },
-      "t26": {
-        "reference": "LZ-13",
-        "status": "verifying",
+      "t4": {
+        "reference": "LZ-3",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "exhausted",
         "started": false,
         "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t13": {
-        "reference": "LZ-7",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 1,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t17": {
-        "reference": "LZ-9",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 1,
         "concern": null,
         "paused": 0,
         "waits": []
@@ -3292,11 +3259,11 @@
         "paused": 0,
         "waits": []
       },
-      "t41": {
-        "reference": "LZ-16",
-        "status": "queued",
+      "t10": {
+        "reference": "LZ-5",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "exhausted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3314,6 +3281,17 @@
         "paused": 0,
         "waits": ["plan p3"]
       },
+      "t13": {
+        "reference": "LZ-7",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
+        "takeover": 1,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t14": {
         "reference": "LZ-8",
         "status": "queued",
@@ -3321,6 +3299,17 @@
         "recordedState": "queued",
         "started": false,
         "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t17": {
+        "reference": "LZ-9",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
+        "takeover": 1,
         "concern": null,
         "paused": 0,
         "waits": []
@@ -3336,11 +3325,55 @@
         "paused": 0,
         "waits": []
       },
+      "t26": {
+        "reference": "LZ-13",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t33": {
+        "reference": "LZ-14",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p21"]
+      },
       "t37": {
         "reference": "LZ-15",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t41": {
+        "reference": "LZ-16",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t44": {
+        "reference": "LZ-17",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3369,17 +3402,6 @@
         "paused": 0,
         "waits": ["plan p21"]
       },
-      "t54": {
-        "reference": "LZ-22",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "t52": {
         "reference": "LZ-21",
         "status": "submitted",
@@ -3391,33 +3413,11 @@
         "paused": 0,
         "waits": []
       },
-      "t33": {
-        "reference": "LZ-14",
-        "status": "exhausted",
+      "t54": {
+        "reference": "LZ-22",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p21"]
-      },
-      "t10": {
-        "reference": "LZ-5",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t4": {
-        "reference": "LZ-3",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -3623,6 +3623,39 @@
         "paused": 0,
         "waits": []
       },
+      "t4": {
+        "reference": "LZ-3",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t5": {
+        "reference": "LZ-4",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t10": {
+        "reference": "LZ-5",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t11": {
         "reference": "LZ-6",
         "status": "running",
@@ -3633,6 +3666,105 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p3"]
+      },
+      "t13": {
+        "reference": "LZ-7",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t14": {
+        "reference": "LZ-8",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t17": {
+        "reference": "LZ-9",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t24": {
+        "reference": "LZ-12",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t26": {
+        "reference": "LZ-13",
+        "status": "blocked",
+        "reason": null,
+        "recordedState": "blocked",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t33": {
+        "reference": "LZ-14",
+        "status": "exhausted",
+        "reason": "why",
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p21"]
+      },
+      "t37": {
+        "reference": "LZ-15",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t41": {
+        "reference": "LZ-16",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t44": {
+        "reference": "LZ-17",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       },
       "t47": {
         "reference": "LZ-19",
@@ -3645,8 +3777,8 @@
         "paused": 0,
         "waits": ["plan p21"]
       },
-      "t41": {
-        "reference": "LZ-16",
+      "t48": {
+        "reference": "LZ-20",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
@@ -3654,7 +3786,7 @@
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": []
+        "waits": ["plan p21"]
       },
       "t52": {
         "reference": "LZ-21",
@@ -3678,17 +3810,6 @@
         "paused": 0,
         "waits": []
       },
-      "t26": {
-        "reference": "LZ-13",
-        "status": "blocked",
-        "reason": null,
-        "recordedState": "blocked",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "t55": {
         "reference": "LZ-23",
         "status": "queued",
@@ -3699,39 +3820,6 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p2"]
-      },
-      "t14": {
-        "reference": "LZ-8",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t24": {
-        "reference": "LZ-12",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t48": {
-        "reference": "LZ-20",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p21"]
       },
       "t56": {
         "reference": "LZ-24",
@@ -3793,94 +3881,6 @@
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t37": {
-        "reference": "LZ-15",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t5": {
-        "reference": "LZ-4",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t44": {
-        "reference": "LZ-17",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t33": {
-        "reference": "LZ-14",
-        "status": "exhausted",
-        "reason": "why",
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p21"]
-      },
-      "t10": {
-        "reference": "LZ-5",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t4": {
-        "reference": "LZ-3",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t13": {
-        "reference": "LZ-7",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t17": {
-        "reference": "LZ-9",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -4086,6 +4086,39 @@
         "paused": 0,
         "waits": []
       },
+      "t4": {
+        "reference": "LZ-3",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t5": {
+        "reference": "LZ-4",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t10": {
+        "reference": "LZ-5",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t11": {
         "reference": "LZ-6",
         "status": "running",
@@ -4096,6 +4129,105 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p3"]
+      },
+      "t13": {
+        "reference": "LZ-7",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t14": {
+        "reference": "LZ-8",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t17": {
+        "reference": "LZ-9",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t24": {
+        "reference": "LZ-12",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t26": {
+        "reference": "LZ-13",
+        "status": "blocked",
+        "reason": null,
+        "recordedState": "blocked",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t33": {
+        "reference": "LZ-14",
+        "status": "exhausted",
+        "reason": "why",
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p21"]
+      },
+      "t37": {
+        "reference": "LZ-15",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t41": {
+        "reference": "LZ-16",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t44": {
+        "reference": "LZ-17",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       },
       "t47": {
         "reference": "LZ-19",
@@ -4108,8 +4240,8 @@
         "paused": 0,
         "waits": ["plan p21"]
       },
-      "t41": {
-        "reference": "LZ-16",
+      "t48": {
+        "reference": "LZ-20",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
@@ -4117,7 +4249,7 @@
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": []
+        "waits": ["plan p21"]
       },
       "t52": {
         "reference": "LZ-21",
@@ -4141,17 +4273,6 @@
         "paused": 0,
         "waits": []
       },
-      "t26": {
-        "reference": "LZ-13",
-        "status": "blocked",
-        "reason": null,
-        "recordedState": "blocked",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "t55": {
         "reference": "LZ-23",
         "status": "queued",
@@ -4162,39 +4283,6 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p2"]
-      },
-      "t14": {
-        "reference": "LZ-8",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t24": {
-        "reference": "LZ-12",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t48": {
-        "reference": "LZ-20",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p21"]
       },
       "t56": {
         "reference": "LZ-24",
@@ -4256,94 +4344,6 @@
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t37": {
-        "reference": "LZ-15",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t5": {
-        "reference": "LZ-4",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t44": {
-        "reference": "LZ-17",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t33": {
-        "reference": "LZ-14",
-        "status": "exhausted",
-        "reason": "why",
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p21"]
-      },
-      "t10": {
-        "reference": "LZ-5",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t4": {
-        "reference": "LZ-3",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t13": {
-        "reference": "LZ-7",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t17": {
-        "reference": "LZ-9",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -4413,8 +4413,8 @@
         "paused": 1,
         "waits": []
       },
-      "t4": {
-        "reference": "LZ-5",
+      "t3": {
+        "reference": "LZ-4",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -4424,8 +4424,8 @@
         "paused": 0,
         "waits": []
       },
-      "t3": {
-        "reference": "LZ-4",
+      "t4": {
+        "reference": "LZ-5",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -4465,6 +4465,28 @@
       "recent/legacy": ["t19", "t18", "t17", "t16", "t14", "t9", "t3", "t2", "t0"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t2": {
+        "reference": "LZ-3",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t3": {
         "reference": "LZ-4",
         "status": "queued",
@@ -4475,6 +4497,28 @@
         "concern": null,
         "paused": 0,
         "waits": []
+      },
+      "t4": {
+        "reference": "LZ-5",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t7": {
+        "reference": "LZ-6",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "blocked",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p6"]
       },
       "t9": {
         "reference": "LZ-7",
@@ -4509,8 +4553,8 @@
         "paused": 0,
         "waits": []
       },
-      "t19": {
-        "reference": "LZ-12",
+      "t17": {
+        "reference": "LZ-10",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -4531,8 +4575,8 @@
         "paused": 0,
         "waits": []
       },
-      "t17": {
-        "reference": "LZ-10",
+      "t19": {
+        "reference": "LZ-12",
         "status": "submitted",
         "reason": null,
         "recordedState": null,
@@ -4541,50 +4585,6 @@
         "concern": null,
         "paused": 0,
         "waits": []
-      },
-      "t4": {
-        "reference": "LZ-5",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t2": {
-        "reference": "LZ-3",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t7": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "blocked",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p6"]
       }
     }
   },
@@ -4704,49 +4704,49 @@
       ]
     },
     "tasks": {
-      "t19": {
-        "reference": "LZ-12",
-        "status": "queued",
+      "t0": {
+        "reference": "LZ-1",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "exhausted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t23": {
-        "reference": "LZ-13",
-        "status": "queued",
+      "t3": {
+        "reference": "LZ-4",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t32": {
-        "reference": "LZ-16",
-        "status": "queued",
+      "t4": {
+        "reference": "LZ-5",
+        "status": "incorporated",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "incorporated",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p8"]
+        "waits": []
       },
-      "t33": {
-        "reference": "LZ-17",
-        "status": "queued",
+      "t7": {
+        "reference": "LZ-6",
+        "status": "cancelled",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": ["plan p8"]
+        "waits": ["plan p6"]
       },
       "t9": {
         "reference": "LZ-7",
@@ -4803,6 +4803,28 @@
         "paused": 0,
         "waits": []
       },
+      "t19": {
+        "reference": "LZ-12",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t23": {
+        "reference": "LZ-13",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t26": {
         "reference": "LZ-14",
         "status": "queued",
@@ -4825,6 +4847,28 @@
         "paused": 0,
         "waits": []
       },
+      "t32": {
+        "reference": "LZ-16",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p8"]
+      },
+      "t33": {
+        "reference": "LZ-17",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p8"]
+      },
       "t39": {
         "reference": "LZ-18",
         "status": "submitted",
@@ -4835,50 +4879,6 @@
         "concern": null,
         "paused": 0,
         "waits": []
-      },
-      "t3": {
-        "reference": "LZ-4",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t4": {
-        "reference": "LZ-5",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t7": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p6"]
       }
     }
   },
@@ -5052,6 +5052,28 @@
       ]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t3": {
+        "reference": "LZ-4",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t4": {
         "reference": "LZ-5",
         "status": "running",
@@ -5063,16 +5085,16 @@
         "paused": 0,
         "waits": []
       },
-      "t42": {
-        "reference": "LZ-19",
-        "status": "running",
+      "t7": {
+        "reference": "LZ-6",
+        "status": "cancelled",
         "reason": null,
-        "recordedState": "running",
-        "started": true,
+        "recordedState": "accepted",
+        "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": []
+        "waits": ["plan p6"]
       },
       "t9": {
         "reference": "LZ-7",
@@ -5140,27 +5162,16 @@
         "paused": 1,
         "waits": []
       },
-      "t54": {
-        "reference": "LZ-24",
-        "status": "queued",
+      "t26": {
+        "reference": "LZ-14",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 1,
-        "waits": ["plan p34"]
-      },
-      "t57": {
-        "reference": "LZ-25",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p34"]
+        "paused": 0,
+        "waits": []
       },
       "t27": {
         "reference": "LZ-15",
@@ -5173,6 +5184,17 @@
         "paused": 1,
         "waits": []
       },
+      "t32": {
+        "reference": "LZ-16",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p8"]
+      },
       "t39": {
         "reference": "LZ-18",
         "status": "queued",
@@ -5182,6 +5204,17 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
+        "waits": []
+      },
+      "t42": {
+        "reference": "LZ-19",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
         "waits": []
       },
       "t44": {
@@ -5228,60 +5261,27 @@
         "paused": 1,
         "waits": ["plan p60"]
       },
-      "t26": {
-        "reference": "LZ-14",
-        "status": "accepted",
+      "t54": {
+        "reference": "LZ-24",
+        "status": "queued",
         "reason": null,
-        "recordedState": "accepted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
-        "waits": []
+        "paused": 1,
+        "waits": ["plan p34"]
       },
-      "t3": {
-        "reference": "LZ-4",
-        "status": "accepted",
+      "t57": {
+        "reference": "LZ-25",
+        "status": "queued",
         "reason": null,
-        "recordedState": "accepted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t32": {
-        "reference": "LZ-16",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p8"]
-      },
-      "t7": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p6"]
+        "paused": 1,
+        "waits": ["plan p34"]
       }
     }
   },
@@ -5455,6 +5455,28 @@
       ]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t3": {
+        "reference": "LZ-4",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t4": {
         "reference": "LZ-5",
         "status": "running",
@@ -5466,16 +5488,16 @@
         "paused": 0,
         "waits": []
       },
-      "t42": {
-        "reference": "LZ-19",
-        "status": "running",
+      "t7": {
+        "reference": "LZ-6",
+        "status": "cancelled",
         "reason": null,
-        "recordedState": "running",
-        "started": true,
+        "recordedState": "accepted",
+        "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
-        "waits": []
+        "waits": ["plan p6"]
       },
       "t9": {
         "reference": "LZ-7",
@@ -5543,27 +5565,16 @@
         "paused": 1,
         "waits": []
       },
-      "t54": {
-        "reference": "LZ-24",
-        "status": "queued",
+      "t26": {
+        "reference": "LZ-14",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 1,
-        "waits": ["plan p34"]
-      },
-      "t57": {
-        "reference": "LZ-25",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p34"]
+        "paused": 0,
+        "waits": []
       },
       "t27": {
         "reference": "LZ-15",
@@ -5576,6 +5587,17 @@
         "paused": 1,
         "waits": []
       },
+      "t32": {
+        "reference": "LZ-16",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p8"]
+      },
       "t39": {
         "reference": "LZ-18",
         "status": "queued",
@@ -5585,6 +5607,17 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
+        "waits": []
+      },
+      "t42": {
+        "reference": "LZ-19",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
         "waits": []
       },
       "t44": {
@@ -5631,60 +5664,27 @@
         "paused": 1,
         "waits": ["plan p60"]
       },
-      "t26": {
-        "reference": "LZ-14",
-        "status": "accepted",
+      "t54": {
+        "reference": "LZ-24",
+        "status": "queued",
         "reason": null,
-        "recordedState": "accepted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
-        "waits": []
+        "paused": 1,
+        "waits": ["plan p34"]
       },
-      "t3": {
-        "reference": "LZ-4",
-        "status": "accepted",
+      "t57": {
+        "reference": "LZ-25",
+        "status": "queued",
         "reason": null,
-        "recordedState": "accepted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t32": {
-        "reference": "LZ-16",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p8"]
-      },
-      "t7": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p6"]
+        "paused": 1,
+        "waits": ["plan p34"]
       }
     }
   },
@@ -5727,6 +5727,17 @@
         "paused": 0,
         "waits": []
       },
+      "t4": {
+        "reference": "LZ-2",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t6": {
         "reference": "LZ-3",
         "status": "queued",
@@ -5743,17 +5754,6 @@
         "status": "submitted",
         "reason": null,
         "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t4": {
-        "reference": "LZ-2",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -5790,6 +5790,28 @@
       "recent/legacy": ["t24", "t19", "t16", "t14", "t12", "t11", "t8", "t6", "t0"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t6": {
+        "reference": "LZ-3",
+        "status": "blocked",
+        "reason": "Waiting for prerequisite integration: p5 [plan p5] is draft. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p5"]
+      },
       "t8": {
         "reference": "LZ-4",
         "status": "verifying",
@@ -5806,28 +5828,6 @@
         "status": "running",
         "reason": null,
         "recordedState": "running",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p5"]
-      },
-      "t19": {
-        "reference": "LZ-9",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t6": {
-        "reference": "LZ-3",
-        "status": "blocked",
-        "reason": "Waiting for prerequisite integration: p5 [plan p5] is draft. The prerequisite must complete and its source be integrated before dependent work can continue.",
-        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -5867,22 +5867,22 @@
         "paused": 0,
         "waits": []
       },
-      "t24": {
-        "reference": "LZ-10",
-        "status": "submitted",
+      "t19": {
+        "reference": "LZ-9",
+        "status": "queued",
         "reason": null,
-        "recordedState": null,
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "failed",
+      "t24": {
+        "reference": "LZ-10",
+        "status": "submitted",
         "reason": null,
-        "recordedState": "failed",
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -5919,6 +5919,17 @@
       "recent/legacy": ["t30", "t28", "t24", "t19", "t14", "t11", "t6", "t0"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t6": {
         "reference": "LZ-3",
         "status": "running",
@@ -5930,11 +5941,22 @@
         "paused": 0,
         "waits": ["plan p5"]
       },
-      "t19": {
-        "reference": "LZ-9",
-        "status": "verifying",
+      "t11": {
+        "reference": "LZ-5",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p5"]
+      },
+      "t12": {
+        "reference": "LZ-6",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -5952,11 +5974,33 @@
         "paused": 0,
         "waits": []
       },
+      "t19": {
+        "reference": "LZ-9",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t24": {
         "reference": "LZ-10",
         "status": "queued",
         "reason": null,
         "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t28": {
+        "reference": "LZ-11",
+        "status": "exhausted",
+        "reason": null,
+        "recordedState": "exhausted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -5973,50 +6017,6 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p7"]
-      },
-      "t28": {
-        "reference": "LZ-11",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t11": {
-        "reference": "LZ-5",
-        "status": "exhausted",
-        "reason": null,
-        "recordedState": "exhausted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": ["plan p5"]
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t12": {
-        "reference": "LZ-6",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
       }
     }
   },
@@ -6088,6 +6088,17 @@
       "recent/legacy": ["t48", "t43", "t39", "t30", "t28", "t24", "t19", "t14", "t11", "t6", "t0"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t6": {
         "reference": "LZ-3",
         "status": "running",
@@ -6099,11 +6110,22 @@
         "paused": 0,
         "waits": ["plan p5"]
       },
-      "t19": {
-        "reference": "LZ-9",
-        "status": "verifying",
+      "t11": {
+        "reference": "LZ-5",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p5"]
+      },
+      "t12": {
+        "reference": "LZ-6",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -6121,6 +6143,17 @@
         "paused": 1,
         "waits": []
       },
+      "t19": {
+        "reference": "LZ-9",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t24": {
         "reference": "LZ-10",
         "status": "queued",
@@ -6130,61 +6163,6 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-12",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p7"]
-      },
-      "t39": {
-        "reference": "LZ-14",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p31"]
-      },
-      "t48": {
-        "reference": "LZ-16",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t43": {
-        "reference": "LZ-15",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t12": {
-        "reference": "LZ-6",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
         "waits": []
       },
       "t28": {
@@ -6198,27 +6176,16 @@
         "paused": 0,
         "waits": []
       },
-      "t11": {
-        "reference": "LZ-5",
-        "status": "exhausted",
+      "t30": {
+        "reference": "LZ-12",
+        "status": "queued",
         "reason": null,
-        "recordedState": "exhausted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
-        "waits": ["plan p5"]
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
+        "paused": 1,
+        "waits": ["plan p7"]
       },
       "t38": {
         "reference": "LZ-13",
@@ -6230,6 +6197,39 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p31"]
+      },
+      "t39": {
+        "reference": "LZ-14",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p31"]
+      },
+      "t43": {
+        "reference": "LZ-15",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t48": {
+        "reference": "LZ-16",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       }
     }
   },
@@ -6301,6 +6301,17 @@
       "recent/legacy": ["t48", "t43", "t39", "t30", "t28", "t24", "t19", "t14", "t11", "t6", "t0"]
     },
     "tasks": {
+      "t0": {
+        "reference": "LZ-1",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t6": {
         "reference": "LZ-3",
         "status": "running",
@@ -6312,11 +6323,22 @@
         "paused": 0,
         "waits": ["plan p5"]
       },
-      "t19": {
-        "reference": "LZ-9",
-        "status": "verifying",
+      "t11": {
+        "reference": "LZ-5",
+        "status": "exhausted",
         "reason": null,
-        "recordedState": "verifying",
+        "recordedState": "exhausted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": ["plan p5"]
+      },
+      "t12": {
+        "reference": "LZ-6",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -6334,6 +6356,17 @@
         "paused": 1,
         "waits": []
       },
+      "t19": {
+        "reference": "LZ-9",
+        "status": "verifying",
+        "reason": null,
+        "recordedState": "verifying",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "t24": {
         "reference": "LZ-10",
         "status": "queued",
@@ -6343,61 +6376,6 @@
         "takeover": 0,
         "concern": null,
         "paused": 1,
-        "waits": []
-      },
-      "t30": {
-        "reference": "LZ-12",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p7"]
-      },
-      "t39": {
-        "reference": "LZ-14",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 1,
-        "waits": ["plan p31"]
-      },
-      "t48": {
-        "reference": "LZ-16",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t43": {
-        "reference": "LZ-15",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "t12": {
-        "reference": "LZ-6",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
         "waits": []
       },
       "t28": {
@@ -6411,27 +6389,16 @@
         "paused": 0,
         "waits": []
       },
-      "t11": {
-        "reference": "LZ-5",
-        "status": "exhausted",
+      "t30": {
+        "reference": "LZ-12",
+        "status": "queued",
         "reason": null,
-        "recordedState": "exhausted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
-        "paused": 0,
-        "waits": ["plan p5"]
-      },
-      "t0": {
-        "reference": "LZ-1",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
+        "paused": 1,
+        "waits": ["plan p7"]
       },
       "t38": {
         "reference": "LZ-13",
@@ -6443,6 +6410,39 @@
         "concern": null,
         "paused": 0,
         "waits": ["plan p31"]
+      },
+      "t39": {
+        "reference": "LZ-14",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 1,
+        "waits": ["plan p31"]
+      },
+      "t43": {
+        "reference": "LZ-15",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "t48": {
+        "reference": "LZ-16",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
       }
     }
   },
@@ -6994,22 +6994,22 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "queued",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "accepted",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "queued",
         "reason": null,
-        "recordedState": "accepted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -7046,23 +7046,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7098,23 +7098,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7150,23 +7150,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7202,23 +7202,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7254,23 +7254,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7306,23 +7306,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7358,8 +7358,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "cancelled",
         "reason": "Cancellation requested",
         "recordedState": "cancelled",
@@ -7369,8 +7369,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "cancelled",
         "reason": "Cancellation requested",
         "recordedState": "cancelled",
@@ -7410,11 +7410,11 @@
       "recent/legacy": ["Write extra.txt"]
     },
     "tasks": {
-      "Write extra.txt": {
-        "reference": "LZ-3",
-        "status": "submitted",
-        "reason": null,
-        "recordedState": null,
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "cancelled",
+        "reason": "Cancellation requested",
+        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -7432,11 +7432,11 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "cancelled",
-        "reason": "Cancellation requested",
-        "recordedState": "cancelled",
+      "Write extra.txt": {
+        "reference": "LZ-3",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -7473,8 +7473,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "cancelled",
         "reason": "Cancellation requested",
         "recordedState": "cancelled",
@@ -7484,8 +7484,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "cancelled",
         "reason": "Cancellation requested",
         "recordedState": "cancelled",
@@ -7834,22 +7834,22 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "queued",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "queued",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "accepted",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "queued",
         "reason": null,
-        "recordedState": "accepted",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -7886,23 +7886,23 @@
       "recent/legacy": ["Write b.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "running",
-        "reason": null,
-        "recordedState": "running",
-        "started": true,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
       "Write a.txt": {
         "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
         "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "running",
+        "reason": null,
+        "recordedState": "running",
+        "started": true,
         "takeover": 0,
         "concern": null,
         "paused": 0,
@@ -7938,8 +7938,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -7949,8 +7949,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -7990,8 +7990,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8001,8 +8001,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8042,8 +8042,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8053,8 +8053,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8094,8 +8094,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8105,8 +8105,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8146,8 +8146,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8157,8 +8157,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8198,8 +8198,8 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8209,8 +8209,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8230,8 +8230,8 @@
       "schedule/blocked": [],
       "schedule/paused": [],
       "schedule/completed": ["Write b.txt", "Write a.txt"],
-      "schedule/accepted": ["Write b.txt", "Write a.txt"],
-      "schedule/integrated": [],
+      "schedule/accepted": [],
+      "schedule/integrated": ["Write b.txt", "Write a.txt"],
       "schedule/failed": [],
       "schedule/cancelled": [],
       "schedule/all": ["Write b.txt", "Write a.txt"],
@@ -8242,16 +8242,16 @@
       "recent/blocked": [],
       "recent/paused": [],
       "recent/completed": ["Write b.txt", "Write a.txt"],
-      "recent/accepted": ["Write b.txt", "Write a.txt"],
-      "recent/integrated": [],
+      "recent/accepted": [],
+      "recent/integrated": ["Write b.txt", "Write a.txt"],
       "recent/failed": [],
       "recent/cancelled": [],
       "recent/all": ["Write b.txt", "Write a.txt"],
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8261,8 +8261,8 @@
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "accepted",
         "reason": null,
         "recordedState": "accepted",
@@ -8354,22 +8354,22 @@
       "recent/legacy": ["Write b.txt", "Write a.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "blocked",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "failed",
         "reason": "Verification content exited with code 7",
-        "recordedState": "queued",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "failed",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "blocked",
         "reason": "Verification content exited with code 7",
-        "recordedState": "failed",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8406,22 +8406,22 @@
       "recent/legacy": ["Write b.txt", "Write a.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "blocked",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "failed",
         "reason": "Verification content exited with code 7",
-        "recordedState": "queued",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "failed",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "blocked",
         "reason": "Verification content exited with code 7",
-        "recordedState": "failed",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8458,22 +8458,22 @@
       "recent/legacy": ["Write b.txt", "Write a.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "blocked",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "failed",
         "reason": "Verification content exited with code 7",
-        "recordedState": "queued",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "failed",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "blocked",
         "reason": "Verification content exited with code 7",
-        "recordedState": "failed",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8510,22 +8510,22 @@
       "recent/legacy": ["Write b.txt", "Write a.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "blocked",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "failed",
         "reason": "Verification content exited with code 7",
-        "recordedState": "queued",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "failed",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "blocked",
         "reason": "Verification content exited with code 7",
-        "recordedState": "failed",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8562,22 +8562,22 @@
       "recent/legacy": ["Write b.txt", "Write a.txt"]
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
-        "status": "blocked",
+      "Write a.txt": {
+        "reference": "LZ-1",
+        "status": "failed",
         "reason": "Verification content exited with code 7",
-        "recordedState": "queued",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
-        "status": "failed",
+      "Write b.txt": {
+        "reference": "LZ-2",
+        "status": "blocked",
         "reason": "Verification content exited with code 7",
-        "recordedState": "failed",
+        "recordedState": "queued",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8666,22 +8666,22 @@
       "recent/legacy": []
     },
     "tasks": {
-      "Write b.txt": {
-        "reference": "LZ-2",
+      "Write a.txt": {
+        "reference": "LZ-1",
         "status": "cancelled",
-        "reason": "Owned worktree has unmerged commits; preserve <path><id>",
-        "recordedState": "cancelled",
+        "reason": "Verification content exited with code 7",
+        "recordedState": "failed",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "Write a.txt": {
-        "reference": "LZ-1",
+      "Write b.txt": {
+        "reference": "LZ-2",
         "status": "cancelled",
-        "reason": "Verification content exited with code 7",
-        "recordedState": "failed",
+        "reason": "Owned worktree has unmerged commits; preserve <path><id>",
+        "recordedState": "cancelled",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8748,6 +8748,94 @@
       "recent/legacy": ["heldRunning", "U2", "openB", "run1", "openC", "U1", "openA", "fail1"]
     },
     "tasks": {
+      "fail1": {
+        "reference": "LZ-1",
+        "status": "failed",
+        "reason": null,
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "acc1": {
+        "reference": "LZ-2",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "openA": {
+        "reference": "LZ-3",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "cancel1": {
+        "reference": "LZ-4",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "integ1": {
+        "reference": "LZ-5",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "U1": {
+        "reference": "LZ-6",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "openC": {
+        "reference": "LZ-7",
+        "status": "queued",
+        "reason": null,
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "acc2": {
+        "reference": "LZ-8",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
       "run1": {
         "reference": "LZ-9",
         "status": "running",
@@ -8770,31 +8858,20 @@
         "paused": 0,
         "waits": []
       },
-      "heldRunning": {
-        "reference": "LZ-14",
-        "status": "running",
+      "acc3": {
+        "reference": "LZ-11",
+        "status": "accepted",
         "reason": null,
-        "recordedState": "running",
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
         "paused": 0,
         "waits": []
       },
-      "openA": {
-        "reference": "LZ-3",
-        "status": "queued",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "openC": {
-        "reference": "LZ-7",
-        "status": "queued",
+      "cancel2": {
+        "reference": "LZ-12",
+        "status": "cancelled",
         "reason": null,
         "recordedState": "queued",
         "started": false,
@@ -8814,88 +8891,11 @@
         "paused": 0,
         "waits": []
       },
-      "U1": {
-        "reference": "LZ-6",
-        "status": "submitted",
+      "heldRunning": {
+        "reference": "LZ-14",
+        "status": "running",
         "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "acc3": {
-        "reference": "LZ-11",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "acc2": {
-        "reference": "LZ-8",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "acc1": {
-        "reference": "LZ-2",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "integ1": {
-        "reference": "LZ-5",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "fail1": {
-        "reference": "LZ-1",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "cancel2": {
-        "reference": "LZ-12",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "cancel1": {
-        "reference": "LZ-4",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
+        "recordedState": "running",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -8982,11 +8982,88 @@
       ]
     },
     "tasks": {
-      "heldRunning": {
-        "reference": "LZ-14",
-        "status": "running",
+      "fail1": {
+        "reference": "LZ-1",
+        "status": "failed",
         "reason": null,
-        "recordedState": "running",
+        "recordedState": "failed",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "acc1": {
+        "reference": "LZ-2",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "openA": {
+        "reference": "LZ-3",
+        "status": "blocked",
+        "reason": "Waiting for checkout or write scope: LZ-9",
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "cancel1": {
+        "reference": "LZ-4",
+        "status": "cancelled",
+        "reason": null,
+        "recordedState": "cancelled",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "integ1": {
+        "reference": "LZ-5",
+        "status": "incorporated",
+        "reason": null,
+        "recordedState": "incorporated",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "U1": {
+        "reference": "LZ-6",
+        "status": "submitted",
+        "reason": null,
+        "recordedState": null,
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "openC": {
+        "reference": "LZ-7",
+        "status": "blocked",
+        "reason": "Waiting for checkout or write scope: LZ-9",
+        "recordedState": "queued",
+        "started": false,
+        "takeover": 0,
+        "concern": null,
+        "paused": 0,
+        "waits": []
+      },
+      "acc2": {
+        "reference": "LZ-8",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -9015,22 +9092,11 @@
         "paused": 0,
         "waits": []
       },
-      "openA": {
-        "reference": "LZ-3",
-        "status": "blocked",
-        "reason": "Waiting for checkout or write scope: LZ-9",
-        "recordedState": "queued",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "openC": {
-        "reference": "LZ-7",
-        "status": "blocked",
-        "reason": "Waiting for checkout or write scope: LZ-9",
-        "recordedState": "queued",
+      "acc3": {
+        "reference": "LZ-11",
+        "status": "accepted",
+        "reason": null,
+        "recordedState": "accepted",
         "started": false,
         "takeover": 0,
         "concern": null,
@@ -9059,77 +9125,11 @@
         "paused": 0,
         "waits": []
       },
-      "U1": {
-        "reference": "LZ-6",
-        "status": "submitted",
+      "heldRunning": {
+        "reference": "LZ-14",
+        "status": "running",
         "reason": null,
-        "recordedState": null,
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "acc3": {
-        "reference": "LZ-11",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "acc2": {
-        "reference": "LZ-8",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "acc1": {
-        "reference": "LZ-2",
-        "status": "accepted",
-        "reason": null,
-        "recordedState": "accepted",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "integ1": {
-        "reference": "LZ-5",
-        "status": "incorporated",
-        "reason": null,
-        "recordedState": "incorporated",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "fail1": {
-        "reference": "LZ-1",
-        "status": "failed",
-        "reason": null,
-        "recordedState": "failed",
-        "started": false,
-        "takeover": 0,
-        "concern": null,
-        "paused": 0,
-        "waits": []
-      },
-      "cancel1": {
-        "reference": "LZ-4",
-        "status": "cancelled",
-        "reason": null,
-        "recordedState": "cancelled",
+        "recordedState": "running",
         "started": false,
         "takeover": 0,
         "concern": null,
