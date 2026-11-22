@@ -4,6 +4,7 @@ import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { withBenchmarks as scored } from "../../website/demo/src/panels/models-references.ts"
 
 /**
  * The Models panel mounted in a DOM over real stream frames: the demo's mock project is turned
@@ -349,62 +350,6 @@ test("prices: an unpriced model shows no price, a priced one its source and date
   expect(pane).toContain("Routeopenai/gpt-6.2-sol")
   expect(pane).toContain("OpenRouter price snapshotopenrouter-models:337")
   expect(text(root.querySelector(".lazers-models-pane-body")!)).toContain("Tokens / task1.1M")
-})
-
-/** What each demo model scores: the Coding Index, and SWE-bench Verified (a fraction) for some. */
-const scores: Record<string, { coding: number; swe?: number }> = {
-  "claude-opus-5-5": { coding: 70, swe: 0.82 },
-  "gpt-6.2-sol": { coding: 66, swe: 0.78 },
-  "muse-spark-1.3": { coding: 52 },
-  "deepseek-v4-pro": { coding: 61, swe: 0.6 },
-  "meta/muse-ember": { coding: 40 },
-}
-/** The comparison's candidates matched to the public benchmarks of `scores`. */
-const scored = (output: Candidates): Candidates => ({
-  ...output,
-  candidates: output.candidates.map((candidate) => {
-    const score = scores[candidate.identity.modelID]
-    if (!score) return candidate
-    const evidence = { records: [], recordCount: 0, truncated: false }
-    return {
-      ...candidate,
-      benchmarkCorrespondence: {
-        status: "exact",
-        basis: "exact-published-catalog-id",
-        evidence,
-      } as never,
-      externalBenchmark: {
-        kind: "openrouter-benchmark",
-        source: "artificial-analysis",
-        taskType: "coding",
-        modelPermaslug: candidate.identity.modelID,
-        displayName: candidate.native.name,
-        effort: null,
-        codingIndex: score.coding,
-        agenticIndex: null,
-        intelligenceIndex: null,
-        prices: null,
-      },
-      publicBenchmarks:
-        score.swe === undefined
-          ? []
-          : [
-              {
-                kind: "epoch-benchmark",
-                benchmarkID: "swe-bench-verified",
-                benchmark: "SWE-bench Verified",
-                origin: "Epoch AI",
-                modelVersion: candidate.identity.modelID,
-                modelKey: candidate.identity.modelID,
-                effort: null,
-                score: score.swe,
-                stderr: null,
-                agent: null,
-                releaseDate: null,
-              },
-            ],
-    }
-  }),
 })
 
 test("benchmark: points come from models.benchmark, left-off models are named", async () => {

@@ -1,5 +1,6 @@
 import type { ModelDecisionOverview } from "../../../../src/models/decision-contract.ts"
 import { ModelDecisionReferenceEstimateSchema } from "../../../../src/models/reference-estimate.ts"
+import type { ModelComparisonOutput } from "../../../../src/models/comparison-schema.ts"
 
 /**
  * The overview the service stores holds an OpenRouter reference estimate for each plotted
@@ -94,3 +95,62 @@ export function withReferences(overview: ModelDecisionOverview): ModelDecisionOv
     },
   }
 }
+
+/** What each demo model scores: the Coding Index, and SWE-bench Verified (a fraction) for some. */
+const scores: Record<string, { coding: number; swe?: number }> = {
+  "claude-opus-5-5": { coding: 70, swe: 0.82 },
+  "gpt-6.2-sol": { coding: 66, swe: 0.78 },
+  "muse-spark-1.3": { coding: 52 },
+  "deepseek-v4-pro": { coding: 61, swe: 0.6 },
+  "meta/muse-ember": { coding: 40 },
+}
+/**
+ * The comparison's candidates matched to the public benchmarks of `scores`: what OpenRouter's and
+ * Epoch AI's sources answer for them (the mock comparison carries no benchmarks).
+ */
+export const withBenchmarks = (output: ModelComparisonOutput): ModelComparisonOutput => ({
+  ...output,
+  candidates: output.candidates.map((candidate) => {
+    const score = scores[candidate.identity.modelID]
+    if (!score) return candidate
+    const evidence = { records: [], recordCount: 0, truncated: false }
+    return {
+      ...candidate,
+      benchmarkCorrespondence: {
+        status: "exact",
+        basis: "exact-published-catalog-id",
+        evidence,
+      } as never,
+      externalBenchmark: {
+        kind: "openrouter-benchmark",
+        source: "artificial-analysis",
+        taskType: "coding",
+        modelPermaslug: candidate.identity.modelID,
+        displayName: candidate.native.name,
+        effort: null,
+        codingIndex: score.coding,
+        agenticIndex: null,
+        intelligenceIndex: null,
+        prices: null,
+      },
+      publicBenchmarks:
+        score.swe === undefined
+          ? []
+          : [
+              {
+                kind: "epoch-benchmark",
+                benchmarkID: "swe-bench-verified",
+                benchmark: "SWE-bench Verified",
+                origin: "Epoch AI",
+                modelVersion: candidate.identity.modelID,
+                modelKey: candidate.identity.modelID,
+                effort: null,
+                score: score.swe,
+                stderr: null,
+                agent: null,
+                releaseDate: null,
+              },
+            ],
+    }
+  }),
+})
