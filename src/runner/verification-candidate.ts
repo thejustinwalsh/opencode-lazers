@@ -46,6 +46,7 @@ import type { RuntimeCore } from "./runtime-core.ts"
 import type { ActiveProfile } from "../projects/profile-store.ts"
 import { checkRunProfile, runnableFix } from "../projects/profile-runtime.ts"
 import { profileFixChain } from "./profile-fix.ts"
+import { preparationBindingContinues } from "./verification-preparation/binding.ts"
 
 /** What `VerificationCandidate` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type VerificationCandidateDeps = {
@@ -266,14 +267,7 @@ export class VerificationCandidate {
         )
         return "held"
       }
-      if (
-        recorded.baseCommit !== payload.baseCommit ||
-        recorded.workspace !== payload.workspace ||
-        recorded.command !== payload.command ||
-        JSON.stringify(recorded.scope) !== JSON.stringify(scope) ||
-        recorded.messageID !== attempt.message_id ||
-        recorded.repairID !== payload.repairID
-      ) {
+      if (!preparationBindingContinues(recorded, payload)) {
         this.hold(
           plan,
           "Mechanical candidate preparation inputs changed; the original activity was not replayed",
@@ -514,14 +508,7 @@ export class VerificationCandidate {
     }
     if (existing) {
       const original = JSON.parse(existing.payload) as typeof payload
-      if (
-        original.baseCommit !== payload.baseCommit ||
-        original.workspace !== payload.workspace ||
-        original.command !== payload.command ||
-        JSON.stringify(original.scope) !== JSON.stringify(scope) ||
-        original.messageID !== attempt.message_id ||
-        original.repairID !== payload.repairID
-      ) {
+      if (!preparationBindingContinues(original, payload)) {
         this.hold(
           plan,
           "Mechanical candidate preparation inputs changed; the original activity was not replayed",

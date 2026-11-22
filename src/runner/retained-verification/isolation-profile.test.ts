@@ -5,8 +5,10 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -178,6 +180,70 @@ test("an npm profile runs its proven hardened install and links node_modules as 
   expect(lstatSync(join(p.candidate, "node_modules")).isSymbolicLink()).toBe(true)
   expect(ctx.dependencyLink).not.toBeNull()
   expect(ctx.environment.CARGO_TARGET_DIR).toBeUndefined()
+})
+
+test("profile install stages duplicate native dependencies into one private owned tree", async () => {
+  const p = project({
+    ".gitignore": "node_modules/\n",
+    "package.json": JSON.stringify({
+      name: "n",
+      version: "1.0.0",
+      dependencies: { "pkce-challenge": "1.0.0", "native-only": "1.0.0" },
+    }),
+    "package-lock.json": '{"lockfileVersion":3,"packages":{}}\n',
+  })
+  const candidateDependencies = join(p.candidate, "node_modules")
+  const nativePackage = join(candidateDependencies, "pkce-challenge")
+  mkdirSync(nativePackage, { recursive: true })
+  writeFileSync(join(nativePackage, "package.json"), '{"name":"pkce-challenge"}\n')
+  writeFileSync(join(nativePackage, "index.mjs"), 'export const marker = "native-startup"\n')
+  const nativeOnly = join(candidateDependencies, "native-only")
+  mkdirSync(nativeOnly, { recursive: true })
+  writeFileSync(join(nativeOnly, "index.mjs"), 'export const marker = "native-only"\n')
+  const nativeBin = join(candidateDependencies, ".bin")
+  mkdirSync(nativeBin)
+  symlinkSync("../native-only/index.mjs", join(nativeBin, "native-only"))
+
+  const profile = profileOf({
+    toolchains: ["npm"],
+    verify: [{ id: "tests", command: "npm test" }],
+    install: "npm ci",
+  })
+  const commands: string[][] = []
+  const ctx = await context(p, "bun test", {
+    profile: { revisionID: 3, profile, installs: effectiveInstall(profile, p.candidate) },
+    dependencyInstaller: async ({ candidateWorkspace, command }) => {
+      commands.push(command ?? [])
+      expect(readFileSync(join(candidateWorkspace, "package-lock.json"), "utf8")).toContain(
+        '"lockfileVersion":3',
+      )
+      const installedRoot = join(candidateWorkspace, "node_modules")
+      const installedPackage = join(installedRoot, "pkce-challenge")
+      mkdirSync(installedPackage, { recursive: true })
+      writeFileSync(join(installedPackage, "package.json"), '{"name":"pkce-challenge"}\n')
+      writeFileSync(
+        join(installedPackage, "index.mjs"),
+        'export const marker = "profile-install"\n',
+      )
+      const bin = join(installedRoot, ".bin")
+      mkdirSync(bin)
+      symlinkSync("../pkce-challenge/index.mjs", join(bin, "pkce-challenge"))
+    },
+  })
+  const dependencies = ctx.resources.find((resource) => resource.name === "dependencies")!.realPath
+  expect(commands).toEqual([["/bin/sh", "-c", "npm ci"]])
+  expect(readFileSync(join(dependencies, "pkce-challenge", "index.mjs"), "utf8")).toContain(
+    "profile-install",
+  )
+  expect(existsSync(join(dependencies, "native-only", "index.mjs"))).toBe(true)
+  expect(existsSync(join(dependencies, ".bin", "native-only"))).toBe(true)
+  expect(existsSync(join(dependencies, ".bin", "pkce-challenge"))).toBe(true)
+  expect(lstatSync(join(p.candidate, "node_modules")).isSymbolicLink()).toBe(true)
+  expect(realpathSync(join(p.candidate, "node_modules"))).toBe(dependencies)
+  expect(await observeRetainedCheckContext(ctx)).toBe(true)
+  expect(retainedCheckIsolationWitness(ctx).resources).toContainEqual(
+    expect.objectContaining({ name: "dependencies", realPath: dependencies }),
+  )
 })
 
 test("an install that is not proven never runs", async () => {

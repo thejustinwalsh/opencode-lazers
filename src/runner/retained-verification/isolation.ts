@@ -6,15 +6,12 @@ import type { EffectiveInstall } from "../../projects/toolchains.ts"
 import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
 import {
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -36,6 +33,7 @@ import type {
   RetainedProcedurePlan,
   RetainedProcedureResourceIdentity,
 } from "./procedure.ts"
+import { stageCandidateDependencies } from "./dependency-staging.ts"
 
 export type RetainedCheckContext = {
   schemaVersion: 1
@@ -796,18 +794,7 @@ export async function createRetainedCheckContext(input: {
         if (written.isSymbolicLink() || !written.isDirectory())
           throw new Error("Candidate dependency install left an unexpected node_modules entry")
         const target = resources.find((resource) => resource.name === "dependencies")!.realPath
-        for (const entry of readdirSync(candidateDependencies)) {
-          const from = join(candidateDependencies, entry)
-          const to = join(target, entry)
-          try {
-            renameSync(from, to)
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error
-            cpSync(from, to, { recursive: true, verbatimSymlinks: true })
-            rmSync(from, { recursive: true, force: true })
-          }
-        }
-        rmSync(candidateDependencies, { recursive: true, force: true })
+        stageCandidateDependencies(candidateDependencies, target)
       }
       linkDependencies()
     }
