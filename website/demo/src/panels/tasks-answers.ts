@@ -189,8 +189,33 @@ function detail(data: TasksData, id: string): TaskDetail {
           },
         ]
       : [],
-    activity: [],
+    activity: history(task, started),
   }
+}
+
+/** The runner events a task has recorded so far, oldest first, with their JSON payloads. */
+function history(
+  task: DemoTask,
+  started: number,
+): NonNullable<Extract<TaskDetail, { status: "found" }>["activity"]> {
+  const steps: [string, Record<string, unknown>][] = [["READY", { reason: "prerequisites met" }]]
+  const ran = task.state !== "queued" && task.state !== "ready" && task.state !== "blocked"
+  if (task.state === "blocked") steps.push(["BLOCK", { reason: task.reason ?? "held" }])
+  if (ran) {
+    steps.push(["DISPATCH", { attempt: 1, model: task.model ?? null }])
+    steps.push(["WORKER_STARTED", { session: `ses-worker-${task.n}` }])
+  }
+  if (["verifying", "accepted", "incorporated"].includes(task.state))
+    steps.push(["VERIFY", { checks: ["bun run verify", "bun test"] }])
+  if (["accepted", "incorporated"].includes(task.state))
+    steps.push(["ACCEPT", { checks: "passed", files: task.files ?? 0 }])
+  return steps.map(([event, payload], index) => ({
+    id: task.n * 100 + index + 1,
+    taskID: taskID(task.n),
+    event,
+    payload: JSON.stringify(payload),
+    createdAt: started - (steps.length - index) * 30_000,
+  }))
 }
 
 function currentActivity(data: TasksData, ids: string[]) {
@@ -217,9 +242,12 @@ function currentActivity(data: TasksData, ids: string[]) {
   }
 }
 
+/** The open streams of the mounted panel, told to re-read when the story moves. */
+let streams: ReturnType<typeof taskStreams> | undefined
+
 export function rpc(data: () => TasksData) {
   // The detail and the rows' current activity read as streams.
-  const streams = taskStreams(data, PROJECT.canonical, {
+  streams = taskStreams(data, PROJECT.canonical, {
     detail: (id) => detail(data(), id),
     currentActivity: (ids) => currentActivity(data(), ids),
   })
@@ -246,5 +274,12 @@ export function reads(data: TasksData): Read[] {
   return out
 }
 
-export const tasksChanged = (emit: (type: string, data: unknown) => void) =>
+/**
+ * What the service publishes after a change: the `changed` event of every open stream, so the
+ * list and counters re-read their window, and the tasks change feed, which the detail and the
+ * rows' current activity follow.
+ */
+export function tasksChanged(emit: (type: string, data: unknown) => void) {
+  for (const event of streams?.changes() ?? []) emit(`rpc.${Streams.id}.changed`, event)
   emit("rpc.lazers.tasks.changed", { projectDirectory: PROJECT.canonical, version: Date.now() })
+}

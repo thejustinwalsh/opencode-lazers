@@ -113,6 +113,8 @@ const Report = z
       status: z.string(),
       /** The current recorded lifecycle state; absent from older servers. */
       recordedState: z.string().optional(),
+      /** Accepted on an integrated plan, or incorporated (`integratedOf`, the stored schedule row). */
+      integrated: z.boolean().optional(),
       /**
        * The task's current hold from its stored schedule row (`listRowOf`, the rule Tasks lists
        * by): held, and why. Absent when the report has no schedule row.
@@ -157,6 +159,8 @@ const Report = z
         admittedModel: Model.nullable(),
         observedCurrentModel: Model.nullable(),
         toolCount: z.object({ value: z.number().finite(), source: z.string() }).strip(),
+        /** Time the session was working (its completed model steps), ms; see `active_ms`. */
+        activeMs: z.number().finite().nullable().optional(),
         checks: z.array(Check),
       }),
     ),
@@ -248,6 +252,8 @@ export type TaskChoice = {
   revision?: number
   title: string | null
   status: string
+  /** Accepted on an integrated plan, or incorporated (`integratedOf`). */
+  integrated?: boolean
 }
 
 export type TimelineTick = { elapsedMs: number; label: string }

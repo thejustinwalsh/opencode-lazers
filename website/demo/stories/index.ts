@@ -8,12 +8,14 @@ import hero from "./hero.ts"
 import radar from "./radar.ts"
 import models from "./models.ts"
 import trajectory from "./trajectory.ts"
+import qaTasks from "./qa-tasks.ts"
 
 export const stories: StorySource<never>[] = [
   hero as never,
   radar as never,
   trajectory as never,
   models as never,
+  qaTasks as never,
 ]
 
 /** The pure validator for each panel's data: every read the data answers, with its schema. */

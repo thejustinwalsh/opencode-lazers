@@ -100,7 +100,15 @@ function Tooltip(props: { value: JSX.Element; children: JSX.Element }) {
 }
 
 type MenuEntry =
-  | { type?: "item"; label: string; icon?: string; disabled?: boolean; onSelect(): void }
+  | {
+      type?: "item"
+      label: string
+      icon?: string
+      /** Trailing hint text, such as a count or a shortcut. */
+      keys?: readonly string[]
+      disabled?: boolean
+      onSelect(): void
+    }
   | { type: "separator" }
   | { type: "group"; label: string; items: readonly MenuEntry[] }
 function Menu(props: {
@@ -149,7 +157,18 @@ function Menu(props: {
                     setOpen(false)
                   }}
                 >
-                  {(entry as { label: string }).label}
+                  {/* The leading icon slot is kept for every item, so checked and unchecked align. */}
+                  <span class="oc-menu-icon">
+                    <Show when={(entry as { icon?: string }).icon}>
+                      {(name) => <Icon name={name()} size="small" />}
+                    </Show>
+                  </span>
+                  <span class="oc-menu-label">{(entry as { label: string }).label}</span>
+                  <Show when={(entry as { keys?: readonly string[] }).keys?.length}>
+                    <span class="oc-menu-keys">
+                      {(entry as { keys: readonly string[] }).keys.join(" ")}
+                    </span>
+                  </Show>
                 </button>
               )
             }

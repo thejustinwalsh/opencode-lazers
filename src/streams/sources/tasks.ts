@@ -1,4 +1,5 @@
 import { bucketsForSelection } from "../../tasks/schedule/key.ts"
+import { LINEAGE_KEY_SQL } from "../../tasks/schedule/lineage.ts"
 import type { Bucket } from "../../tasks/schedule/schema.ts"
 import { defineSource, type StreamContext } from "../source.ts"
 import {
@@ -69,11 +70,14 @@ async function scopeOf(filter: { scope?: TaskScope }, context: StreamContext): P
 function taskInScope(column: string, input: { project?: string; session?: string }) {
   const linked =
     input.session !== undefined
-      ? " AND EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=t.task_id AND s.session_id=?)"
+      ? ` AND EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=t.task_id AND s.lineage_key=${LINEAGE_KEY_SQL})`
       : ""
   return {
     clause: `EXISTS (SELECT 1 FROM task_schedule t WHERE t.task_id=${column} AND t.project_directory=?${linked})`,
-    params: [input.project ?? null, ...(input.session !== undefined ? [input.session] : [])],
+    params: [
+      input.project ?? null,
+      ...(input.session !== undefined ? [input.session, input.session] : []),
+    ],
   }
 }
 
@@ -98,7 +102,12 @@ const placeholders = (values: readonly unknown[]) => values.map(() => "?").join(
 export const taskScheduleSource = defineSource({
   name: TASK_SOURCES.schedule,
   table: "task_schedule",
-  tables: ["task_schedule", "task_schedule_sessions", "task_schedule_scopes"],
+  tables: [
+    "task_schedule",
+    "task_schedule_sessions",
+    "task_schedule_lineage",
+    "task_schedule_scopes",
+  ],
   key: ["task_id"],
   orders: {
     // The old `sort: "schedule"`: one stored key holds all seven terms.
@@ -149,9 +158,9 @@ export const taskScheduleSource = defineSource({
     }
     if (input.session !== undefined) {
       clauses.push(
-        "EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_schedule.task_id AND s.session_id=?)",
+        `EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_schedule.task_id AND s.lineage_key=${LINEAGE_KEY_SQL})`,
       )
-      params.push(input.session)
+      params.push(input.session, input.session)
     }
     if (input.search) {
       clauses.push("instr(task_schedule.search_text, ?) > 0")
@@ -215,7 +224,12 @@ export const taskDependenciesSource = defineSource({
 export const taskPlansSource = defineSource({
   name: TASK_SOURCES.plans,
   table: "task_schedule_plans",
-  tables: ["task_schedule_plans", "task_schedule", "task_schedule_sessions"],
+  tables: [
+    "task_schedule_plans",
+    "task_schedule",
+    "task_schedule_sessions",
+    "task_schedule_lineage",
+  ],
   key: ["plan_id"],
   orders: {
     schedule: [
@@ -252,9 +266,9 @@ export const taskPlansSource = defineSource({
       clauses.push(
         `(task_schedule_plans.owner_session_id = ? OR EXISTS (
            SELECT 1 FROM task_schedule t JOIN task_schedule_sessions s ON s.task_id=t.task_id
-           WHERE t.plan_id=task_schedule_plans.plan_id AND s.session_id=?))`,
+           WHERE t.plan_id=task_schedule_plans.plan_id AND s.lineage_key=${LINEAGE_KEY_SQL}))`,
       )
-      params.push(input.session, input.session)
+      params.push(input.session, input.session, input.session)
     }
     return { where: clauses.join(" AND "), params }
   },
@@ -335,7 +349,7 @@ export const taskBucketCountsSource = defineSource({
 export const taskSessionBucketCountsSource = defineSource({
   name: TASK_SOURCES.sessionBucketCounts,
   table: "task_schedule_session_bucket_counts",
-  tables: ["task_schedule_sessions", "task_schedule"],
+  tables: ["task_schedule_sessions", "task_schedule", "task_schedule_lineage"],
   key: ["session_id", "project_directory", "bucket"],
   orders: {
     bucket: [
@@ -350,8 +364,9 @@ export const taskSessionBucketCountsSource = defineSource({
     return { ...input, project: context.projectDirectory, session: scope.sessionID }
   },
   filter: (input: TaskCountsFilter) => ({
-    where: "project_directory = ? AND session_id = ?",
-    params: [input.project, input.session!],
+    // `session_id` of the view is the lineage key.
+    where: `project_directory = ? AND session_id = ${LINEAGE_KEY_SQL}`,
+    params: [input.project, input.session!, input.session!],
   }),
   columns: taskSessionBucketCountColumns,
 })
@@ -403,7 +418,13 @@ defineSource({
       p.owner_session_id AS architect_session_id, b.body AS body
     FROM task_schedule t JOIN tasks b ON b.id=t.task_id
       LEFT JOIN task_schedule_plans p ON p.plan_id=t.plan_id) AS task_detail`,
-  tables: ["task_schedule", "tasks", "task_schedule_plans", "task_schedule_sessions"],
+  tables: [
+    "task_schedule",
+    "tasks",
+    "task_schedule_plans",
+    "task_schedule_sessions",
+    "task_schedule_lineage",
+  ],
   key: ["task_id"],
   orders: { task: [{ column: "task_id", direction: "asc" }] },
   authorize: (input: TaskDetailFilter, context) => scopedTo(input, context),
@@ -426,9 +447,9 @@ defineSource({
     }
     if (input.session !== undefined) {
       clauses.push(
-        "EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_detail.task_id AND s.session_id=?)",
+        `EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_detail.task_id AND s.lineage_key=${LINEAGE_KEY_SQL})`,
       )
-      params.push(input.session)
+      params.push(input.session, input.session)
     }
     return { where: clauses.join(" AND "), params }
   },
@@ -446,7 +467,7 @@ defineSource({
       CASE WHEN json_valid(a.policy) AND json_type(a.policy,'$.model')='object'
         THEN json_extract(a.policy,'$.model') END AS model
     FROM runner_attempts a) AS task_attempts`,
-  tables: ["runner_attempts", "task_schedule", "task_schedule_sessions"],
+  tables: ["runner_attempts", "task_schedule", "task_schedule_sessions", "task_schedule_lineage"],
   key: ["id"],
   orders: {
     started: [
@@ -505,7 +526,7 @@ const activityOrders = {
 defineSource({
   name: TASK_SOURCES.activity,
   table: activityTable,
-  tables: ["task_events", "task_schedule", "task_schedule_sessions"],
+  tables: ["task_events", "task_schedule", "task_schedule_sessions", "task_schedule_lineage"],
   key: ["transition_id"],
   orders: activityOrders,
   authorize: (input: TaskActivityFilter, context) => scopedChild(input, context, input.task),
@@ -519,7 +540,7 @@ defineSource({
 defineSource({
   name: TASK_SOURCES.activityPayloads,
   table: activityTable,
-  tables: ["task_events", "task_schedule", "task_schedule_sessions"],
+  tables: ["task_events", "task_schedule", "task_schedule_sessions", "task_schedule_lineage"],
   key: ["transition_id"],
   orders: activityOrders,
   authorize: (input: TaskActivityFilter, context) => scopedChild(input, context, input.task),
@@ -535,7 +556,13 @@ defineSource({
 defineSource({
   name: TASK_SOURCES.attemptCalls,
   table: "runner_progress_display",
-  tables: ["runner_progress_display", "runner_attempts", "task_schedule", "task_schedule_sessions"],
+  tables: [
+    "runner_progress_display",
+    "runner_attempts",
+    "task_schedule",
+    "task_schedule_sessions",
+    "task_schedule_lineage",
+  ],
   key: ["seq"],
   orders: {
     calls: [{ column: "seq", direction: "asc" }],
@@ -587,7 +614,12 @@ defineSource({
       h.updated_at AS observed_at
     FROM task_schedule t LEFT JOIN host_session_state h
       ON h.project_directory=t.project_directory AND h.session_id=t.attempt_session_id) AS task_current`,
-  tables: ["task_schedule", "host_session_state", "task_schedule_sessions"],
+  tables: [
+    "task_schedule",
+    "host_session_state",
+    "task_schedule_sessions",
+    "task_schedule_lineage",
+  ],
   key: ["task_id"],
   orders: { task: [{ column: "task_id", direction: "asc" }] },
   authorize: (input: TaskCurrentActivityFilter, context) => scopedTo(input, context),
@@ -600,9 +632,9 @@ defineSource({
     const params: (string | number | null)[] = [input.project ?? null, ...input.tasks]
     if (input.session !== undefined) {
       clauses.push(
-        "EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_current.task_id AND s.session_id=?)",
+        `EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_current.task_id AND s.lineage_key=${LINEAGE_KEY_SQL})`,
       )
-      params.push(input.session)
+      params.push(input.session, input.session)
     }
     return { where: clauses.join(" AND "), params }
   },

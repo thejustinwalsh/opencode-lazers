@@ -36,7 +36,7 @@ import { RadarFlowActions, RadarFlowBody, RadarFlowCanvas, RadarFlowTabs } from 
 import { createFlowModel, filterFeed, quietSentences } from "./flow-model.ts"
 import type { FlowSelection } from "./flow-model.ts"
 import { RadarMapView } from "./map-view.tsx"
-import { createRadarMap, mapFacts } from "./map-model.ts"
+import { createRadarMap, emptyGroupNote, mapFacts } from "./map-model.ts"
 import { CallsDisclosure } from "./history-list.tsx"
 import type { HistorySource } from "./history-list.tsx"
 import { RadarHeader } from "./radar-header.tsx"
@@ -836,7 +836,7 @@ export function RadarMonitorView(props: Props) {
                 )}
               </Show>
             </span>
-            <span class="lazers-radar-pane-title">
+            <span class="lazers-radar-pane-title" title={sessionHeading(session())}>
               {" · "}
               {sessionHeading(session())}
             </span>
@@ -849,7 +849,7 @@ export function RadarMonitorView(props: Props) {
           <>
             <strong>{node().title}</strong>
             <Show when={node().sub}>
-              <span class="lazers-radar-pane-title">
+              <span class="lazers-radar-pane-title" title={node().sub}>
                 {" · "}
                 {node().sub}
               </span>
@@ -1128,6 +1128,16 @@ export function RadarMonitorView(props: Props) {
                           >
                             {(group) => (
                               <>
+                                <Show
+                                  when={
+                                    (group() as Extract<GroupRead, { indexing: false }>).tasks
+                                      .length === 0
+                                  }
+                                >
+                                  <p class="lazers-radar-note">
+                                    {emptyGroupNote(groupOf(node())!)}
+                                  </p>
+                                </Show>
                                 <Rows
                                   columns="72px minmax(0, 1fr)"
                                   label="Tasks"

@@ -7,6 +7,7 @@ import {
   secondAttemptID,
   taskID,
 } from "../../../test/trajectory/fixture.ts"
+import { eventFromRow } from "../../trajectory-panel/rows.ts"
 import { seedDisplayCorpus } from "../../progress/display.fixture.ts"
 import { startProjection } from "../../projections/owner.ts"
 import { meterRepository } from "../../runner/read-meter.fixture.ts"
@@ -359,6 +360,27 @@ test("timeline parity: the stream walked by windows equals the old read's order,
   expect(JSON.stringify(full)).not.toContain("PRIVATE")
 })
 
+test("progress rows: the panel's mapping gives the old read's kind, call and file targets", async () => {
+  const old = new Map((await oldEvents()).map((event) => [String(event.id), event]))
+  const progress = (await events()).filter((row) => row.kind === "progress")
+  expect(progress.length).toBeGreaterThan(3)
+  let files = 0
+  for (const row of progress) {
+    const before = old.get(String(row.sort_key))!
+    const mapped = eventFromRow(row, taskID)
+    expect([row.ref, mapped.kind]).toEqual([row.ref, before.kind])
+    // An oversized call id is shortened by each projection its own way; host call ids are short.
+    const oldCall = (before.callID as string | undefined) ?? null
+    if (oldCall === null || oldCall.length < 200) expect(mapped.callID ?? null).toBe(oldCall)
+    expect(mapped.fileTargets ?? null).toEqual(
+      (before.fileTargets as typeof mapped.fileTargets) ?? null,
+    )
+    if (mapped.fileTargets) files++
+  }
+  // The corpus records file targets on two tool calls: the Files lane has them.
+  expect(files).toBe(2)
+})
+
 test("check intervals: every check row carries the old read's receipt interval, unselected", async () => {
   const report = await inspectTrajectory(
     made.store,
@@ -475,6 +497,19 @@ test("trajectory.attempts: a task's attempts in number order, with the takeover 
   for (const row of latest)
     expect(list.find((attempt) => attempt.id === row.attempt_id)!.last_event_at).toBe(row.at)
   expect(list[2]!.last_event_at).toBeNull()
+  // Active time: each attempt session's completed steps, summed.
+  const worked = made.repository.read((db) =>
+    db
+      .query<{ session_id: string; ms: number }, []>(
+        "SELECT session_id, SUM(completed_at - created_at) AS ms FROM transcript_steps WHERE completed_at >= created_at GROUP BY session_id",
+      )
+      .all(),
+  )
+  expect(worked.length).toBeGreaterThan(0)
+  for (const attempt of list)
+    expect(attempt.active_ms).toBe(
+      worked.find((row) => row.session_id === attempt.session_id)?.ms ?? null,
+    )
 })
 
 // ---- authorize ---------------------------------------------------------------------------------

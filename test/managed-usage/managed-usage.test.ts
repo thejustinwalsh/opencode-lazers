@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { ARCHIVED_SESSION_MESSAGE } from "../../src/session-archived.ts"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Session } from "@opencode/schema/session"
@@ -921,18 +922,25 @@ test("registered enrollment authorizes caller and target before failing closed w
   expect(priceReads).toBe(0)
   expect(store.sessionRevision("ses-managed")).toBe(0)
 
+  // Archived is "done", not a read limit: the caller archived mid-read still gets its answer.
   priceReadEffect.current = () => {
     sessions.get("ses-architect")!.time = { archived: Date.now() }
   }
-  await expect(
-    Effect.runPromise(
+  expect(
+    await Effect.runPromise(
       readTool.execute(
         { scope: { kind: "project", projectID, projectDirectory }, limit: 20 },
         callContext(),
       ),
     ),
-  ).rejects.toThrow()
+  ).toBeDefined()
   expect(priceReads).toBe(1)
+  // A change from the archived caller is refused with the plain reason.
+  await expect(
+    Effect.runPromise(
+      enrollTool.execute({ ...request, requestID: "archived-caller" }, callContext()),
+    ),
+  ).rejects.toThrow(ARCHIVED_SESSION_MESSAGE)
   expect(store.currentRevision()).toBe(0)
 })
 

@@ -446,6 +446,22 @@ export async function run(mode: "pinned" | "target" | "windowed") {
       calls.some((call) => call.source === TRAJECTORY_SOURCES.events && call.window === 1),
     ).toBe(true)
 
+    // Selecting a tool call settles at once: the panel does not re-render itself in a loop (the
+    // remembered selected event once set itself again on every render, ~170k DOM changes).
+    let changes = 0
+    const observer = new (
+      browserDocument.defaultView as unknown as typeof globalThis
+    ).MutationObserver((records) => {
+      for (const record of records) changes += record.addedNodes.length + record.removedNodes.length
+    })
+    observer.observe(container, { subtree: true, childList: true })
+    const toolMark = container.querySelector<HTMLElement>('[data-mark-id*=":tool:"]')!
+    toolMark.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    observer.disconnect()
+    expect(container.querySelector(".lazers-details-header")?.textContent).not.toContain("check")
+    expect(changes).toBeLessThan(2_000)
+
     // A change in the service reaches the open streams: a call the worker just made appears.
     current = {
       ...data(2),

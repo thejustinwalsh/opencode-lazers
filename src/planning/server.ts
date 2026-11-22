@@ -18,7 +18,6 @@ import type { AgentRouteReader } from "../models/agent-route-apply.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { mapPathsOf } from "./checks.ts"
 import { planningHost, planningModel } from "./host.ts"
-import { planningView } from "./read.ts"
 import { PlanningReviews } from "./reviews.ts"
 import { PlanningRpc } from "./rpc-contract.ts"
 import { PlanningStore } from "./store.ts"
@@ -117,7 +116,10 @@ export function registerPlanningDecisionHooks(
   )
 }
 
-/** `lz.planning`: reads of this project's stored plans, never of another project's. */
+/**
+ * `lz.planning`: what a plan link needs to know the plan is this project's. The Plan panel reads
+ * plans through the `planning.list` and `planning.detail` streams.
+ */
 export function registerPlanningRpc(
   ctx: Pick<Plugin.Context, "rpc">,
   repository: TaskRepository,
@@ -125,8 +127,6 @@ export function registerPlanningRpc(
 ) {
   const store = new PlanningStore(repository)
   return timedRpc(ctx.rpc).register(PlanningRpc, {
-    get: (input) =>
-      Effect.sync(() => planningView(store, projectID, input.planningID, input.revision) ?? null),
     resolve: (input) =>
       Effect.sync(() => {
         const row = store.planning(input.planningID)
@@ -139,19 +139,6 @@ export function registerPlanningRpc(
             } as const)
           : ({ status: "not_found" } as const)
       }),
-    list: (input) =>
-      Effect.sync(() =>
-        (input.sessionID
-          ? store.plannings(input.sessionID)
-          : store.projectPlannings(projectID)
-        ).map((row) => ({
-          id: row.id,
-          title: row.title,
-          state: row.state,
-          revision: row.revision,
-          updatedAt: row.updatedAt,
-        })),
-      ),
   })
 }
 

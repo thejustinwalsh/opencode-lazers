@@ -12,6 +12,7 @@ import {
   type ViewWrite,
 } from "./decision-store.ts"
 import { PROJECTION_IDLE_DROP_MS } from "./decision-projection.ts"
+import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import type {
   DecisionViewCall,
   DecisionViewRequest,
@@ -31,6 +32,9 @@ import type {
  * build: routes (host settings) ─► worker.view(identity stored) ─┬─ unchanged ─► nothing written
  *                                                                └─ rows ─► writeDecisionView (paged)
  * hourly, on open: views nobody opened for 7 days are dropped
+ * a build that has not settled by the read deadline (a host routes read that never answers) is
+ *     abandoned and recorded; the view is built again at its cadence, so one stuck read never
+ *     leaves a held view on its old prices
  * ```
  *
  * With no write to a watched table an open panel costs nothing: no build, no read. A view nobody
@@ -78,6 +82,8 @@ export type DecisionViewsOptions = {
   now?: () => number
   refreshMs?: number
   debounceMs?: number
+  /** How long one build may take before it is abandoned; the Models read deadline when absent. */
+  deadlineMs?: number
 }
 
 export class DecisionViews {
@@ -167,21 +173,24 @@ export class DecisionViews {
     return this.active.get(viewID)?.held ?? 0
   }
 
+  /** Build a held view again at its cadence, unless a build is already scheduled. */
+  private schedule(viewID: number, entry: Active) {
+    if (entry.timer || entry.held === 0 || this.closed) return
+    const now = this.now()
+    const at = Math.max(
+      now + (this.options.debounceMs ?? VIEW_DEBOUNCE_MS),
+      entry.builtAt + (this.options.refreshMs ?? VIEW_REFRESH_MS),
+    )
+    entry.timer = setTimeout(() => {
+      entry.timer = undefined
+      void this.build(viewID)
+    }, at - now)
+    entry.timer.unref()
+  }
+
   /** A watched table changed: rebuild the views a stream holds, each at its cadence. */
   private changed() {
-    const now = this.now()
-    for (const [viewID, entry] of this.active) {
-      if (entry.timer) continue
-      const at = Math.max(
-        now + (this.options.debounceMs ?? VIEW_DEBOUNCE_MS),
-        entry.builtAt + (this.options.refreshMs ?? VIEW_REFRESH_MS),
-      )
-      entry.timer = setTimeout(() => {
-        entry.timer = undefined
-        void this.build(viewID)
-      }, at - now)
-      entry.timer.unref()
-    }
+    for (const [viewID, entry] of this.active) this.schedule(viewID, entry)
     if (!this.active.size) {
       this.unsubscribe?.()
       this.unsubscribe = undefined
@@ -218,12 +227,20 @@ export class DecisionViews {
         this.active.delete(viewID)
         return
       }
-      const routed = await this.routed(entry.project, entry.request.taskID, abort.signal)
-      abort.signal.throwIfAborted()
-      const result = await this.worker.view(
-        entry.project,
-        { ...entry.request, routed, known: stored.identity },
+      // A build in flight holds the view's `running`: every later change only asks for one more
+      // pass. A read that never settles would hold it for good, so a build has the read deadline.
+      const result = await withReadDeadline(
         abort.signal,
+        async (signal) => {
+          const routed = await this.routed(entry.project, entry.request.taskID, signal)
+          signal.throwIfAborted()
+          return this.worker.view(
+            entry.project,
+            { ...entry.request, routed, known: stored.identity },
+            signal,
+          )
+        },
+        this.options.deadlineMs ?? READ_DEADLINE_MS,
       )
       abort.signal.throwIfAborted()
       entry.builtAt = this.now()
@@ -240,6 +257,9 @@ export class DecisionViews {
       } catch {
         // The database is unavailable; the next change or open retries.
       }
+      // Built again at the cadence, change or not: a failed build is not the view's last word.
+      entry.builtAt = this.now()
+      this.schedule(viewID, entry)
     } finally {
       if (entry.abort === abort) entry.abort = undefined
     }

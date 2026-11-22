@@ -4,6 +4,7 @@ import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { withBenchmarks as scored } from "../../website/demo/src/panels/models-references.ts"
 
 /**
  * The Models panel mounted in a DOM over real stream frames: the demo's mock project is turned
@@ -191,6 +192,18 @@ test("first open: a view being built shows the building line, then the chart and
   expect(rows).toHaveLength(5)
 })
 
+test("first open: the chart never says empty while its points are still on the way", async () => {
+  const { host, root } = mount({ lateSources: ["models.points"] })
+  await until(() => host.lastOpen("models.points") !== undefined, "the points stream opened")
+  await settle()
+  // The view row has landed; the points have not. That is loading, not "no accepted tasks".
+  expect(text(root)).not.toContain("No accepted tasks match")
+  expect(pointIDs(root)).toEqual([])
+  host.answer()
+  await until(() => pointIDs(root).length === 4, "the four plotted models")
+  expect(text(root)).not.toContain("No accepted tasks match")
+})
+
 test("switching the persona or the task keeps the last ready view until the new one lands", async () => {
   const { host, root } = mount({ preferences: { taskFilter: true } })
   await until(() => pointIDs(root).length === 4, "the first view")
@@ -305,10 +318,12 @@ test("prices: an unpriced model shows no price, a priced one its source and date
     day: "numeric",
   })
   const rows = rowsOf(root)
-  const opus = rows.find((row) => row.label === "Claude Opus 5.5")!
-  // The price cell is empty: never "unknown", never a zero. Its measured cost still shows.
+  const opus = rows.find((row) => row.label.startsWith("Claude Opus 5.5"))!
+  // The price cell and the projected cost are empty: never "unknown", never a zero. Its
+  // observed cost still shows.
   expect(opus.cells.at(-1)).toBe("")
-  expect(opus.cells[1]).toMatch(/^≈\$1\.\d+$/)
+  expect(opus.cells[1]).toMatch(/^\$1\.\d+$/)
+  expect(opus.cells[2]).toBe("")
   for (const row of rows.filter((entry) => entry !== opus))
     expect(row.cells.at(-1)).toBe(`OpenRouter \u00b7 ${retrieved}`)
   expect(text(root.querySelector("table")!)).not.toMatch(/unknown|\$0(?![.\d])/i)
@@ -339,6 +354,62 @@ test("prices: an unpriced model shows no price, a priced one its source and date
   expect(text(root.querySelector(".lazers-models-pane-body")!)).toContain("Tokens / task1.1M")
 })
 
+test("one cost per configuration: table, Your runs, Projected and the pane say the same", async () => {
+  // DeepSeek's reference is partial: a priced subtotal range, shown as a range everywhere.
+  const { root } = mount({
+    comparison: unpriced(["claude-opus-5-5"]),
+    partial: ["deepseek-v4-pro"],
+    preferences: { open: true },
+  })
+  await until(() => rowsOf(root).length === 5, "the table")
+  const row = (name: string) =>
+    [...root.querySelectorAll("table tbody tr")].find((tr) =>
+      tr.querySelector("th")?.textContent?.startsWith(name),
+    )!
+  const cost = (tr: Element, basis: string) =>
+    tr.querySelector<HTMLElement>(`.lazers-models-cost[data-basis=${basis}]`)
+  const deepseek = cost(row("DeepSeek V4 Pro"), "observed")!
+  const range = deepseek.textContent!
+  expect(range).toMatch(/^\$0\.\d+–\$0\.\d+$/)
+  expect(deepseek.dataset.kind).toBe("range")
+  const projected = cost(row("DeepSeek V4 Pro"), "projected")!.textContent!
+  expect(projected).toMatch(/^\$0\.\d+$/)
+  // The row label names the exact effort its observed facts came from.
+  expect(row("Claude Opus 5.5").querySelector("th")!.textContent).toBe("Claude Opus 5.5 · high")
+  expect(row("Claude Opus 5.5").querySelector("button")!.getAttribute("title")).toBe(
+    "Claude Opus 5.5 · high",
+  )
+  // An unpriced model has no projected price element at all.
+  expect(cost(row("Claude Opus 5.5"), "projected")).toBeNull()
+
+  // Your runs: the point is a whisker from low to high, its accessible text the same range.
+  await until(() => pointIDs(root).length === 4, "the observed plot")
+  const point = root.querySelector('[data-point-id*="deepseek-v4-pro"]')!
+  expect(point.querySelector("[data-range]")).not.toBeNull()
+  expect(point.getAttribute("aria-label")).toContain(`Observed in your runs: ${range}`)
+
+  // The pane's headline is the same stored cost, labelled by its basis.
+  click(point)
+  await until(() => root.querySelector("h2[title*='deepseek-v4-pro']") !== null, "the pane")
+  await settle()
+  const body = text(root.querySelector(".lazers-models-pane-body")!)
+  expect(body).toContain(range)
+  expect(body).toContain("Observed in your runs")
+
+  // Projected: the bar is the projection; the observed range sits beside it with its own label.
+  click(root.querySelector("[data-segment=projected]")!)
+  await until(() => root.querySelector(".lazers-rank") !== null, "the projected ranking")
+  const rank = [...root.querySelectorAll(".lazers-rank-row")].find((g) =>
+    g.getAttribute("aria-label")?.startsWith("DeepSeek V4 Pro"),
+  )!
+  const label = rank.getAttribute("aria-label")!
+  expect(label).toContain(`Projected from list prices × your median tokens: ${projected}`)
+  expect(label).toContain(`Observed in your runs: ${range}`)
+  expect(rank.querySelector(".lazers-chart-ring[data-observed]")).not.toBeNull()
+  expect(rank.querySelector(".lazers-chart-whisker[data-observed]")).not.toBeNull()
+  expect(text(root.querySelector(".lazers-rank")!)).not.toContain("From your runs")
+})
+
 /** What each demo model scores: the Coding Index, and SWE-bench Verified (a fraction) for some. */
 const scores: Record<string, { coding: number; swe?: number }> = {
   "claude-opus-5-5": { coding: 70, swe: 0.82 },
@@ -348,52 +419,6 @@ const scores: Record<string, { coding: number; swe?: number }> = {
   "meta/muse-ember": { coding: 40 },
 }
 /** The comparison's candidates matched to the public benchmarks of `scores`. */
-const scored = (output: Candidates): Candidates => ({
-  ...output,
-  candidates: output.candidates.map((candidate) => {
-    const score = scores[candidate.identity.modelID]
-    if (!score) return candidate
-    const evidence = { records: [], recordCount: 0, truncated: false }
-    return {
-      ...candidate,
-      benchmarkCorrespondence: {
-        status: "exact",
-        basis: "exact-published-catalog-id",
-        evidence,
-      } as never,
-      externalBenchmark: {
-        kind: "openrouter-benchmark",
-        source: "artificial-analysis",
-        taskType: "coding",
-        modelPermaslug: candidate.identity.modelID,
-        displayName: candidate.native.name,
-        effort: null,
-        codingIndex: score.coding,
-        agenticIndex: null,
-        intelligenceIndex: null,
-        prices: null,
-      },
-      publicBenchmarks:
-        score.swe === undefined
-          ? []
-          : [
-              {
-                kind: "epoch-benchmark",
-                benchmarkID: "swe-bench-verified",
-                benchmark: "SWE-bench Verified",
-                origin: "Epoch AI",
-                modelVersion: candidate.identity.modelID,
-                modelKey: candidate.identity.modelID,
-                effort: null,
-                score: score.swe,
-                stderr: null,
-                agent: null,
-                releaseDate: null,
-              },
-            ],
-    }
-  }),
-})
 
 test("benchmark: points come from models.benchmark, left-off models are named", async () => {
   const both = (output: Candidates) => unpriced(["meta/muse-ember"])(scored(output))
@@ -403,6 +428,8 @@ test("benchmark: points come from models.benchmark, left-off models are named", 
   const stream = host.lastOpen("models.benchmark")!
   expect(stream.window).toBe(5)
   expect(text(root)).toContain("4 plotted")
+  // A zero is not a finding: the coverage line names only what was left out.
+  expect(text(root)).not.toMatch(/\b0 loaded catalog/)
   expect(text(root)).toContain("1 scored model has no price in any source")
   expect(text(root)).toContain("Muse Ember \u00b7 no price in any configured source")
   expect(text(root)).toContain("Artificial Analysis Coding Index")
@@ -438,7 +465,7 @@ test("score basis: the picker lists the view's options and a pick reopens the vi
     )
   await until(() => picker().value === "swe-bench-verified", "the picker shows the new basis")
   // The ranking's score column now reads the SWE-bench scores (a percent).
-  await until(() => rowsOf(root).some((row) => row.cells[4] === "82"), "scores on the new basis")
+  await until(() => rowsOf(root).some((row) => row.cells[5] === "82"), "scores on the new basis")
 })
 
 test("assignments: sources read from the stream, a saved route is confirmed by the readback", async () => {

@@ -1,12 +1,6 @@
 import { expect, test } from "bun:test"
-import {
-  FIELD_KEYS,
-  PlanningBody,
-  changedFields,
-  fieldHashes,
-  isStale,
-  validateBody,
-} from "./draft.ts"
+import { PlanningBody, changedFields, fieldHashes, validateBody } from "./draft.ts"
+import { FIELD_KEYS, isStale } from "./view-assembly.ts"
 
 const proposal = (over: Record<string, unknown> = {}) => ({
   objective: "Open a stored plan from a chat link.",

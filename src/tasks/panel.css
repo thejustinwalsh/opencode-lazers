@@ -75,7 +75,14 @@
   color: var(--text-strong);
 }
 
+/* The count gives way before the controls do: it arrives with the data, and wrapping the
+   controls onto a second line then would push the list down under the reader. */
 .lazers-tasks-count {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-weak);
   font-size: 12px;
   font-variant-numeric: tabular-nums;

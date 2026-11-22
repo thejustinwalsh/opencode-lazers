@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import {
+  attemptActive,
   attemptDuration,
   attemptName,
   attemptSignals,
@@ -136,4 +137,19 @@ test("an attempt with an open concern or an Architect takeover is marked; others
   expect(attemptSignals({ takeover: { agent: "architect" } })).toEqual({ takeover: true })
   expect(attemptName({ number: 2 })).toBe("Attempt 2")
   expect(attemptName({ number: 3, takeover: { agent: "architect" } })).toBe("Architect takeover")
+})
+
+test("a finished attempt's active time is its working time, not start to last event", () => {
+  // LZ-216: started, worked 3 h 39 m in steps, accepted, then adopted 33 min later; wall 6 h 37 m.
+  const finished = {
+    state: "accepted",
+    startedAt: 0,
+    activeMs: 13_117_095,
+    intervals: { attempt: { startedAt: 0, endedAt: 23_820_319 } },
+  } as unknown as TrajectoryAttempt
+  expect(attemptActive(finished)).toEqual({ ms: 13_117_095, open: false })
+  // No completed step: no figure rather than the wall span.
+  expect(attemptActive({ ...finished, activeMs: null })).toBeNull()
+  // An active attempt shows elapsed time "so far" instead.
+  expect(attemptActive({ ...finished, state: "running" })).toBeNull()
 })

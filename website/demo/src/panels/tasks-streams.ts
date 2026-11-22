@@ -278,6 +278,45 @@ function detailRowsOf(answers: DetailAnswers, open: Open): DemoRow[] | undefined
   }
 }
 
+/**
+ * A task's prerequisites (`parent`) or the tasks that wait on it (`task`), each joined to the
+ * child's own list row, as `task_schedule_edges` stores them.
+ */
+function dependencyRows(data: TasksData, filter: Record<string, unknown>, project: string) {
+  const rows = new Map(scheduleRows(data, project).map((row) => [row.task_id as string, row]))
+  const byN = new Map(data.tasks.map((task) => [task.n, task]))
+  const edges = data.tasks.flatMap((task) =>
+    (task.after ?? []).map((n, ord) => ({ parent: task, child: byN.get(n), ord })),
+  )
+  const wanted =
+    filter.parent !== undefined
+      ? edges.filter((edge) => uid(1, edge.parent.n) === filter.parent)
+      : edges.filter((edge) => edge.child && uid(1, edge.child.n) === filter.task)
+  return wanted.flatMap(({ parent, child, ord }) => {
+    if (!child) return []
+    const row = rows.get(uid(1, child.n))!
+    const childColumns = Object.fromEntries(
+      Object.entries(row).map(([name, value]) => [`c_${name}`, value]),
+    )
+    return [
+      {
+        ...childColumns,
+        parent_task_id: uid(1, parent.n),
+        ord,
+        child_task_id: uid(1, child.n),
+        kind: "plan",
+        child_reference: `LZ-${child.n}`,
+        child_title: child.title,
+        child_state: child.state,
+        waiting: child.state !== "accepted" && child.state !== "incorporated",
+        child_plan_id: row.plan_id,
+        parent_reference: `LZ-${parent.n}`,
+        parent_title: parent.title,
+      },
+    ]
+  })
+}
+
 function rowsOf(data: TasksData, open: Open, project: string, answers?: DetailAnswers): DemoRow[] {
   const detailRows = answers ? detailRowsOf(answers, open) : undefined
   if (detailRows) return detailRows
@@ -295,6 +334,7 @@ function rowsOf(data: TasksData, open: Open, project: string, answers?: DetailAn
       n: rows.filter((row) => row.bucket === bucket).length,
     }))
   }
+  if (open.source === TASK_SOURCES.dependencies) return dependencyRows(data, filter, project)
   if (open.source !== TASK_SOURCES.schedule) return []
   const buckets = bucketsForSelection(
     filter.states as Parameters<typeof bucketsForSelection>[0],

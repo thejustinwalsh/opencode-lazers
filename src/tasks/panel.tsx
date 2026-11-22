@@ -103,7 +103,7 @@ import { taskExplanation, taskStateView } from "./task-state.ts"
 import { PROGRESS_STEPS, taskProgress } from "./task-progress.ts"
 import { attemptLane, taskStats } from "./stats.ts"
 import { criterionLine } from "./criterion.ts"
-import { eventLabel } from "./history.ts"
+import { eventLabel, eventPayloadText } from "./history.ts"
 import { REFERENCE_EXACT } from "../projects/code.ts"
 import css from "./panel.css?inline"
 
@@ -1092,7 +1092,9 @@ function TaskPanel(
             )}
           </Show>
           {/* The whole first sentence: the row truncates to its own width, not to a fixed length. */}
-          <span class="lazers-tasks-row-title">{taskHeading(taskRow().title)}</span>
+          <span class="lazers-tasks-row-title" title={taskHeading(taskRow().title)}>
+            {taskHeading(taskRow().title)}
+          </span>
           <span class="lazers-tasks-row-signals">
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
@@ -1417,6 +1419,20 @@ function TaskPanel(
     selectTask(target.row.taskID)
     focusItem(target.key)
   }
+  /**
+   * Home or End pressed while the window holds the middle of the list: the window moves to that
+   * end, and the end row takes focus and selection once its frame lands.
+   */
+  const [edgeKey, setEdgeKey] = createSignal<"Home" | "End">()
+  createEffect(() => {
+    const key = edgeKey()
+    const list = taskList()
+    if (!key || !list) return
+    if ((key === "Home" ? list.before() : list.after()) !== 0) return
+    const tree = taskItems(items())
+    setEdgeKey(undefined)
+    goTo(key === "Home" ? tree[0] : tree.at(-1))
+  })
   const rowKey = (
     event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
     item: VirtualTaskItem,
@@ -1427,10 +1443,14 @@ function TaskPanel(
     const taskID = item.row.taskID
     const go = (key: NavigationKey) => goTo(navigationTarget(items(), item.key, key))
     switch (event.key) {
-      case "ArrowUp":
-      case "ArrowDown":
       case "Home":
       case "End":
+        event.preventDefault()
+        if (taskList()?.toEdge(event.key === "Home" ? "head" : "tail")) setEdgeKey(event.key)
+        else go(event.key)
+        return
+      case "ArrowUp":
+      case "ArrowDown":
         event.preventDefault()
         go(event.key)
         return
@@ -1654,7 +1674,7 @@ function TaskPanel(
         >
           {selectedPresentation().label}
         </span>
-        <span class="lazers-tasks-inspector-title">
+        <span class="lazers-tasks-inspector-title" title={taskHeading(task.proposal.objective)}>
           {" · "}
           {taskTitle(task.proposal.objective)}
         </span>
@@ -1820,7 +1840,7 @@ function TaskPanel(
             {event.event}
           </p>
           <Show when={payload() !== undefined} fallback={<p class="lazers-tasks-meta">Loading…</p>}>
-            <Ui.Code content={payload() ?? ""} language="json" />
+            <Ui.Code content={eventPayloadText(payload() ?? "")} language="json" />
           </Show>
         </Show>
       </div>
@@ -1861,7 +1881,11 @@ function TaskPanel(
       <header class="lazers-tasks-header">
         <h2>Tasks</h2>
         <Show when={headerCount()}>
-          {(text) => <span class="lazers-tasks-count">{text()}</span>}
+          {(text) => (
+            <span class="lazers-tasks-count" title={text()}>
+              {text()}
+            </span>
+          )}
         </Show>
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">

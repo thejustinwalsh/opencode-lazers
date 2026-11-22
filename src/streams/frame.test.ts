@@ -175,3 +175,34 @@ test("type mismatches are reported, not coerced", () => {
   expect(() => encodeRow(columns, [1, 0, 5, null, false])).toThrow(TypeError)
   expect(() => encodeRow(columns, [1, 0, "t"])).toThrow(TypeError)
 })
+
+test("frames encode without Node's Buffer, matching its UTF-8 bytes for every text", async () => {
+  // The website demo encodes frames in the browser, where `Buffer` does not exist.
+  const texts = [
+    "ascii",
+    "héllo",
+    "✓ 日本語",
+    "🧪 pair",
+    "lone \ud800 high",
+    "lone \udc00 low",
+    "end \ud83e",
+  ]
+  const nodeText = texts.map((text) => Buffer.from(text, "utf8").toString("utf8"))
+  const textColumns = { title: "text" } as const satisfies Columns
+  const saved = globalThis.Buffer
+  // @ts-expect-error: removed to stand in for a browser
+  delete globalThis.Buffer
+  try {
+    // A fresh module instance, so it binds its text measure in a runtime without Buffer.
+    const { frameSize, readFrame, writeFrame } = (await import(
+      "./frame.ts?without-buffer" as string
+    )) as typeof import("./frame.ts")
+    const frameRows = texts.map((text) => [text])
+    const buffer = new ArrayBuffer(frameSize(textColumns, frameRows))
+    writeFrame(buffer, 0, textColumns, { ...header, count: frameRows.length }, frameRows)
+    const frame = readFrame(buffer, 0, textColumns)
+    expect(texts.map((_, index) => frame.row(index).title)).toEqual(nodeText)
+  } finally {
+    globalThis.Buffer = saved
+  }
+})

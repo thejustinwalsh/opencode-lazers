@@ -204,7 +204,8 @@ export const schemaModules = {
     tables: ["model_candidates", "model_candidate_sets", "model_candidates_dirty"],
   },
   "model-decision-views": {
-    generation: 1,
+    // 2: a configuration's stored cost (`model_decision_points.cost`, `configurationCost`).
+    generation: 2,
     source: "src/models/decision-store.ts",
     tables: [
       "model_decision_views",
@@ -237,7 +238,7 @@ export const schemaModules = {
     tables: ["audit_runs", "audit_sections", "audit_decisions", "audit_findings"],
   },
   "task-schedule": {
-    generation: 5,
+    generation: 6,
     source: "src/tasks/schedule/schema.ts",
     tables: [
       "task_schedule",
@@ -246,6 +247,7 @@ export const schemaModules = {
       "task_schedule_blockers",
       "task_schedule_waits",
       "task_schedule_sessions",
+      "task_schedule_lineage",
       "task_schedule_scopes",
       "task_schedule_search",
       "task_schedule_counts",

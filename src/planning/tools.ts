@@ -17,10 +17,10 @@ import {
   DraftID,
   PlanningBody,
   fieldHashes,
-  isStale,
   validateBody,
   type Validation,
 } from "./draft.ts"
+import { isStale } from "./view-assembly.ts"
 import { planMarkdownLink } from "./links.ts"
 import { renderBreakdown } from "./render.ts"
 import { PlanningStore, type QuestionRow } from "./store.ts"

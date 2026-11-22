@@ -13,12 +13,12 @@ import {
 } from "./chart-data.ts"
 import { RANK_LOG_RATIO, formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
 import { catalogSummaryText, entryProvenanceText } from "./catalog-projection.ts"
+import { COST_BASIS_LABEL, costConfigurationLabel, costText } from "./configuration-cost.ts"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import {
   boundedModelLabel,
   joinSegments,
   formatMarketAmount,
-  formatMarketRange,
   compactCount,
   routeLabel,
   sourceState,
@@ -201,9 +201,10 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
             formatValue={formatMarketAmount}
             title="Projected cost per accepted task"
             label="Projected cost ranking. Arrow keys move between models; Enter selects."
-            backedLegend="From your runs"
+            valueLegend={COST_BASIS_LABEL.projected}
+            observedLegend={COST_BASIS_LABEL.observed}
             showScore={rows().some((row) => row.score != null)}
-            caption="List prices × your median tokens"
+            caption="Projected is the default here: one token profile prices every model alike"
           />
         }
       >
@@ -221,8 +222,8 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
           xScale="auto-log"
           xLogRatio={RANK_LOG_RATIO}
           label="Projected cost against score. Arrow keys move between models; Enter selects."
-          backedLegend="From your runs"
-          caption="List prices × your median tokens"
+          observedLegend={COST_BASIS_LABEL.observed}
+          caption={COST_BASIS_LABEL.projected}
         />
       </Show>
       <Show when={freeModels().length > 0}>
@@ -308,12 +309,14 @@ function CompareTop(props: { ctl: ModelsController }) {
                     state.selectConfiguration(configurationID)
                   }}
                   xTitle="Tokens per accepted task"
-                  yTitle="Cost per accepted task"
+                  yTitle="Observed cost per accepted task"
                   formatX={formatAxisTokens}
                   formatY={formatAxisMoney}
                   xScale="auto-log"
                   label="Model cost chart. Arrow keys move between models; Enter selects."
-                  caption={observedCaption()}
+                  caption={[COST_BASIS_LABEL.observed, observedCaption()]
+                    .filter(Boolean)
+                    .join(" · ")}
                   emptyText={comparisonChartEmptyText(
                     visible()?.decisionOverview?.graph.points ?? [],
                     decisionChartReferences(),
@@ -362,8 +365,11 @@ function CompareTop(props: { ctl: ModelsController }) {
                   emptyText={benchmarkEmptyText()}
                 />
                 <p class="lazers-models-benchmark-coverage">
-                  {baseline()?.points.length ?? 0} plotted · {baseline()?.unmatchedRoutes ?? 0}{" "}
-                  loaded catalog models without a benchmark match
+                  {baseline()?.points.length ?? 0} plotted
+                  {/* Each segment names something left out; nothing left out says nothing. */}
+                  {baseline()?.unmatchedRoutes
+                    ? ` · ${baseline()!.unmatchedRoutes} loaded catalog ${baseline()!.unmatchedRoutes === 1 ? "model" : "models"} without a benchmark match`
+                    : ""}
                   {baseline()?.ambiguousRoutes
                     ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
                     : ""}
@@ -473,13 +479,12 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
             ["cached input / 1M", perMillion(item().price?.cacheRead ?? null)],
             ["context", item().contextTokens ? compactCount(item().contextTokens!) : undefined],
             ["coding index", item().score === null ? undefined : String(item().score)],
+            [COST_BASIS_LABEL.projected, costText(item().projected) || undefined],
             [
-              "measured",
               item().observed
-                ? item().observed!.range
-                  ? formatMarketRange(item().observed!.range!)
-                  : formatMarketAmount(item().observed!.usd)
-                : undefined,
+                ? `${COST_BASIS_LABEL.observed} · ${costConfigurationLabel(item().label, item().observed!.cost)}`
+                : COST_BASIS_LABEL.observed,
+              costText(item().observed?.cost) || undefined,
             ],
             [
               "accepted",
@@ -515,6 +520,22 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
                 <p class="lazers-models-source-meta">Available via {providers().join(", ")}</p>
               )}
             </Show>
+            <Show when={item().observed?.others?.length}>
+              <p class="lazers-models-source-meta">
+                Also observed:{" "}
+                <For each={item().observed!.others!}>
+                  {(other) => (
+                    <button
+                      type="button"
+                      class="lazers-models-inline-link"
+                      onClick={() => props.ctl.showObservedConfiguration(other.configurationID)}
+                    >
+                      {other.variant ?? "default"}
+                    </button>
+                  )}
+                </For>
+              </p>
+            </Show>
             <Disclosure
               title="Estimate basis and prices"
               hint={item().price ? benchmarkSourceName[item().price!.source] : undefined}
@@ -526,7 +547,7 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
                 List prices times the median tokens per accepted task across our{" "}
                 {profile()?.configurations ?? 0} observed configurations (
                 {profile()?.acceptedTasks ?? 0} accepted tasks).
-                {item().projection?.cacheAtInputRate
+                {item().projected.provenance.cacheAtInputRate
                   ? " This model lists no cache rate, so cached tokens are priced at its input rate."
                   : ""}
               </p>
@@ -737,11 +758,10 @@ function compareDetails(ctl: ModelsController) {
             <code>
               {item().route.providerID}/{item().route.modelID}
             </code>
-            <Show when={item().projection}>
-              {(projection) => (
-                <span class="lazers-models-selected-price">
-                  <strong>{formatMarketAmount(projection().usd)}</strong> projected per accepted
-                  task
+            <Show when={costText(item().projected)}>
+              {(text) => (
+                <span class="lazers-models-selected-price" title={COST_BASIS_LABEL.projected}>
+                  <strong>{text()}</strong> projected per accepted task
                 </span>
               )}
             </Show>

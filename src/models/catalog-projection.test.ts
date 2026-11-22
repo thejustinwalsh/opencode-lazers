@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { observedCostFixture, projectedCostFixture } from "./cost.fixture.ts"
 import {
   BYOK_PER_PROVIDER,
   CATALOG_SOURCE_TOP,
@@ -7,12 +8,25 @@ import {
   buildCatalogSet,
   catalogSummaryText,
   entryCost,
-  projectCost,
   rankCatalog,
   tokenProfile,
 } from "./catalog-projection.ts"
 import type { CatalogEntry, ObservedFacts, TokenProfile } from "./catalog-projection.ts"
 import { routeKey } from "./benchmark-baseline.ts"
+import { configurationCost } from "./configuration-cost.ts"
+
+import type { BenchmarkPrice } from "./benchmark-baseline.ts"
+
+/** The projected cost's value and cache flag, through the one cost function. */
+const projectCost = (profile: TokenProfile, price: BenchmarkPrice) => {
+  const cost = configurationCost({
+    basis: "projected",
+    route: { providerID: "p", modelID: "m", variant: null },
+    price,
+    profile,
+  })
+  return { usd: cost.low, cacheAtInputRate: cost.provenance.cacheAtInputRate }
+}
 import type { ModelCandidate } from "./comparison-presentation.ts"
 
 /** A candidate priced by OpenRouter (USD per token strings) or by the native catalog. */
@@ -193,12 +207,24 @@ test("the set is a union by model: observed, routed and catalog, tagged and de-d
     observed: new Map([
       [
         routeKey({ providerID: "openai", modelID: "gpt-6-luna" }),
-        { configurationID: "c1", usd: 0.5, tokens: 6e6, accepted: 9, terminal: 11 },
+        {
+          configurationID: "c1",
+          cost: observedCostFixture(0.5),
+          tokens: 6e6,
+          accepted: 9,
+          terminal: 11,
+        },
       ],
       // Observed but absent from every catalog: still listed, with no price to project.
       [
         routeKey({ providerID: "local", modelID: "home-grown" }),
-        { configurationID: "c2", usd: 0.1, tokens: 1e6, accepted: 2, terminal: 2 },
+        {
+          configurationID: "c2",
+          cost: observedCostFixture(0.1),
+          tokens: 1e6,
+          accepted: 2,
+          terminal: 2,
+        },
       ],
     ]),
     routed: [
@@ -213,7 +239,7 @@ test("the set is a union by model: observed, routed and catalog, tagged and de-d
   expect(byModel.get("gpt-6-luna")!.tags).toEqual(["observed", "routed", "catalog"])
   expect(byModel.get("router-pick")!.tags).toEqual(["routed"])
   expect(byModel.get("home-grown")!.tags).toEqual(["observed"])
-  expect(byModel.get("home-grown")!.projection).toBeNull()
+  expect(byModel.get("home-grown")!.projected.kind).toBe("none")
   expect(byModel.get("home-grown")!.price).toBeNull()
   // A public score is a reason to list a model: every scored, priced model is in, however many.
   const catalogTagged = entries.filter((item) => item.tags.includes("catalog"))
@@ -224,7 +250,7 @@ test("the set is a union by model: observed, routed and catalog, tagged and de-d
   expect(byModel.get("model-0")!.tags).toEqual(["catalog"])
   expect(byModel.has(`model-${CATALOG_TOP}`)).toBe(true)
   // Projection comes from the configured source's list price and the profile.
-  expect(byModel.get("model-0")!.projection!.usd).toBeCloseTo(1 + 0.3 * 4)
+  expect(byModel.get("model-0")!.projected.low!).toBeCloseTo(1 + 0.3 * 4)
   expect(byModel.get("model-0")!.price).toMatchObject({
     source: "openrouter",
     retrievedAt: "2026-11-17T12:00:00.000Z",
@@ -294,11 +320,11 @@ test("an unavailable source contributes nothing: the next in order prices the mo
     routed: [{ providerID: "openai", modelID: "gpt-6" }],
   })
   expect(none.map((item) => item.tags)).toEqual([["routed"]])
-  expect(none[0]!.projection).toBeNull()
+  expect(none[0]!.projected.kind).toBe("none")
   // Without a token profile nothing is projected either.
   expect(
-    buildCatalogSet({ ...base, profile: undefined, candidates: [nativeOnly] })[0]!.projection,
-  ).toBeNull()
+    buildCatalogSet({ ...base, profile: undefined, candidates: [nativeOnly] })[0]!.projected.kind,
+  ).toBe("none")
 })
 
 test("the projected frontier is cost lower, score higher", () => {
@@ -329,7 +355,13 @@ test("the projected frontier is cost lower, score higher", () => {
     observed: new Map([
       [
         routeKey({ providerID: "a", modelID: "unscored" }),
-        { configurationID: "u", usd: 0.01, tokens: 1, accepted: 2, terminal: 2 },
+        {
+          configurationID: "u",
+          cost: observedCostFixture(0.01),
+          tokens: 1,
+          accepted: 2,
+          terminal: 2,
+        },
       ],
     ]),
   })
@@ -343,7 +375,7 @@ const row = (id: string, extra: Partial<CatalogEntry>): CatalogEntry => ({
   label: id,
   tags: ["catalog"],
   price: null,
-  projection: null,
+  projected: projectedCostFixture(null),
   score: null,
   contextTokens: null,
   observed: null,
@@ -353,15 +385,21 @@ const row = (id: string, extra: Partial<CatalogEntry>): CatalogEntry => ({
 
 test("ranking puts the best trade-off first, then cost per task ascending, unpriced last", () => {
   const ranked = rankCatalog([
-    row("c-dear", { projection: { usd: 3, cacheAtInputRate: false } }),
+    row("c-dear", { projected: projectedCostFixture(3) }),
     row("none-b", {}),
-    row("a-frontier-dear", { frontier: true, projection: { usd: 2, cacheAtInputRate: false } }),
-    row("b-cheap", { projection: { usd: 0.5, cacheAtInputRate: false } }),
-    row("a-frontier-cheap", { frontier: true, projection: { usd: 0.4, cacheAtInputRate: false } }),
+    row("a-frontier-dear", { frontier: true, projected: projectedCostFixture(2) }),
+    row("b-cheap", { projected: projectedCostFixture(0.5) }),
+    row("a-frontier-cheap", { frontier: true, projected: projectedCostFixture(0.4) }),
     // Observed cost is measured, and wins over a projection for ordering.
     row("measured", {
-      observed: { configurationID: "m", usd: 1, tokens: null, accepted: 1, terminal: null },
-      projection: { usd: 9, cacheAtInputRate: false },
+      observed: {
+        configurationID: "m",
+        cost: observedCostFixture(1),
+        tokens: null,
+        accepted: 1,
+        terminal: null,
+      },
+      projected: projectedCostFixture(9),
     }),
     row("none-a", {}),
   ])

@@ -290,6 +290,33 @@ test("catalog parity: models.catalog for each persona × task kind equals buildC
     expect(all.entries.some((entry) => entry.tags.includes(tag))).toBe(true)
 })
 
+test("one stored cost: a configuration's point row, catalog entry and Benchmark point carry the same object", async () => {
+  let shared = 0
+  for (const filters of FILTERS) {
+    const rows = await computedView({ filters, basis: null, taskID: null, routed, known: null })
+    if ("unchanged" in rows) throw new Error("expected rows")
+    const pointCost = new Map(rows.points.map((point) => [point.configurationID, point.cost]))
+    for (const entry of rows.entries) {
+      const observed = entry.detail.observed
+      if (!observed) continue
+      // The entry's observed cost is the configuration's stored one, labelled observed.
+      expect(observed.cost).toBe(pointCost.get(observed.configurationID)!)
+      expect(observed.cost.basis).toBe("observed")
+      expect(entry.detail.projected.basis).toBe("projected")
+      shared++
+    }
+    for (const row of rows.benchmarkRows) {
+      const costs = (row.detail as { costs?: { observed: unknown; projected: unknown } }).costs
+      if (!costs) continue
+      const entry = rows.entries.find((item) => item.detail.id === row.detail.id)
+      if (!entry) continue
+      expect(costs.projected).toBe(entry.detail.projected)
+      expect(costs.observed).toBe(entry.detail.observed?.cost ?? null)
+    }
+  }
+  expect(shared).toBeGreaterThan(0)
+})
+
 test("points/contributors parity: equal overview.graph.points and inspect contributor pages", async () => {
   let plotted = 0
   let priced = 0
@@ -402,9 +429,19 @@ test("benchmark and sources parity: equal benchmarkBaseline, scoreOptions and th
       if ("unchanged" in rows) throw new Error("expected rows")
       const { viewID } = storeView(filters, basis, rows)
       const streamed = await walk(modelBenchmarkSource, scope(viewID), "chart", 5)
-      expect(streamed.map((row) => row.detail)).toEqual(
+      // The baseline is unchanged; a point adds its model's stored costs, the catalog's own.
+      const details = streamed.map((row) => row.detail as Record<string, unknown>)
+      expect(details.map(({ costs: _costs, ...rest }) => rest) as unknown[]).toEqual(
         JSON.parse(JSON.stringify([...expected.points, ...expected.gaps])) as unknown[],
       )
+      const projectedByID = new Map(
+        rows.entries.map((entry) => [entry.detail.id, entry.detail.projected] as const),
+      )
+      for (const detail of details)
+        if (detail.costs && projectedByID.has(detail.id as string))
+          expect((detail.costs as { projected: unknown }).projected).toEqual(
+            JSON.parse(JSON.stringify(projectedByID.get(detail.id as string))),
+          )
       const [view] = await walk(modelViewSource, scope(viewID), "key", 1)
       expect(view?.benchmark).toEqual(
         JSON.parse(
@@ -437,7 +474,7 @@ test("missing price: a catalog entry no configured source prices has no price an
   const unpriced = rows.entries.filter((entry) => entry.detail.price === null)
   for (const entry of unpriced) {
     expect(entry.priceSource).toBeNull()
-    expect(entry.detail.projection).toBeNull()
+    expect(entry.detail.projected.kind).toBe("none")
   }
   // Priced entries keep the chosen source and its retrieval date as provenance.
   const priced = rows.entries.filter((entry) => entry.detail.price !== null)
@@ -597,6 +634,70 @@ test("idle: an open view with no revision or evidence change asks the worker not
     await Bun.sleep(50)
     await views.settle()
     expect(calls.length).toBe(opened + 1)
+  } finally {
+    shared.release()
+    views.close()
+  }
+})
+
+async function until(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 400 && !predicate(); attempt++) await Bun.sleep(10)
+  expect(predicate()).toBe(true)
+}
+
+test("a price refresh reaches a held view: an evidence write rebuilds it, even past a build that never settled", async () => {
+  const calls: DecisionViewCall[] = []
+  let hang = true
+  const views = new DecisionViews(
+    fixture.path,
+    {
+      async view(_project, call) {
+        calls.push(call)
+        return computedView(call)
+      },
+    },
+    // The first routes read never answers (a host call that hangs), as on the live service.
+    async (_project, _task, signal) => {
+      if (!hang) return routed
+      hang = false
+      return new Promise<never>((_, reject) =>
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+      )
+    },
+    { debounceMs: 5, refreshMs: 0, deadlineMs: 50 },
+  )
+  const shared = acquireSharedConnection(fixture.path)
+  try {
+    const viewID = views.open(fixture.projectDirectory, {
+      filters: filtersOf(null, null),
+      basis: null,
+      taskID: null,
+    })
+    await views.settle()
+    // The stuck build was abandoned at the deadline and the view built again at its cadence.
+    await until(() => views.writes.has(viewID))
+    const written = views.writes.get(viewID)!
+    const before = calls.length
+    // The price sources were fetched: the refresh row moves, and the held view is rebuilt.
+    const retrieved = new Date().toISOString()
+    shared.db.exec(`INSERT OR IGNORE INTO model_evidence_refreshes(project_directory,source,state)
+      VALUES('${fixture.projectDirectory}','openrouter-models','never')`)
+    shared.db
+      .query(
+        `UPDATE model_evidence_refreshes SET state='succeeded', latest_retrieved_at=?,
+           completed_at=? WHERE project_directory=? AND source='openrouter-models'`,
+      )
+      .run(retrieved, retrieved, fixture.projectDirectory)
+    await until(() => calls.length > before && views.writes.get(viewID) !== written)
+    await views.settle()
+    const sources = JSON.parse(
+      shared.db
+        .query<{ sources: string }, [number]>("SELECT sources FROM model_decision_views WHERE id=?")
+        .get(viewID)!.sources,
+    ) as Array<{ source: string; refresh: { latestRetrievedAt: string | null } | null }>
+    expect(sources.find((item) => item.source === "openrouter-models")?.refresh).toMatchObject({
+      latestRetrievedAt: retrieved,
+    })
   } finally {
     shared.release()
     views.close()

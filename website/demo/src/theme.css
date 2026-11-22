@@ -211,13 +211,33 @@ select {
   border-radius: 8px;
   background: var(--surface-raised-stronger-non-alpha);
 }
-.oc-menu-list button {
+/* The real host renders the list in a portal; here it sits inside the panel, so these rules out-rank
+   the panel's own styling of the trigger button that wraps it. */
+.oc-menu .oc-menu-list button {
+  display: flex;
+  flex-direction: row;
+  height: auto;
+  align-items: center;
+  gap: 6px;
   padding: 6px 8px;
   border: 0;
   border-radius: 4px;
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+.oc-menu-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  flex: none;
+}
+.oc-menu-label {
+  flex: 1;
+}
+.oc-menu-keys {
+  color: var(--text-weak);
+  font-variant-numeric: tabular-nums;
 }
 .oc-menu-list button:hover {
   background: var(--surface-base-hover);

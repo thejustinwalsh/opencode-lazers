@@ -49,7 +49,6 @@ export type PlanningView = {
   shownRevision: number
   body: PlanningBody
   validation: Validation
-  breakdown: string
   findings: ViewFinding[]
   questions: ViewQuestion[]
   reviews: ViewReview[]

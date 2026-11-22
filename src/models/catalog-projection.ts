@@ -6,6 +6,8 @@ import type { BenchmarkPrice, BenchmarkRoute, BenchmarkSourceDates } from "./ben
 import { paretoFrontier } from "./chart-layout.ts"
 import type { ModelCandidate } from "./comparison-presentation.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
+import { configurationCost, costPosition } from "./configuration-cost.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import { createModelIndex, parseModelName, vendorSlug } from "./name-identity.ts"
 import { chooseScoreBasis, scoreOn } from "./public-score.ts"
 import type { ScoreBasis } from "./public-score.ts"
@@ -95,40 +97,17 @@ export function tokenProfile(
   }
 }
 
-export type Projection = {
-  /** USD per accepted task. */
-  usd: number
-  /** A cache rate was missing and priced at the input rate; shown in the basis. */
-  cacheAtInputRate: boolean
-}
-
-/** List prices (USD per 1M tokens) times the token profile. Reasoning tokens bill as output. */
-export function projectCost(profile: TokenProfile, price: BenchmarkPrice): Projection {
-  const perMillion = 1_000_000
-  const cacheReadRate = price.cacheRead ?? price.input
-  const cacheWriteRate = price.cacheWrite ?? price.input
-  const cacheAtInputRate =
-    (price.cacheRead === null && profile.cacheRead > 0) ||
-    (price.cacheWrite === null && profile.cacheWrite > 0)
-  const usd =
-    (profile.uncachedInput * price.input +
-      profile.cacheRead * cacheReadRate +
-      profile.cacheWrite * cacheWriteRate +
-      (profile.output + profile.reasoning) * price.output) /
-    perMillion
-  return { usd, cacheAtInputRate }
-}
-
 export type ObservedFacts = {
   /** The configuration these facts belong to; a table row selects it. */
   configurationID: string
-  /** USD per accepted task: a range when the estimate is one. */
-  usd: number
-  range?: { minimum: number; maximum: number }
+  /** The configuration's stored cost (`configurationCost`, observed basis). */
+  cost: ConfigurationCost
   /** Null for a model with a price but no token measurement: listed, not plotted. */
   tokens: number | null
   accepted: number
   terminal: number | null
+  /** The model's other observed configurations (efforts, provider copies), by id. */
+  others?: Array<{ configurationID: string; variant: string | null }>
 }
 
 export type CatalogEntry = {
@@ -138,8 +117,11 @@ export type CatalogEntry = {
   label: string
   tags: SourceTag[]
   price: BenchmarkPrice | null
-  /** Projected from list prices; absent without a price or a token profile. */
-  projection: Projection | null
+  /**
+   * Projected from list prices × the median tokens, for the model (no effort: list prices are
+   * per model); `none` without a price or a token profile.
+   */
+  projected: ConfigurationCost
   /** The public score on the set's basis, when a benchmark row matches. */
   score: number | null
   /** For a public-catalog model no route runs: the source that listed it (not the price source). */
@@ -377,12 +359,23 @@ export function buildCatalog(input: CatalogInput): {
     return keys.size === 1 ? [...keys][0]! : key
   }
   const observedFacts = new Map<string, ObservedFacts>()
+  const observedEfforts = new Map<string, ObservedFacts[]>()
   for (const [key, facts] of input.observed) {
     const [providerID, modelID] = key.split("\u0000") as [string, string]
     const target = joinedKey({ providerID, modelID })
-    // Efforts and provider copies are one model here; the best-sampled one speaks for it.
-    if ((observedFacts.get(target)?.accepted ?? -1) < facts.accepted)
-      observedFacts.set(target, facts)
+    observedEfforts.set(target, [...(observedEfforts.get(target) ?? []), facts])
+  }
+  // Efforts and provider copies are one model row here; the best-sampled configuration speaks
+  // for it and names itself (its cost's exact route), the others stay reachable by id.
+  for (const [target, list] of observedEfforts) {
+    const best = list.reduce((top, facts) => (facts.accepted > top.accepted ? facts : top))
+    const others = list
+      .filter((facts) => facts !== best)
+      .map((facts) => ({
+        configurationID: facts.configurationID,
+        variant: facts.cost.provenance.route.variant,
+      }))
+    observedFacts.set(target, others.length ? { ...best, others } : best)
   }
   // The public catalogs' models that no route runs join the set, priced by the source that
   // listed them (when that source is among the configured ones) and scored on the same basis.
@@ -437,7 +430,12 @@ export function buildCatalog(input: CatalogInput): {
       label: outside ? (outside.item.name ?? modelID) : input.label(route, representative),
       tags: (["observed", "routed", "catalog"] as const).filter((tag) => set.has(tag)),
       price,
-      projection: price && input.profile ? projectCost(input.profile, price) : null,
+      projected: configurationCost({
+        basis: "projected",
+        route: { providerID: route.providerID, modelID: route.modelID, variant: null },
+        price,
+        profile: input.profile ?? null,
+      }),
       score: base?.score ?? outside?.score ?? null,
       scoreName: choice.basis.label,
       ...(outside ? { listedBy: outside.item.source as ModelPriceSource } : {}),
@@ -451,9 +449,11 @@ export function buildCatalog(input: CatalogInput): {
       frontier: false,
     }
   })
-  const withScores = entries.filter((entry) => entry.projection && entry.score !== null)
+  const withScores = entries.filter(
+    (entry) => entry.projected.kind !== "none" && entry.score !== null,
+  )
   for (const entry of paretoFrontier(withScores, [
-    (item) => item.projection!.usd,
+    (item) => costPosition(item.projected)!,
     (item) => -item.score!,
   ]))
     entry.frontier = true
@@ -488,9 +488,12 @@ export function catalogSummaryText(summary: CatalogSummary) {
     .join(" · ")
 }
 
-/** The cost shown for an entry: measured when observed, otherwise projected. */
+/**
+ * The order key of an entry (not a displayed cost): its observed cost's position when observed and
+ * priced, otherwise its projected one.
+ */
 export const entryCost = (entry: CatalogEntry) =>
-  entry.observed?.usd ?? entry.projection?.usd ?? null
+  costPosition(entry.observed?.cost) ?? costPosition(entry.projected)
 
 /**
  * Ranking for the table: best trade-off first, then by cost per task ascending (measured cost

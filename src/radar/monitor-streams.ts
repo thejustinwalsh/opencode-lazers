@@ -61,8 +61,6 @@ type SessionStreams = {
   calls?: GuiStream<typeof liveHistoryRef.columns>
   native: GuiStream<typeof radarRefs.nativeCalls.columns>
   steps: GuiStream<typeof radarFlowRefs.steps.columns>
-  /** A worker outside the sessions window: its own session row. */
-  own?: GuiStream<typeof radarRefs.sessions.columns>
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
@@ -138,15 +136,29 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
           order: "recent",
           window: CALLS_WINDOW,
         }))
-        if (!windowed().has(sessionID))
-          streams.own = createStream(source.transport, radarRefs.sessions, () => ({
-            filter: one,
-            order: "recent",
-            window: SESSIONS_WINDOW,
-          }))
       }
       return streams
     }),
+  )
+  /**
+   * Workers outside the sessions window right now, each read by its own session row. Keyed on
+   * membership, not fixed when the worker first appears: a worker that enters the window drops
+   * its own stream (else it is listed twice), one that leaves it gets one (else it is dropped).
+   */
+  const outside = createMemo(
+    () => [...attempts().keys()].filter((id) => !windowed().has(id)).toSorted(),
+    [],
+    { equals: sameList },
+  )
+  const own = createMemo(
+    mapArray(outside, (sessionID) => ({
+      sessionID,
+      stream: createStream(source.transport, radarRefs.sessions, () => ({
+        filter: { ...base, sessionID },
+        order: "recent",
+        window: SESSIONS_WINDOW,
+      })),
+    })),
   )
   /** Every session the Monitor reads: their stored transcript read state says what is final. */
   const listed = createMemo(
@@ -171,7 +183,8 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
     scheduler,
     workload,
     transcripts,
-    ...perSession().flatMap((item) => [item.native, item.calls, item.steps, item.own]),
+    ...perSession().flatMap((item) => [item.native, item.calls, item.steps]),
+    ...own().map((item) => item.stream),
   ]
 
   return createMemo((): RadarMonitorData => {
@@ -209,8 +222,10 @@ function createMonitorStreams(source: MonitorSource): Accessor<RadarMonitorData>
       nativeCalls.set(item.sessionID, rowsOf(item.native))
       if (item.calls) calls.set(item.sessionID, rowsOf(item.calls))
       steps.set(item.sessionID, rowsOf(item.steps))
-      const own = rowsOf(item.own).find((row) => row.session_id === item.sessionID)
-      if (own) extra.push(own)
+    }
+    for (const item of own()) {
+      const row = rowsOf(item.stream).find((value) => value.session_id === item.sessionID)
+      if (row) extra.push(row)
     }
     const now = Date.now()
     return {

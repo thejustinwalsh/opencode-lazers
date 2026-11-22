@@ -171,9 +171,17 @@ export type ChartDatum = {
   label: string
   /** On the best trade-off frontier: filled and joined by the polyline. */
   frontier: boolean
-  /** Backed by the user's own runs (a projection drawn with a ring). */
-  backed?: boolean
+  /** The cost is a range: a whisker from low to high along the cost axis, the mark at `x`/`y`. */
+  range?: { axis: "x" | "y"; low: number; high: number }
+  /**
+   * The model's observed cost beside a projected mark, on the x (cost) axis at the same y: a ring
+   * at `value`, with a whisker when it is a range. Only an observed cost gets the ring.
+   */
+  observed?: { value: number; low: number; high: number }
 }
+
+/** A segment in pixels: a cost range's whisker. */
+export type Whisker = { x1: number; y1: number; x2: number; y2: number }
 
 export type PlacedLabel = { x: number; y: number; anchor: "start" | "end" | "middle"; side: Side }
 export type Side = "right" | "left" | "top" | "bottom"
@@ -181,6 +189,9 @@ export type Side = "right" | "left" | "top" | "bottom"
 export type PlacedPoint = ChartDatum & {
   cx: number
   cy: number
+  whisker?: Whisker
+  /** The observed companion: ring centre and its whisker. */
+  ring?: { cx: number; cy: number; whisker?: Whisker }
   /** Absent when the label was dropped to avoid a collision. */
   place?: PlacedLabel
 }
@@ -308,8 +319,14 @@ export function placeLabels(
 export function layoutChart(input: LayoutInput): ChartLayout {
   const { width } = input
   const height = chartHeight(width)
+  // A range's ends and an observed companion are on the scale, so no whisker leaves the plot.
+  const ends = (point: ChartDatum, axis: "x" | "y") => [
+    axis === "x" ? point.x : point.y,
+    ...(point.range?.axis === axis ? [point.range.low, point.range.high] : []),
+    ...(axis === "x" && point.observed ? [point.observed.low, point.observed.high] : []),
+  ]
   const yScale = buildScale({
-    values: input.points.map((point) => point.y),
+    values: input.points.flatMap((point) => ends(point, "y")),
     scale: "linear",
     intervals: height < 260 ? 3 : 4,
     format: input.formatY,
@@ -324,7 +341,7 @@ export function layoutChart(input: LayoutInput): ChartLayout {
     bottom: height - 42,
   }
   const xScale = buildScale({
-    values: input.points.map((point) => point.x),
+    values: input.points.flatMap((point) => ends(point, "x")),
     scale: input.xScale,
     ...(input.xLogRatio === undefined ? {} : { logRatio: input.xLogRatio }),
     intervals: width < 420 ? 3 : 4,
@@ -333,11 +350,38 @@ export function layoutChart(input: LayoutInput): ChartLayout {
   })
   const plotWidth = plot.right - plot.left
   const plotHeight = plot.bottom - plot.top
-  const base = input.points.map((point) => ({
-    ...point,
-    cx: plot.left + xScale.at(point.x) * plotWidth,
-    cy: plot.bottom - yScale.at(point.y) * plotHeight,
-  }))
+  const px = (value: number) => plot.left + xScale.at(value) * plotWidth
+  const py = (value: number) => plot.bottom - yScale.at(value) * plotHeight
+  const base = input.points.map((point) => {
+    const cx = px(point.x)
+    const cy = py(point.y)
+    const range = point.range
+    const observed = point.observed
+    return {
+      ...point,
+      cx,
+      cy,
+      ...(range
+        ? {
+            whisker:
+              range.axis === "x"
+                ? { x1: px(range.low), y1: cy, x2: px(range.high), y2: cy }
+                : { x1: cx, y1: py(range.low), x2: cx, y2: py(range.high) },
+          }
+        : {}),
+      ...(observed
+        ? {
+            ring: {
+              cx: px(observed.value),
+              cy,
+              ...(observed.low === observed.high
+                ? {}
+                : { whisker: { x1: px(observed.low), y1: cy, x2: px(observed.high), y2: cy } }),
+            },
+          }
+        : {}),
+    }
+  })
   const placed = placeLabels(
     base.map((point) => ({
       id: point.id,
@@ -441,8 +485,8 @@ export type RankRow = {
   id: string
   label: string
   value: number
-  /** Backed by the user's own runs: drawn with a ring. */
-  backed?: boolean
+  /** The model's observed cost on the same axis: a ring at `value`, a whisker when a range. */
+  observed?: { value: number; low: number; high: number }
   /** Public score shown in a muted right-hand column when scores exist. */
   score?: number | null
 }
@@ -457,6 +501,8 @@ export type PlacedRankRow = RankRow & {
   valueText: string
   /** Value text sits left of the end when there is no room on the right. */
   valueInside: boolean
+  /** The observed companion in pixels: ring centre and whisker ends. */
+  ring?: { cx: number; low: number; high: number }
 }
 
 export type RankLayout = {
@@ -498,7 +544,10 @@ export function layoutRanking(input: {
   const plotLeft = labelWidth + 8
   const plotRight = width - 12 - scoreWidth
   const xScale = buildScale({
-    values: input.rows.map((row) => row.value),
+    values: input.rows.flatMap((row) => [
+      row.value,
+      ...(row.observed ? [row.observed.low, row.observed.high] : []),
+    ]),
     // Linear from $0 so bar length means cost; log only when the spread is extreme.
     scale: "auto-log",
     logRatio: RANK_LOG_RATIO,
@@ -517,7 +566,8 @@ export function layoutRanking(input: {
     scoreWidth,
     xScale,
     rows: input.rows.map((row, index) => {
-      const cx = plotLeft + xScale.at(row.value) * (plotRight - plotLeft)
+      const at = (value: number) => plotLeft + xScale.at(value) * (plotRight - plotLeft)
+      const cx = at(row.value)
       const valueText = input.formatValue(row.value)
       return {
         ...row,
@@ -526,6 +576,15 @@ export function layoutRanking(input: {
         text: truncateText(row.label, characters),
         valueText,
         valueInside: cx + 10 + valueText.length * CHART_FONT * 0.56 > plotRight + scoreWidth + 8,
+        ...(row.observed
+          ? {
+              ring: {
+                cx: at(row.observed.value),
+                low: at(row.observed.low),
+                high: at(row.observed.high),
+              },
+            }
+          : {}),
       }
     }),
   }

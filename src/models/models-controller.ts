@@ -1,4 +1,5 @@
 import { Streams } from "../streams/contract.ts"
+import { pricesLabel } from "./prices-label.ts"
 import {
   createStream,
   readWindow,
@@ -46,6 +47,8 @@ import {
   projectedChartPoints,
 } from "./chart-data.ts"
 import type { CatalogEntry, CatalogSummary } from "./catalog-projection.ts"
+import { costText } from "./configuration-cost.ts"
+import type { ConfigurationCost } from "./configuration-cost.ts"
 import { referenceTokenProfile } from "./catalog-inputs.ts"
 import { routeKey } from "./benchmark-baseline.ts"
 import type {
@@ -82,7 +85,6 @@ import {
   selectedModelFacts,
 } from "./comparison-presentation.ts"
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
-import { panelClock } from "../panel-status.ts"
 import {
   marketSummarySource,
   modelPersonaLabels,
@@ -592,6 +594,8 @@ export function createModelsController(props: ModelsProps) {
     reference_ord: number | null
     chart: ComparisonChartPoint | null
     chart_reference: ComparisonChartReference | null
+    /** The configuration's one stored cost; every view of it reads this. */
+    cost: ConfigurationCost | null
     inspection: DecisionInspectionFacts
   }
   const pointRows = held(
@@ -600,9 +604,15 @@ export function createModelsController(props: ModelsProps) {
   )
   const decisionContext = () => viewDetail()?.context as ModelDecisionContext | undefined
   /** The overview the chart and the pane read, rebuilt from the view's configuration rows. */
+  // The view row lands before its points: until the points have answered once the chart is
+  // loading, never "no accepted tasks". Later reopens keep the points they held.
+  const [pointsSeen, setPointsSeen] = createSignal(false)
+  createEffect(() => {
+    if (live()?.points.loaded()) setPointsSeen(true)
+  })
   const overview = createMemo((): ModelDecisionOverview | undefined => {
     const row = viewDetail()
-    if (!row) return undefined
+    if (!row || !pointsSeen()) return undefined
     const rows = pointRows()
     const counts = row.counts as { configurationCount: number; groupCount: number }
     return {
@@ -788,8 +798,7 @@ export function createModelsController(props: ModelsProps) {
     const inspection = heldInspection()
     if (!inspection || inspection.status !== "found") return undefined
     return selectedModelFacts({
-      estimate: inspection.estimate,
-      referenceEstimate: inspection.referenceEstimate,
+      cost: selectedRow()?.cost ?? null,
       efficiency: inspection.efficiency,
       cohort: inspection.cohort,
       ...(inspection.medianAcceptedDurationMs === undefined
@@ -818,7 +827,7 @@ export function createModelsController(props: ModelsProps) {
     const facts = heldMatchesSelection() ? selectedFacts() : undefined
     if (!facts) return undefined
     const parts = [
-      facts.price ? `${facts.price} per accepted task` : undefined,
+      facts.cost ? `${costText(facts.cost)} per accepted task` : undefined,
       facts.accepted !== undefined && facts.terminal !== undefined
         ? `${facts.accepted} of ${facts.terminal} accepted`
         : undefined,
@@ -891,7 +900,12 @@ export function createModelsController(props: ModelsProps) {
       (visible()?.decisionOverview?.context.priceIndex.source ?? "") as
         "openrouter" | "opencode" | "mixed"
     ]
+  /** Each configuration's stored cost, by id. */
+  const storedCosts = createMemo(
+    () => new Map(pointRows().map((item) => [item.configuration_id, item.cost] as const)),
+  )
   const observedPoints = createMemo(() => {
+    const costs = storedCosts()
     return observedChartPoints(
       {
         points: decisionChartPoints(),
@@ -899,6 +913,7 @@ export function createModelsController(props: ModelsProps) {
         frontierConfigurationIDs: [],
       },
       observedPriceSourceName(),
+      (configurationID) => costs.get(configurationID),
     )
   })
   const projectedPoints = createMemo(() => projectedChartPoints(catalogEntries()))
@@ -938,10 +953,19 @@ export function createModelsController(props: ModelsProps) {
       .filter((time) => Number.isFinite(time))
     return times.length ? Math.min(...times) : undefined
   }
-  const pricesAsOf = () => {
-    const time = pricesAsOfTime()
-    return time === undefined ? undefined : panelClock(time)
-  }
+  /** The header's price line: sources used, retrieval time (dated unless today), staleness. */
+  const pricesAsOf = () =>
+    pricesLabel(
+      sources(),
+      priceSourceOrder().sources.map((source) =>
+        source === "openrouter"
+          ? "openrouter-models"
+          : source === "opencode"
+            ? "native-catalog"
+            : source,
+      ),
+      Date.now(),
+    )
   const disconnected = () => !props.session.server.connected
   const refreshAll = () => {
     setPriceSourceRevision((revision) => revision + 1)
@@ -1014,6 +1038,11 @@ export function createModelsController(props: ModelsProps) {
   }
   const selectCompareMode = (mode: "observed" | "projected" | "benchmark") =>
     save({ compareMode: mode })
+  /** Another observed effort of a model row: its own point on "Your runs". */
+  const showObservedConfiguration = (configurationID: string) => {
+    selectCompareMode("observed")
+    state.selectConfiguration(configurationID)
+  }
   const observedScopeLabel = () => {
     const filters = visible()?.decisionFilters
     const scope = [
@@ -1537,6 +1566,8 @@ export function createModelsController(props: ModelsProps) {
     selectedEntryID,
     selectEntry,
     catalogEntries,
+    showObservedConfiguration,
+    storedCosts,
     catalogNotes,
     catalogSummary,
     catalogLoadingLine,

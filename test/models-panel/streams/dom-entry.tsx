@@ -96,7 +96,14 @@ function backfillingFrame(source: string, seq: number) {
  * configuration (the demo's mock overview has none): the catalog's observed facts and the
  * projected ranking's token profile come from them.
  */
-function withReferences(overview: ModelDecisionOverview): ModelDecisionOverview {
+/**
+ * Every point's reference estimate, exact at the point's own value; a model in `partial` gets a
+ * partial one instead, a priced subtotal range of 0.8 to 1.5 times that value (total unknown).
+ */
+function withReferences(
+  overview: ModelDecisionOverview,
+  partial: readonly string[] = [],
+): ModelDecisionOverview {
   const category = (tokens: number) => ({
     tokens,
     status: "observed" as const,
@@ -111,6 +118,20 @@ function withReferences(overview: ModelDecisionOverview): ModelDecisionOverview 
           /^configuration:(.*)::(.*)$/.exec(point.configurationID) ?? []
         const [providerID = "", ...rest] = route.split("/")
         const tokens = point.tokensPerAcceptedTask
+        const value = point.currentMarketUSDPerAcceptedTask
+        const accepted = point.acceptedTaskCount
+        const amounts = partial.some((model) => route.endsWith(`/${model}`))
+          ? {
+              status: "partial",
+              numeratorUSD: null,
+              valueUSDPerAcceptedTask: null,
+              knownSubtotalRangeUSD: {
+                minimum: value * 0.8 * accepted,
+                maximum: value * 1.5 * accepted,
+              },
+              knownSubtotalRangeUSDPerAcceptedTask: { minimum: value * 0.8, maximum: value * 1.5 },
+            }
+          : {}
         return {
           configurationID: point.configurationID,
           label: point.label,
@@ -132,6 +153,7 @@ function withReferences(overview: ModelDecisionOverview): ModelDecisionOverview 
             knownSubtotalRangeUSD: null,
             knownSubtotalUSDPerAcceptedTask: null,
             knownSubtotalRangeUSDPerAcceptedTask: null,
+            ...amounts,
             identityStatus: "exact",
             provenance: {
               source: "openrouter-models",
@@ -205,6 +227,10 @@ export function harness(
     priceSources?: () => unknown
     /** What the panel's store held when it opened (a returning user's choices). */
     preferences?: Partial<ModelsPreference>
+    /** Models whose reference estimate is partial: a priced subtotal range, total unknown. */
+    partial?: string[]
+    /** Answers the opens of these sources only after `answer()`: a slow stream. */
+    lateSources?: string[]
   } = {},
 ) {
   let data = options.data ?? story.initial
@@ -218,9 +244,11 @@ export function harness(
   const known = new Map<string, OpenRecord>()
   let emit: ((type: string, data: unknown) => void) | undefined
   let heldFrames = 0
+  const late = new Set(options.lateSources ?? [])
+  const lateAnswers: (() => void)[] = []
 
   const table = rpc(() => data, {
-    overview: withReferences,
+    overview: (output) => withReferences(output, options.partial),
     ...(options.comparison ? { comparison: options.comparison } : {}),
     ...(options.settings ? { settings: options.settings } : {}),
   })
@@ -246,7 +274,9 @@ export function harness(
       }
       known.set(input.stream, record)
       opens.push(record)
-      return masked(input.stream, inner.open!(input as never))
+      const reply = () => masked(input.stream, inner.open!(input as never))
+      if (!late.has(input.source)) return reply()
+      return new Promise((resolve) => lateAnswers.push(() => resolve(reply())))
     }) as never,
     slide: ((input: { stream: string }) =>
       masked(input.stream, inner.slide!(input as never))) as never,
@@ -328,6 +358,11 @@ export function harness(
     /** From now on, answer the views `matches` selects as backfilling. */
     hold(matches: (view: ViewSelection) => boolean) {
       holding = matches
+    },
+    /** Answer the slow sources' opens now, and every later open at once. */
+    answer() {
+      late.clear()
+      for (const resolve of lateAnswers.splice(0)) resolve()
     },
     /** Every held view is built: re-read what was open. */
     release(next?: ModelsData) {

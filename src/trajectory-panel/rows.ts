@@ -10,6 +10,7 @@ import type {
 } from "./projection.ts"
 import { isActiveAttemptState } from "./projection.ts"
 import { listRowOf } from "../tasks/task-row.ts"
+import { integratedOf } from "../tasks/schedule/key.ts"
 
 /**
  * The view's data, built from stream rows. A row carries only what the stream's columns name; a
@@ -30,6 +31,17 @@ export function timelineEventID(row: Raw) {
   if (kind === "tool" && message && text(row.call_id)) return `${message}:tool:${row.call_id}`
   if (kind === "assistant-step" && message) return `${message}:assistant-step`
   return String(row.ref)
+}
+
+/**
+ * A progress row's event kind as the old read named it. The display row stores the projected
+ * fact's kind (`worker-tool`, `commentary`, `user`, `synthetic`, ...); a row whose payload was
+ * gone stores the raw recorder kind (`tool`), which the projection prefixes (`projectProgressFact`).
+ */
+const PROJECTED_KINDS = new Set(["commentary", "user", "synthetic"])
+function progressKind(event: string | undefined) {
+  if (!event) return "worker-step"
+  return event.startsWith("worker-") || PROJECTED_KINDS.has(event) ? event : `worker-${event}`
 }
 
 /** A timeline row as the old event kinds the view knows. */
@@ -66,10 +78,11 @@ export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
           ? { kind: "verification", checkID: event, status }
           : kind === "progress"
             ? {
-                kind: event === "commentary" ? "commentary" : `worker-${event ?? "step"}`,
+                kind: progressKind(event),
                 status,
                 tool,
                 text: text(row.title),
+                fileTargets: row.file_targets ?? undefined,
               }
             : kind === "assistant-step"
               ? { kind, status, model }
@@ -191,6 +204,7 @@ export function attemptFromRow(row: Raw, concern: ConcernSignal): TrajectoryAtte
     admittedModel: model.success ? model.data : null,
     observedCurrentModel: null,
     toolCount: { value: num(row.tool_count) ?? 0, source: "runner attempt tool_count" },
+    activeMs: num(row.active_ms) ?? null,
     checks: [],
   }
 }
@@ -237,7 +251,16 @@ export function choiceFromRow(row: Raw): TaskChoice {
     ...(num(row.revision) === undefined ? {} : { revision: Number(row.revision) }),
     title: text(row.objective) ?? text(row.title) ?? null,
     status: String(row.node_state ?? row.status ?? ""),
+    ...(integratedRow(row) ? { integrated: true } : {}),
   }
+}
+
+/** The stored schedule row's integrated rule (`integratedOf`), as Tasks presents it. */
+export function integratedRow(row: Raw) {
+  return integratedOf({
+    nodeState: text(row.node_state) ?? null,
+    planState: text(row.plan_state) ?? null,
+  })
 }
 
 /** An effort not computed yet (or one the view cannot read) is the absent window, not zeros. */

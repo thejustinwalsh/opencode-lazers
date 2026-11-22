@@ -12,6 +12,7 @@ import { MAX_EXECUTION_PLAN_WAIT_REFERENCES } from "../../runner/schema.ts"
 import { adviceSnapshotIn } from "../advice.ts"
 import { taskClassificationFor } from "../classification.ts"
 import { taskTitle } from "../presentation.ts"
+import { lineageKeyOf } from "./lineage.ts"
 import { bucketOf, encodeSortKey, ownerHoldOf, priorityKeyOf, rankOf } from "./key.ts"
 import { effectiveStatus, reservationFingerprint } from "./status.ts"
 import type { PlanWait, Reservation } from "./status.ts"
@@ -533,7 +534,12 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   // Sessions and scopes.
   const sessions = new Map<string, StoredRow>()
   const addSession = (session: string, role: string) =>
-    sessions.set(`${session}\0${role}`, { session_id: session, task_id: taskID, role })
+    sessions.set(`${session}\0${role}`, {
+      session_id: session,
+      task_id: taskID,
+      role,
+      lineage_key: lineageKeyOf(db, session),
+    })
   addSession(task.provenance.sessionID, "creator")
   for (const owner of db
     .query<{ owner: string }, [string, string]>(
@@ -548,6 +554,18 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     )
     .all(taskID))
     addSession(attempt.session_id, "attempt")
+  // The continuation session of the task's plans and the session it continued from, as the old
+  // association read (`sessionAssociations`) linked them: one row per plan of the task, streamed.
+  for (const continuation of db
+    .query<{ session_id: string; parent_id: string | null }, [string, string]>(
+      `SELECT c.session_id,c.parent_id FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+       JOIN runner_continuations c ON c.plan_id=n.plan_id
+       WHERE n.task_id=? AND p.project_directory=?`,
+    )
+    .iterate(taskID, project)) {
+    addSession(continuation.session_id, "continuation")
+    if (continuation.parent_id) addSession(continuation.parent_id, "continuation")
+  }
   const sessionsChanged = replaceChildren(db, "task_schedule_sessions", "task_id", taskID, [
     ...sessions.values(),
   ])

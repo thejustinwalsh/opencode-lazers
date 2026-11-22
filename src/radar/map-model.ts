@@ -235,3 +235,12 @@ export function mapFacts(live: Live, node: MapNode): Array<{ label: string; valu
   }
   return facts
 }
+
+/** What a Map group's pane says when the group holds no task: what is empty, in the group's words. */
+export function emptyGroupNote(group: "queued" | "needs-you" | "failed") {
+  return group === "queued"
+    ? "Nothing is queued."
+    : group === "needs-you"
+      ? "No task needs you."
+      : "No task has failed."
+}
