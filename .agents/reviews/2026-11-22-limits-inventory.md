@@ -144,11 +144,11 @@ persona", "Worker has 1 running shell(s) and 0 active child session(s)").
 
 Deleted:
 
-| commit | what | used to |
-| --- | --- | --- |
-| d6d2b2fc | `DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS` (15 min), `DEFAULT_VERIFICATION_HARD_TIMEOUT_MS` (60 min), their fallbacks in `artifacts.ts` `runCheck`/`runDeclaredCheck`, and the guidance text that cited them | kill live checks and hold plans as "timed out" (6 fired) |
-| ad00ecaa | `PLANNING_AGENT_INACTIVITY_MS` (5 min), the `stuck` state of `planningRun`, the "could not start" time-out, the report's suggested span | interrupt quiet planning agents and settle them not-run |
-| 097401ff | `PLAN_MOVED_RETRIES` (3) | throw "changed repeatedly" at an Architect command that raced the scheduler |
+| commit   | what                                                                                                                                                                                                           | used to                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| d6d2b2fc | `DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS` (15 min), `DEFAULT_VERIFICATION_HARD_TIMEOUT_MS` (60 min), their fallbacks in `artifacts.ts` `runCheck`/`runDeclaredCheck`, and the guidance text that cited them | kill live checks and hold plans as "timed out" (6 fired)                    |
+| ad00ecaa | `PLANNING_AGENT_INACTIVITY_MS` (5 min), the `stuck` state of `planningRun`, the "could not start" time-out, the report's suggested span                                                                        | interrupt quiet planning agents and settle them not-run                     |
+| 097401ff | `PLAN_MOVED_RETRIES` (3)                                                                                                                                                                                       | throw "changed repeatedly" at an Architect command that raced the scheduler |
 
 Found after the first inventory:
 
