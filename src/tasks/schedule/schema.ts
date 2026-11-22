@@ -351,36 +351,86 @@ export const SCHEDULE_TRIGGERS: readonly TriggerSpec[] = [
   },
 ]
 
-const triggerName = (spec: TriggerSpec, index: number) =>
-  `task_schedule_q_${spec.table}_${spec.event.toLowerCase()}_${index}`
+const TRIGGER_PREFIX = "task_schedule_q_"
+
+/** By table, event and the kinds it queues: never by position, so adding a spec renames nothing. */
+const triggerName = (spec: TriggerSpec) =>
+  `${TRIGGER_PREFIX}${spec.table}_${spec.event.toLowerCase()}_${[...new Set(spec.queues.map(([kind]) => kind))].join("_")}`
+
+{
+  const names = SCHEDULE_TRIGGERS.map(triggerName)
+  const repeated = names.find((name, index) => names.indexOf(name) !== index)
+  if (repeated) throw new Error(`Two schedule triggers are named ${repeated}`)
+}
+
+/**
+ * One queue statement. Never `OR IGNORE` or `OR REPLACE`: SQLite applies the conflict handling
+ * of the writing statement to its triggers' statements, so under a writer's UPSERT an `OR IGNORE`
+ * insert of an entry already queued aborts the writer. The entry is inserted only when missing.
+ */
+const queueStatement = ([kind, ref, where]: readonly [DirtyKind, string, string?]) =>
+  `INSERT INTO task_schedule_dirty(kind,ref) SELECT '${kind}',${ref} WHERE ${where ?? `${ref} IS NOT NULL`}
+         AND NOT EXISTS (SELECT 1 FROM task_schedule_dirty WHERE kind='${kind}' AND ref=${ref});`
+
+const triggerSQL = (spec: TriggerSpec) => {
+  const of = spec.columns ? ` OF ${spec.columns.join(",")}` : ""
+  return `CREATE TRIGGER ${triggerName(spec)} AFTER ${spec.event}${of} ON ${spec.table}
+       ${spec.when ? `WHEN ${spec.when}` : ""} BEGIN
+         ${spec.queues.map(queueStatement).join("\n         ")}
+       END`
+}
 
 const hasTable = (db: Database, name: string) =>
   Boolean(db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
 
+/** The queue triggers this code expects for the source tables that exist now, by name. */
+function expectedTriggers(db: Database) {
+  return new Map(
+    SCHEDULE_TRIGGERS.filter((spec) => hasTable(db, spec.table)).map((spec) => [
+      triggerName(spec),
+      triggerSQL(spec),
+    ]),
+  )
+}
+
+function storedTriggers(db: Database) {
+  return new Map(
+    db
+      .query<{ name: string; sql: string }, []>(
+        `SELECT name,sql FROM sqlite_master WHERE type='trigger' AND substr(name,1,${TRIGGER_PREFIX.length})='${TRIGGER_PREFIX}'`,
+      )
+      .all()
+      .map((row) => [row.name, row.sql]),
+  )
+}
+
+/** Whether the stored queue triggers differ from the expected set; a read. */
+export function scheduleTriggersDiffer(db: Database): boolean {
+  if (!hasTable(db, "task_schedule_dirty")) return false
+  const expected = expectedTriggers(db)
+  const stored = storedTriggers(db)
+  return (
+    expected.size !== stored.size || [...expected].some(([name, sql]) => stored.get(name) !== sql)
+  )
+}
+
 /**
- * Create the queue triggers for every source table that exists now. Safe to run again: the
- * recovery tables are created by another module, which calls this once they exist.
+ * Make the stored queue triggers exactly the expected set for the source tables that exist now:
+ * every stored `task_schedule_q_` trigger not expected, or expected with other SQL, is dropped,
+ * and every missing one created. Read from `sqlite_master`, so triggers of an older naming (a
+ * positional index) are found and dropped. Safe to run again: the recovery tables are created by
+ * another module, which calls this once they exist.
  */
 export function installScheduleTriggers(db: Database) {
   if (!hasTable(db, "task_schedule_dirty")) return
-  SCHEDULE_TRIGGERS.forEach((spec, index) => {
-    if (!hasTable(db, spec.table)) return
-    const name = triggerName(spec, index)
-    const body = spec.queues
-      .map(
-        ([kind, ref, where]) =>
-          `INSERT OR IGNORE INTO task_schedule_dirty(kind,ref) SELECT '${kind}',${ref}${where ? ` WHERE ${where}` : ` WHERE ${ref} IS NOT NULL`};`,
-      )
-      .join("\n")
-    const of = spec.columns ? ` OF ${spec.columns.join(",")}` : ""
-    db.exec(
-      `DROP TRIGGER IF EXISTS ${name};
-       CREATE TRIGGER ${name} AFTER ${spec.event}${of} ON ${spec.table}
-       ${spec.when ? `WHEN ${spec.when}` : ""} BEGIN
-         ${body}
-       END;`,
-    )
-  })
+  const expected = expectedTriggers(db)
+  const stored = storedTriggers(db)
+  for (const [name, sql] of stored)
+    if (expected.get(name) !== sql) {
+      db.exec(`DROP TRIGGER IF EXISTS ${name}`)
+      stored.delete(name)
+    }
+  for (const [name, sql] of expected) if (!stored.has(name)) db.exec(sql)
 }
 
 /** The projection tables, indexes and triggers, rebuilt from nothing; backfill refills them. */
@@ -414,6 +464,9 @@ export function ensureTaskScheduleSchema(repository: TaskRepository) {
   repository.installSchema("task-schedule", MODULE.generation, MODULE.tables, (db) => {
     installTaskScheduleSchema(db)
   })
+  // Every load: a database whose stored triggers differ (an older naming, an older body) is
+  // reconciled, so a changed trigger reaches it without a generation change.
+  if (repository.read(scheduleTriggersDiffer)) repository.atomic(installScheduleTriggers)
   repository.read((db) => enrollScheduleConnection(db))
   registerScheduleDrain((db) => void drainTaskSchedule(db))
 }
