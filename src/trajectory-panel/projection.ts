@@ -113,6 +113,8 @@ const Report = z
       status: z.string(),
       /** The current recorded lifecycle state; absent from older servers. */
       recordedState: z.string().optional(),
+      /** Accepted on an integrated plan, or incorporated (`integratedOf`, the stored schedule row). */
+      integrated: z.boolean().optional(),
       /**
        * The task's current hold from its stored schedule row (`listRowOf`, the rule Tasks lists
        * by): held, and why. Absent when the report has no schedule row.
@@ -250,6 +252,8 @@ export type TaskChoice = {
   revision?: number
   title: string | null
   status: string
+  /** Accepted on an integrated plan, or incorporated (`integratedOf`). */
+  integrated?: boolean
 }
 
 export type TimelineTick = { elapsedMs: number; label: string }

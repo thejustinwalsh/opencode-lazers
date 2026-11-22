@@ -1,4 +1,5 @@
 import type { ExecutionListRow } from "../tasks/task-row.ts"
+import { integratedOf } from "../tasks/schedule/key.ts"
 import { taskStateView } from "../tasks/task-state.ts"
 import type { TaskStateView } from "../tasks/task-state.ts"
 
@@ -20,6 +21,10 @@ export function taskRowFor(task: TaskRead, taskID: string): ExecutionListRow {
     taskID,
     title: "",
     status: task.state,
+    // Accepted on an integrated plan is Integrated, as Tasks lists it (`integratedOf`).
+    ...(integratedOf({ nodeState: task.state, planState: task.planState })
+      ? { integrated: true as const }
+      : {}),
     reason: task.reason,
     waiting: held,
     holdReason: held ? (task.reason ?? task.planReason) : null,

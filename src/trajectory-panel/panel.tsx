@@ -1024,7 +1024,7 @@ function PanelView(
     const view = taskView()
     return view
       ? { glyph: view.icon, tone: view.tone, label: view.label }
-      : taskStatePresentation(taskStatus())
+      : taskStatePresentation(taskStatus(), report()?.task.integrated)
   }
   const isLatestAttempt = (attempt: { id: string }) => report()?.attempts.at(-1)?.id === attempt.id
   const lastActivityOf = (attempt: { id: string }) => lastWorkerActivity(loadedEvents(), attempt.id)
@@ -1797,7 +1797,7 @@ function PanelView(
                 <ul class="lazers-trajectory-recent" aria-label="Recent tasks">
                   <For each={recentTasks()}>
                     {(task) => {
-                      const glyph = () => taskStatePresentation(task.status)
+                      const glyph = () => taskStatePresentation(task.status, task.integrated)
                       return (
                         <li>
                           <button

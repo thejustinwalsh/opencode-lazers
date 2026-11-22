@@ -44,6 +44,7 @@ function reportTaskRow(report: TaskReport): ExecutionListRow {
     taskID: report.task.id,
     title: "",
     status: state,
+    ...(report.task.integrated ? { integrated: true as const } : {}),
     reason,
     waiting: held,
     holdReason: reason,

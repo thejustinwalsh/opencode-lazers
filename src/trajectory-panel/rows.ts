@@ -10,6 +10,7 @@ import type {
 } from "./projection.ts"
 import { isActiveAttemptState } from "./projection.ts"
 import { listRowOf } from "../tasks/task-row.ts"
+import { integratedOf } from "../tasks/schedule/key.ts"
 
 /**
  * The view's data, built from stream rows. A row carries only what the stream's columns name; a
@@ -250,7 +251,16 @@ export function choiceFromRow(row: Raw): TaskChoice {
     ...(num(row.revision) === undefined ? {} : { revision: Number(row.revision) }),
     title: text(row.objective) ?? text(row.title) ?? null,
     status: String(row.node_state ?? row.status ?? ""),
+    ...(integratedRow(row) ? { integrated: true } : {}),
   }
+}
+
+/** The stored schedule row's integrated rule (`integratedOf`), as Tasks presents it. */
+export function integratedRow(row: Raw) {
+  return integratedOf({
+    nodeState: text(row.node_state) ?? null,
+    planState: text(row.plan_state) ?? null,
+  })
 }
 
 /** An effort not computed yet (or one the view cannot read) is the absent window, not zeros. */

@@ -9,7 +9,10 @@ export type StatePresentation = { glyph: TaskGlyph; tone: TaskTone; label: strin
  * so one state has one glyph in every panel. Only the status is known here: runtime holds and
  * scheduling, which Tasks layers on top, are not part of a trajectory report.
  */
-export function taskStatePresentation(status: string): StatePresentation {
-  const presentation = taskRowPresentation({ status } as ExecutionListRow)
+export function taskStatePresentation(status: string, integrated = false): StatePresentation {
+  const presentation = taskRowPresentation({
+    status,
+    ...(integrated ? { integrated: true } : {}),
+  } as ExecutionListRow)
   return { glyph: presentation.icon, tone: presentation.tone, label: presentation.label }
 }
