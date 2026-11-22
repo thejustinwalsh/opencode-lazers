@@ -990,6 +990,11 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     // Flow's pane is collapsed to its tab bar; a tab click opens it on that tab.
     expect(paneOpen()).toBe("false")
     if (flowCanvas) {
+      // Flow cuts its labels to the column; every session and destination carries a tooltip.
+      for (const node of flowCanvas.querySelectorAll(
+        ".lazers-radar-flow-session, .lazers-radar-flow-dest",
+      ))
+        expect(node.querySelector(":scope > title")?.textContent).toBeTruthy()
       const flowTabs = () => [
         ...container.querySelectorAll<HTMLButtonElement>('.lazers-radar-flow-tabs [role="tab"]'),
       ]
