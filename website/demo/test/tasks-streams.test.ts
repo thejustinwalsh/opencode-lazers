@@ -94,3 +94,30 @@ test("a story step tells every open Tasks stream to re-read, so the list moves l
     },
   ])
 })
+
+test("the demo answers a task's dependencies with the child's own list row", async () => {
+  const { taskDependencyRowColumns } = await import("../../../src/streams/sources/tasks-ref.ts")
+  const chained: DemoTask[] = [
+    { n: 1, title: "First", state: "running", plan },
+    { n: 2, title: "Second", state: "queued", plan, after: [1] },
+  ]
+  const server = taskStreams(() => ({ tasks: chained }), "/demo")
+  const open = (filter: Record<string, unknown>) =>
+    decode(
+      server.open({ stream: "d", source: "tasks.dependencies", filter, order: "ord", window: 10 }),
+      taskDependencyRowColumns,
+    )
+  const second = "00000001-0000-4000-8000-000000000002"
+  const first = "00000001-0000-4000-8000-000000000001"
+  const prerequisites = open({ parent: second })
+  expect(prerequisites.header.count).toBe(1)
+  expect(prerequisites.row(0)).toMatchObject({
+    child_reference: "LZ-1",
+    child_state: "running",
+    waiting: true,
+    c_status: "running",
+    parent_reference: "LZ-2",
+  })
+  expect(open({ task: first }).row(0).parent_reference).toBe("LZ-2")
+  expect(open({ parent: first }).header.count).toBe(0)
+})
