@@ -31,6 +31,12 @@ export type WorktreeProbe = {
   contained(project: string, path: string): Promise<{ contained: boolean; reason: string }>
 }
 
+/** Database facts needed by the filesystem/native inspection, acquired on the retention reader. */
+export type WorktreeCandidates = {
+  recorded: string[]
+  live: string[]
+}
+
 const real = (path: string) => {
   try {
     return realpathSync(path)
@@ -73,16 +79,45 @@ const inside = (root: string, path: string) =>
   path !== root && path.startsWith(root.endsWith(sep) ? root : root + sep)
 
 /**
+ * Paths of attempts belonging to retired plans, and paths shared by any other plan. The caller
+ * runs this on the retention reader so worktree previews never read attempts on the main thread.
+ */
+export function worktreeCandidates(
+  db: Database,
+  retiredPlans: RetentionPlan[],
+  projectDirectory: string,
+): WorktreeCandidates {
+  const project = real(projectDirectory)
+  const retired = retiredPlans
+    .filter((plan) => real(plan.project) === project)
+    .map((plan) => plan.id)
+  if (!retired.length) return { recorded: [], live: [] }
+  const encoded = JSON.stringify(retired)
+  const recorded = db
+    .query<{ workspace: string }, [string]>(
+      "SELECT DISTINCT workspace FROM runner_attempts WHERE plan_id IN (SELECT value FROM json_each(?))",
+    )
+    .all(encoded)
+    .map((row) => row.workspace)
+  const live = db
+    .query<{ workspace: string }, [string]>(
+      "SELECT DISTINCT workspace FROM runner_attempts WHERE plan_id NOT IN (SELECT value FROM json_each(?))",
+    )
+    .all(encoded)
+    .map((row) => row.workspace)
+  return { recorded, live }
+}
+
+/**
  * Every recorded workspace of this project's retired plans, with whether it can be removed. A
  * worktree is removed only when it is a registered native worktree under a LAZERS root, nothing
  * unfinished records it, its tree is clean and its HEAD is contained in the project checkout.
  */
 export async function inspectWorktrees(
-  db: Database,
+  candidates: WorktreeCandidates,
   input: {
     project: string
     dataDirectory: string
-    retired: RetentionPlan[]
     host: WorktreeHost
     probe?: WorktreeProbe
   },
@@ -90,22 +125,9 @@ export async function inspectWorktrees(
   const probe = input.probe ?? defaultProbe
   const project = real(input.project)
   const roots = worktreeRoots(input.project, input.dataDirectory)
-  const retired = input.retired.filter((plan) => real(plan.project) === project).map((p) => p.id)
-  if (!retired.length) return []
-  const recorded = db
-    .query<{ workspace: string }, [string]>(
-      `SELECT DISTINCT workspace FROM runner_attempts WHERE plan_id IN (SELECT value FROM json_each(?))`,
-    )
-    .all(JSON.stringify(retired))
-    .map((row) => real(row.workspace))
-  const live = new Set(
-    db
-      .query<{ workspace: string }, [string]>(
-        `SELECT DISTINCT workspace FROM runner_attempts WHERE plan_id NOT IN (SELECT value FROM json_each(?))`,
-      )
-      .all(JSON.stringify(retired))
-      .map((row) => real(row.workspace)),
-  )
+  if (!candidates.recorded.length) return []
+  const recorded = candidates.recorded.map(real)
+  const live = new Set(candidates.live.map(real))
   const inventory = new Set((await input.host.worktrees().catch(() => [])).map(real))
   const findings: WorktreeFinding[] = []
   for (const path of [...new Set(recorded)].sort()) {

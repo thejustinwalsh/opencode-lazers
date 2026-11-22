@@ -592,7 +592,8 @@ const sized = (expression: string) =>
 const WINDOW = 100_000
 
 /** Exact rows and estimated bytes of one spec, scanned in rowid windows with a turn between. */
-async function measure(db: Database, spec: Spec) {
+async function measure(db: Database, spec: Spec, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   const bounds = db
     .query<{ lo: number | null; hi: number | null }, []>(
       `SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM ${spec.table}`,
@@ -606,11 +607,13 @@ async function measure(db: Database, spec: Spec) {
       WHERE rowid > ? AND rowid <= ? AND (${spec.where})`,
   )
   for (let low = bounds.lo - 1; low < bounds.hi; low += WINDOW) {
+    signal?.throwIfAborted()
     const row = query.get(low, low + WINDOW, ...spec.bind)!
     rows += row.n
     bytes += row.b ?? 0
     if (low + WINDOW < bounds.hi) await turn()
   }
+  signal?.throwIfAborted()
   return { rows, bytes }
 }
 
@@ -627,8 +630,11 @@ export async function previewRetention(
     ageDependent?: boolean
     /** The plugin data folder; with it the audit runs of retired plans (and their files) count. */
     dataDirectory?: string
+    /** Worker shutdown interrupts between bounded read pages. */
+    signal?: AbortSignal
   },
 ): Promise<RetentionPreview> {
+  input.signal?.throwIfAborted()
   const { retired, kept } = classifyPlans(db, input.now, input.days)
   const ctx = retentionContext(
     input.now,
@@ -637,21 +643,27 @@ export async function previewRetention(
   )
   const kinds: KindTotal[] = []
   for (const kind of KINDS) {
+    input.signal?.throwIfAborted()
     if (kind.ageIndependent ? input.ageIndependent === false : input.ageDependent === false)
       continue
     let rows = 0
     let bytes = 0
     for (const spec of selectSpecs(db, ctx, kind)) {
-      const total = await measure(db, spec)
+      const total = await measure(db, spec, input.signal)
       rows += total.rows
       bytes += total.bytes
     }
     kinds.push({ id: kind.id, label: kind.label, detail: kind.detail, rows, bytes })
   }
   if (input.dataDirectory !== undefined && input.ageDependent !== false) {
-    const total = measureAuditRuns(db, { retired: ctx.retired, dataDirectory: input.dataDirectory })
+    const total = await measureAuditRuns(db, {
+      retired: ctx.retired,
+      dataDirectory: input.dataDirectory,
+      ...(input.signal ? { signal: input.signal } : {}),
+    })
     kinds.push({ ...AUDIT_RUNS_KIND, ...total })
   }
+  input.signal?.throwIfAborted()
   const taskCount = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM tasks").get()!.n
   const protectedRows: Protected[] = [
     ...[...kept].map(([reason, count]) => ({ reason, count, noun: "plans" })),
