@@ -197,6 +197,29 @@ test("live Bug repair: the two plotted points are catalog references with no obs
   expect(drawn.every((entry) => entry.frontier)).toBe(true)
 })
 
+test("the frontier is decided from the stored cost the mark is drawn at, not a range's low end", () => {
+  // Luna's partial range is $0.10–$0.90: its low end ($0.10) beats Sol's $0.40 at more tokens,
+  // but its stored cost sits at the midpoint ($0.50), which Sol dominates (cheaper and leaner).
+  const data: ComparisonChartData = {
+    points: [point("sol", 1e6, 0.4, 3, 3)],
+    references: [
+      reference("luna", 2e6, {
+        status: "partial",
+        knownSubtotalRangeUSDPerAcceptedTask: { minimum: 0.1, maximum: 0.9 },
+      }),
+    ],
+    frontierConfigurationIDs: [],
+  }
+  // The former rule (the mark's own amount, the low end) put Luna on the frontier.
+  expect(ids(comparisonChartMarks(data))).toEqual(["luna", "sol"])
+  // From the stored cost, Luna is dominated; membership and position agree.
+  const drawn = drawObserved(data, "OpenRouter")
+  const luna = drawn.find((item) => item.id === "luna")!
+  expect(luna).toMatchObject({ y: 0.5, frontier: false, range: { axis: "y", low: 0.1, high: 0.9 } })
+  expect(drawn.find((item) => item.id === "sol")!.frontier).toBe(true)
+  expect(ids(comparisonChartMarks({ ...data, costOf: costsOf(data) }))).toEqual(["sol"])
+})
+
 test("an observed point's tooltip names model, cost, tokens, accepted n of m and source", () => {
   const [chartPoint] = drawObserved(
     {

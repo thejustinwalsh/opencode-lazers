@@ -33,6 +33,11 @@ export interface ComparisonChartData {
   references?: readonly ComparisonChartReference[]
   frontierConfigurationIDs: readonly string[]
   selectedConfigurationID?: string | null
+  /**
+   * Each configuration's stored cost. When given, a mark sits at its `costPosition` and the
+   * frontier is decided from that same position; a mark with no stored cost is not drawn.
+   */
+  costOf?: (configurationID: string) => ConfigurationCost | null | undefined
 }
 
 const money = new Intl.NumberFormat("en-US", {
@@ -281,8 +286,9 @@ export type ChartMark = {
 
 /**
  * Every plotted mark, one per model configuration. An observed point wins over a catalog
- * reference for the same configuration. Ranges plot at their midpoint; the range itself is in
- * the tooltip and the selection summary, never drawn as whiskers.
+ * reference for the same configuration. With `costOf` (every drawn chart), a mark's cost is its
+ * stored cost's position (a range's midpoint, drawn with a whisker), and the frontier is decided
+ * from that same position.
  *
  * The best trade-off (`frontier`) is the Pareto set over cost per accepted task (lower),
  * tokens per accepted task (lower) and acceptance rate (higher), among observed points with at
@@ -350,6 +356,17 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
     if (at >= 0) eligible.splice(at, 1)
     if (point.acceptedTaskCount > 0) eligible.push(mark)
   }
+  // The stored cost decides both where a mark is drawn and whether it is on the frontier.
+  const costOf = data.costOf
+  if (costOf)
+    for (const mark of [...marks.values()]) {
+      const position = costPosition(costOf(mark.configurationID))
+      if (position === null) {
+        marks.delete(mark.configurationID)
+        const at = eligible.indexOf(mark)
+        if (at >= 0) eligible.splice(at, 1)
+      } else mark.amount = position
+    }
   const rate = (mark: ChartMark) =>
     mark.terminal && mark.accepted !== undefined ? mark.accepted / mark.terminal : null
   for (const mark of paretoFrontier(eligible, [
@@ -458,10 +475,10 @@ export function observedChartPoints(
   priceSource: string | undefined,
   costOf: (configurationID: string) => ConfigurationCost | null | undefined,
 ): ModelChartPoint[] {
-  return comparisonChartMarks(data).flatMap((mark) => {
+  return comparisonChartMarks({ ...data, costOf }).flatMap((mark) => {
     const cost = costOf(mark.configurationID)
-    const y = costPosition(cost)
-    if (!cost || y === null) return []
+    if (!cost) return []
+    const y = mark.amount
     const name = modelEffortLabel(mark.label, mark.route)
     const range = costRange(cost)
     const lines = [
