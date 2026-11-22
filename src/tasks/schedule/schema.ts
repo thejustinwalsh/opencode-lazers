@@ -159,9 +159,10 @@ export const TABLES_SQL = `
     n INTEGER NOT NULL,
     PRIMARY KEY(project_directory, bucket)
   );
+  -- A task linked to the session by several roles (creator and plan owner) counts once.
   CREATE VIEW task_schedule_session_bucket_counts AS
     SELECT s.session_id AS session_id, t.project_directory AS project_directory,
-           t.bucket AS bucket, COUNT(*) AS n
+           t.bucket AS bucket, COUNT(DISTINCT t.task_id) AS n
     FROM task_schedule_sessions s JOIN task_schedule t ON t.task_id=s.task_id
     WHERE t.retired=0 GROUP BY s.session_id, t.project_directory, t.bucket;
 `

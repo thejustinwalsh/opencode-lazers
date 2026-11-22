@@ -2,7 +2,11 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { setPause } from "../../projects/pause.ts"
 import { openStream } from "../../streams/client.ts"
 import { acquireReaderPool, type ReaderPoolLease } from "../../streams/pool.ts"
-import { taskBucketCountsSource, taskScheduleSource } from "../../streams/sources/tasks.ts"
+import {
+  taskBucketCountsSource,
+  taskScheduleSource,
+  taskSessionBucketCountsSource,
+} from "../../streams/sources/tasks.ts"
 import { taskRowPresentation } from "../row-presentation.ts"
 import { listRowOf } from "../task-row.ts"
 import { TaskStateSelection } from "../state-filter.ts"
@@ -222,4 +226,40 @@ test("the agent tools page the whole list, count every chip and read a retired t
   )
   const detail = await getTaskDetail(f.repository, { taskID: retired })
   expect(detail.status).toBe("found")
+})
+
+test("a session that created a task and owns its plan counts it once", async () => {
+  // Live, 33 session-task pairs carry two roles; the session counts read 42 accepted for 21 tasks.
+  f.repository.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET owner='session-a' WHERE id IN (SELECT plan_id FROM runner_nodes LIMIT 3)",
+      )
+      .run(),
+  )
+  const counts = openStream(lease.pool, taskSessionBucketCountsSource, {
+    filter: { project: f.repository.projectDirectory, session: "session-a" },
+    order: "bucket",
+    window: 20,
+  })
+  await counts.ready()
+  const total = counts.items.reduce((sum, row) => sum + Number(row.n), 0)
+  counts.close()
+  const doubled = f.repository.read(
+    (db) =>
+      db
+        .query<{ n: number }, []>(
+          "SELECT COUNT(*) n FROM (SELECT task_id FROM task_schedule_sessions WHERE session_id='session-a' GROUP BY task_id HAVING COUNT(*)>1)",
+        )
+        .get()!.n,
+  )
+  expect(doubled).toBeGreaterThan(0)
+  const listed = openStream(lease.pool, taskScheduleSource, {
+    filter: { project: f.repository.projectDirectory, session: "session-a" },
+    order: "schedule",
+    window: 500,
+  })
+  await listed.ready()
+  expect(total).toBe(listed.items.length)
+  listed.close()
 })
