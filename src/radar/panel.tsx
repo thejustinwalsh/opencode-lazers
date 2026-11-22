@@ -6,6 +6,7 @@ import { Streams } from "../streams/contract.ts"
 import { rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
 import type { HistorySource } from "./history-list.tsx"
 import { activeState, machineSupported, observedTransition } from "./projection.ts"
+import { nodePickerLabel, planPickerLabel } from "./picker-label.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { detailsChange, storedDetails } from "./details-state.ts"
 import { flowStateInspector } from "./presentation.ts"
@@ -442,12 +443,12 @@ function RadarDiagnosticsPanel(
                   <div class="lazers-radar-pickers">
                     <span class="lazers-radar-picker">
                       <Ui.Menu
-                        label={plan()?.title ?? plan()?.id.slice(0, 8) ?? "Select plan"}
+                        label={plan() ? planPickerLabel(plan()!) : "Select plan"}
                         trigger="button"
                         items={value()
                           .plans()
                           .map((item) => ({
-                            label: item.title ?? item.id,
+                            label: planPickerLabel(item),
                             onSelect: () =>
                               save({
                                 planID: item.id,
@@ -463,16 +464,12 @@ function RadarDiagnosticsPanel(
                     <Show when={value().nodes().length > 1}>
                       <span class="lazers-radar-picker">
                         <Ui.Menu
-                          label={
-                            node()
-                              ? `${node()!.state} · ${node()!.taskID.slice(0, 8)}`
-                              : "Select task"
-                          }
+                          label={node() ? nodePickerLabel(node()!) : "Select task"}
                           trigger="button"
                           items={value()
                             .nodes()
                             .map((item) => ({
-                              label: `${item.state} · ${item.taskID.slice(0, 8)}`,
+                              label: nodePickerLabel(item),
                               onSelect: () =>
                                 save({
                                   taskID: item.taskID,
