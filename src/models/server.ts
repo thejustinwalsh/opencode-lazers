@@ -6,6 +6,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Integration } from "@opencode/schema/integration"
 import { Session } from "@opencode/schema/session"
+import { ArchivedSessionError } from "../session-archived.ts"
 import { Effect } from "effect"
 import { TaskRepository } from "../storage.ts"
 import {
@@ -25,6 +26,49 @@ import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 
 /** A background refresh gives up after this long. */
 const BACKGROUND_REFRESH_TIMEOUT_MS = 120_000
+/**
+ * How often the background check runs. It fetches only what `dueSources` says is due, so most
+ * checks read two small status rows and fetch nothing; a quarter of the hourly price rule keeps
+ * prices at most 75 minutes old.
+ */
+export const REFRESH_CHECK_MS = 15 * 60_000
+
+/**
+ * One timer per database and project in this process, however many locations register; it runs
+ * the newest live registration's check, so a reloaded location's closure is never called.
+ */
+const refreshTimersKey = Symbol.for("lazers.models.refreshTimers.v1")
+type RefreshTimer = { ticks: (() => void)[]; timer: ReturnType<typeof setInterval> }
+const refreshTimers = () =>
+  ((globalThis as Record<symbol, unknown>)[refreshTimersKey] ??= new Map()) as Map<
+    string,
+    RefreshTimer
+  >
+function claimRefreshTimer(path: string, projectDirectory: string, tick: () => void, ms: number) {
+  const key = `${path}\u0000${projectDirectory}`
+  let entry = refreshTimers().get(key)
+  if (!entry) {
+    const created: RefreshTimer = {
+      ticks: [],
+      timer: setInterval(() => created.ticks.at(-1)?.(), ms),
+    }
+    created.timer.unref?.()
+    refreshTimers().set(key, created)
+    // The first check runs soon after start, not a whole interval later.
+    setTimeout(() => created.ticks.at(-1)?.(), Math.min(ms, 30_000)).unref?.()
+    entry = created
+  }
+  entry.ticks.push(tick)
+  const held = entry
+  return () => {
+    const at = held.ticks.indexOf(tick)
+    if (at < 0) return
+    held.ticks.splice(at, 1)
+    if (held.ticks.length) return
+    clearInterval(held.timer)
+    if (refreshTimers().get(key) === held) refreshTimers().delete(key)
+  }
+}
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
 import type { TaskValuationIndexReader, TaskValuationProvider } from "./task-valuation.ts"
@@ -66,10 +110,9 @@ function isSessionNotFound(error: unknown): boolean {
 }
 
 /**
- * The Models actions that only read. An archived session of this project may still read: the
- * Architect's renewals archive its session every few minutes, and the panel stays open on it
- * (2026-11-22, live: every Models read refused with "Models scope is unavailable"). Writes
- * (`lz-configure-models`) and a forced refresh still need a live session.
+ * The Models actions that only read. An archived session of this project reads as a live one
+ * (`src/session-archived.ts`); writes (`lz-configure-models`) and a forced refresh from an
+ * archived session are refused with the plain reason.
  */
 const READ_ACTIONS: ReadonlySet<string> = new Set([
   "lz-read-model-decision",
@@ -78,8 +121,8 @@ const READ_ACTIONS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * The caller's session: it exists, belongs to this project and has an agent; unless the caller
- * only reads, it is not archived.
+ * The caller's session: it exists, belongs to this project and has an agent. A change from an
+ * archived session is refused with the plain reason (`ArchivedSessionError`).
  */
 async function eligibleSession(
   ctx: ModelsContext,
@@ -102,10 +145,10 @@ async function eligibleSession(
     !session ||
     String(session.id) !== sessionID ||
     session.projectID !== projectID ||
-    (!reading && session.time.archived !== undefined) ||
     !session.agent
   )
     throw new Error("Models scope is unavailable")
+  if (!reading && session.time.archived !== undefined) throw new ArchivedSessionError()
   return { session, agent: session.agent }
 }
 
@@ -246,7 +289,11 @@ export function registerModelsServer(
   fetcher?: ModelEvidenceFetcher,
   evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
     new ModelEvidenceReadStore(databasePath, directory),
-  options: { prewarmDecision?: boolean } = {},
+  options: {
+    prewarmDecision?: boolean
+    /** Check the price sources' staleness rule on a timer (the service; tests pass a period). */
+    backgroundRefreshMs?: number
+  } = {},
 ) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
@@ -271,6 +318,29 @@ export function registerModelsServer(
     } finally {
       store.close()
     }
+  }
+  /**
+   * Fetch the sources past their staleness rule (`dueSources`: prices hourly, model info weekly,
+   * a failed source again after 5 minutes), once at a time. Unforced, it starts the fetch and
+   * returns; forced (the header button), it waits for it. A failed fetch records its error code
+   * on the source's refresh row, which the panel shows.
+   */
+  const refreshDue = async (force: boolean) => {
+    if (force) await refreshGate.wait()
+    if (refreshGate.busy) return
+    const plan = await withEvidenceStoreAsync(async (store) =>
+      new ModelEvidenceRefresher(ctx, store, fetcher).due(force),
+    )
+    if (plan.size === 0) return
+    const run = refreshGate.start(() =>
+      withEvidenceStoreAsync((store) =>
+        new ModelEvidenceRefresher(ctx, store, fetcher).refresh(
+          AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS),
+          plan,
+        ),
+      ),
+    )
+    if (force) await run
   }
   const withEvidenceReadStore = <T>(run: (store: EvidenceReadStore) => T): T => {
     const store = evidenceReadStoreFactory(path, projectDirectory)
@@ -375,6 +445,18 @@ export function registerModelsServer(
           .catch(() => undefined)
       }, DECISION_PREWARM_DELAY_MS)
       prewarm.unref()
+    }
+    // Prices stay current with no panel open: one location per project and process checks the
+    // staleness rule on a timer (2026-11-22 live: nothing refreshed from Nov 19 until a panel
+    // was opened on a live session).
+    if (options.backgroundRefreshMs !== undefined) {
+      const releaseRefreshTimer = claimRefreshTimer(
+        path,
+        projectDirectory,
+        () => void refreshDue(false).catch(() => undefined),
+        options.backgroundRefreshMs,
+      )
+      yield* Effect.addFinalizer(() => Effect.sync(releaseRefreshTimer))
     }
     yield* timedRpc(ctx.rpc).register(Models, {
       configure: (input) =>
@@ -488,23 +570,7 @@ export function registerModelsServer(
               { reading: !force },
             )
             signal.throwIfAborted()
-            if (force) await refreshGate.wait()
-            if (!refreshGate.busy) {
-              const plan = await withEvidenceStoreAsync(async (store) =>
-                new ModelEvidenceRefresher(ctx, store, fetcher).due(force),
-              )
-              if (plan.size > 0) {
-                const run = refreshGate.start(() =>
-                  withEvidenceStoreAsync((store) =>
-                    new ModelEvidenceRefresher(ctx, store, fetcher).refresh(
-                      AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS),
-                      plan,
-                    ),
-                  ),
-                )
-                if (force) await run
-              }
-            }
+            await refreshDue(force)
             return ModelEvidenceOutputSchema.parse(
               // Statuses only: endpoint pricing bodies are returned when the evidence is requested.
               await withEvidenceStoreAsync(async (store) =>

@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test"
+import { ARCHIVED_SESSION_MESSAGE } from "../session-archived.ts"
 import { Database } from "bun:sqlite"
 import { Location } from "@opencode/plugin/effect"
 import { Effect, Schema } from "effect"
@@ -466,6 +467,16 @@ test("Start RPC checks actor ownership and native permission before entering run
       planID,
       state: "running",
     })
+    expect(starts).toBe(1)
+
+    // A change from an archived session is refused with the plain reason, before any permission.
+    actor = { ...actor!, archived: true }
+    const archived = await Effect.runPromise(invokeStart!(input)).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(archived).toMatchObject({ message: ARCHIVED_SESSION_MESSAGE })
+    expect(checks).toHaveLength(2)
     expect(starts).toBe(1)
 
     actor = null

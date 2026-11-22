@@ -61,6 +61,7 @@ import {
   authorizeModels,
   createModelsManagedUsagePriceProvider,
   registerModelsServer,
+  REFRESH_CHECK_MS,
 } from "./models/server.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
@@ -152,9 +153,10 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:ModelTools", () => registerModelTools(ctx, repository))
       yield* sectionEffect("setup:ModelsServer", () =>
-        registerModelsServer(ctx, repository, undefined, undefined, { prewarmDecision: true }).pipe(
-          Effect.orDie,
-        ),
+        registerModelsServer(ctx, repository, undefined, undefined, {
+          prewarmDecision: true,
+          backgroundRefreshMs: REFRESH_CHECK_MS,
+        }).pipe(Effect.orDie),
       )
       const managedUsagePriceProvider = createModelsManagedUsagePriceProvider(ctx, repository)
       yield* sectionEffect("setup:ManagedUsageTools", () =>

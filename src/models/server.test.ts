@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite"
+import { ARCHIVED_SESSION_MESSAGE } from "../session-archived.ts"
 import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
@@ -286,6 +287,7 @@ async function register(
     evidenceReadStoreFactory?: Parameters<typeof registerModelsServer>[3]
     /** Keep the registration open (decision views build and are opened through it) until `close`. */
     live?: boolean
+    backgroundRefreshMs?: number
   } = {},
 ) {
   const native = modelContext(options)
@@ -297,6 +299,9 @@ async function register(
       repository,
       options.fetcher,
       options.evidenceReadStoreFactory,
+      options.backgroundRefreshMs === undefined
+        ? {}
+        : { backgroundRefreshMs: options.backgroundRefreshMs },
     )
     yield* registerModelTools(
       {
@@ -1761,7 +1766,7 @@ test("Models source refresh fetches without credentials and only after authoriza
   }
 })
 
-test("an archived session of this project may read Models (streams, price sources, a timed refresh) but not write", async () => {
+test("an archived session of this project reads Models as a live one; a change gets the plain archived reason", async () => {
   // Live 2026-11-22: the Architect's renewals archive its session while the Models panel stays
   // open on it, and every read failed with "Models scope is unavailable".
   const root = directory()
@@ -1795,10 +1800,9 @@ test("an archived session of this project may read Models (streams, price source
     ).toBeDefined()
     expect(
       await rejects(methods.refreshSources({ sessionID: "ses-native", force: true })),
-    ).toMatchObject({
-      message: "Models scope is unavailable",
-    })
-    await expect(authorize("lz-configure-models")).rejects.toThrow("Models scope is unavailable")
+    ).toMatchObject({ message: ARCHIVED_SESSION_MESSAGE })
+    // A change gets the plain reason, not a scope error.
+    await expect(authorize("lz-configure-models")).rejects.toThrow(ARCHIVED_SESSION_MESSAGE)
     // A session of another project, or one without an agent, still reads nothing.
     harness.setActor({ ...archived, projectID: "foreign-project" })
     await expect(authorize("lz-read-model-decision")).rejects.toThrow("Models scope is unavailable")
@@ -2504,6 +2508,92 @@ test("saving an agent route re-applies the agent transforms and the settings rea
       ),
     ).rejects.toThrow()
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("prices refresh on the service's timer with no panel open; a failed source records why and the others still refresh", async () => {
+  // Live 2026-11-22: nothing refreshed the sources from Nov 19 until a panel opened.
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let openRouterUp = true
+  let openRouterCalls = 0
+  const harness = await register(repository, {
+    live: true,
+    backgroundRefreshMs: 40,
+    fetcher: async (input) => {
+      if (!/openrouter\.ai\/api\/v1\/models/.test(String(input)))
+        return new Response("n/a", { status: 404 })
+      openRouterCalls += 1
+      if (!openRouterUp) return new Response("down", { status: 503 })
+      return Response.json({
+        data: [
+          {
+            id: "openai/price-test",
+            name: "Price test",
+            pricing: { prompt: "0.000002", completion: "0.000008" },
+          },
+        ],
+      })
+    },
+  })
+  repository.close()
+  const rows = () => {
+    const db = new Database(path, { readonly: true })
+    try {
+      const exists = db
+        .query("SELECT 1 FROM sqlite_master WHERE name='model_evidence_refreshes'")
+        .get()
+      if (!exists) return {} as Record<string, never>
+      return Object.fromEntries(
+        db
+          .query<
+            {
+              source: string
+              state: string
+              latest_retrieved_at: string | null
+              error_code: string | null
+              http_status: number | null
+            },
+            []
+          >(
+            "SELECT source,state,latest_retrieved_at,error_code,http_status FROM model_evidence_refreshes",
+          )
+          .all()
+          .map((row) => [row.source, row]),
+      )
+    } finally {
+      db.close()
+    }
+  }
+  const until = async (done: () => boolean) => {
+    for (let waited = 0; waited < 200 && !done(); waited++) await Bun.sleep(25)
+    expect(done()).toBe(true)
+  }
+  try {
+    // No RPC call: the timer fetches what is due.
+    await until(() => rows()["openrouter-models"]?.state === "succeeded")
+    expect(rows()["openrouter-models"]!.latest_retrieved_at).not.toBeNull()
+    expect(openRouterCalls).toBe(1)
+    // Within the hourly price rule the next checks fetch nothing.
+    await Bun.sleep(200)
+    expect(openRouterCalls).toBe(1)
+    // A forced refresh against a source that is down records its error code and HTTP status.
+    openRouterUp = false
+    harness.setActor({ id: "ses-native", projectID, agent: "architect", time: {} })
+    await Effect.runPromise(
+      harness.methods().refreshSources({ sessionID: "ses-native", force: true }),
+    )
+    expect(rows()["openrouter-models"]).toMatchObject({
+      state: "failed",
+      error_code: "server-error",
+      http_status: 503,
+    })
+    // The native catalog, a source that answered, still refreshed.
+    expect(rows()["native-catalog"]!.state).toBe("succeeded")
+  } finally {
+    await harness.close()
     rmSync(root, { recursive: true, force: true })
   }
 })

@@ -1,4 +1,5 @@
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
+import { ArchivedSessionError } from "../session-archived.ts"
 import { terminalPlanStates as terminal } from "./plan-control.ts"
 import {
   assertTaskPersonaForManualStart,
@@ -862,8 +863,9 @@ export class TaskRuntime {
 
   async startTask(input: StartTaskInput): Promise<StartTaskResult> {
     const actor = await this.host.session(input.sessionID)
-    if (!actor || actor.archived || actor.projectID !== this.projectID)
+    if (!actor || actor.projectID !== this.projectID)
       throw new Error("Start requires a live session in this project")
+    if (actor.archived) throw new ArchivedSessionError()
 
     const task = this.store.repository.get(input.taskID)
     if (
