@@ -139,3 +139,22 @@ persona", "Worker has 1 running shell(s) and 0 active child session(s)").
 </content>
 
 </invoke>
+
+## Pass results (2026-11-22, branch `chore/delete-invented-limits`)
+
+Deleted:
+
+| commit | what | used to |
+| --- | --- | --- |
+| d6d2b2fc | `DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS` (15 min), `DEFAULT_VERIFICATION_HARD_TIMEOUT_MS` (60 min), their fallbacks in `artifacts.ts` `runCheck`/`runDeclaredCheck`, and the guidance text that cited them | kill live checks and hold plans as "timed out" (6 fired) |
+| ad00ecaa | `PLANNING_AGENT_INACTIVITY_MS` (5 min), the `stuck` state of `planningRun`, the "could not start" time-out, the report's suggested span | interrupt quiet planning agents and settle them not-run |
+| 097401ff | `PLAN_MOVED_RETRIES` (3) | throw "changed repeatedly" at an Architect command that raced the scheduler |
+
+Found after the first inventory:
+
+- `src/runner/runtime.ts:247` `workerNoProgressWindowMs ?? 30 * 60_000` is read by `attempt-advance.ts:269-311` (`WORKER_NO_PROGRESS_INTERRUPT`), so it goes to RUN-BLOCKERS; they were told.
+- `src/runner/runtime.ts:248` `cancelIdleWaitMs ?? 30_000` and `src/runner/cancellation.ts:253,348` are a bounded wait inside a requested cancel that always ends in the cancel. KEEP.
+- `src/planning/tools.ts:91-92` `MAX_EVIDENCE` is coupled to `src/webgpu/task-review.ts:12-18` (`TaskReviewInput`: 20 items of 6000 chars), which bounds the local model's input. Changed to DEFER: delete it together with the review input bounds, once the local model's context limit is measured.
+- Zod `.max(N)` on tool inputs (reason 2000, requestID 200, title 120, evidence 10/20/100 and others): many of them refuse input with no source. DEFER as one family pass.
+- `src/planning/decision/constants.ts`: says of itself "hand-picked starting value; not measured" (agentThreshold, budgetMs, maxDepth, ...). It decides which planning agents run, and the default threshold of 0 cuts none. DEFER (scoring).
+- `src/runner/architect-routing.ts` cache window and 32k tokens: DEFER. The `cold-large` route is the only trigger of Architect renewal outside `missing`. Deleting it orphans the renewal path (prepare/transfer/commit and about 40 tests in `runtime-architect-renewal.test.ts`), and `context-horizon.ts` and `index.ts:360` also read the window. This needs its own pass that deletes renewal-on-cold as a unit.
