@@ -48,8 +48,6 @@ export const ALLOWED: Record<string, string> = {
   "Models.refreshSources":
     "command: refresh due price sources; answers their status rows (one per source)",
   "Models.priceSources": "price-source order and access stamp: one settings record",
-  "PlanningRpc.get": "planning form: one planning record by id, behind its control",
-  "PlanningRpc.list": "planning forms waiting on the owner: open records only, a bounded page",
   "PlanningRpc.resolve": "write: answer a planning form",
   "Projects.saveProfile": "write: prove and activate a project profile",
   "Projects.setCode": "write: a project's code",
