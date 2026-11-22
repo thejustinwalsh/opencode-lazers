@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { refreshPause, refreshPlan, refreshReservations, refreshTask } from "./refresh.ts"
 import type { RefreshContext } from "./refresh.ts"
+import { refreshLineage } from "./lineage.ts"
 import { setScheduleParked } from "./hook.ts"
 import type { DirtyKind } from "./schema.ts"
 
@@ -118,6 +119,7 @@ export function drainTaskSchedule(db: Database, options: { budget?: number } = {
       if (entry.kind === "task") refreshTask(db, ctx, entry.ref)
       else if (entry.kind === "plan") refreshPlan(db, ctx, entry.ref)
       else if (entry.kind === "reservations") refreshReservations(db, ctx, entry.ref)
+      else if (entry.kind === "lineage") refreshLineage(db, entry.ref)
       else refreshPause(db, ctx, entry.ref)
       db.exec("RELEASE task_schedule_entry")
       db.query("DELETE FROM task_schedule_dirty WHERE kind=? AND ref=?").run(entry.kind, entry.ref)

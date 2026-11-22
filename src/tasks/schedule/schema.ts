@@ -2,13 +2,14 @@ import type { Database } from "bun:sqlite"
 import { schemaModules } from "../../database-schema.ts"
 import type { TaskRepository } from "../../storage.ts"
 import { drainTaskSchedule } from "./drain.ts"
+import { refreshLineage } from "./lineage.ts"
 import { enrollScheduleConnection, registerScheduleDrain } from "./hook.ts"
 
 import { BUCKETS, type Bucket } from "./buckets.ts"
 
 export { BUCKETS, type Bucket }
 
-export type DirtyKind = "task" | "plan" | "reservations" | "pause"
+export type DirtyKind = "task" | "plan" | "reservations" | "pause" | "lineage"
 
 const MODULE = schemaModules["task-schedule"]
 
@@ -136,9 +137,20 @@ export const TABLES_SQL = `
     session_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     role TEXT NOT NULL,
+    -- The session's renewal lineage (\`task_schedule_lineage\`), or the session itself: a session
+    -- reads the tasks linked to any session of its lineage.
+    lineage_key TEXT NOT NULL,
     PRIMARY KEY(session_id, task_id, role)
   );
   CREATE INDEX task_schedule_sessions_task ON task_schedule_sessions(task_id);
+  CREATE INDEX task_schedule_sessions_lineage ON task_schedule_sessions(lineage_key, task_id);
+  -- One row per Architect renewal successor: the first session of its renewal chain. A session
+  -- with no row is its own lineage. Rows: one per renewal (546 live, 2026-11-22).
+  CREATE TABLE task_schedule_lineage (
+    session_id TEXT PRIMARY KEY,
+    root_session_id TEXT NOT NULL
+  );
+  CREATE INDEX task_schedule_lineage_root ON task_schedule_lineage(root_session_id);
   CREATE TABLE task_schedule_scopes (
     task_id TEXT NOT NULL,
     path TEXT NOT NULL,
@@ -159,12 +171,13 @@ export const TABLES_SQL = `
     n INTEGER NOT NULL,
     PRIMARY KEY(project_directory, bucket)
   );
-  -- A task linked to the session by several roles (creator and plan owner) counts once.
+  -- Per lineage: \`session_id\` is the lineage key. A task linked by several roles or sessions of
+  -- the lineage counts once.
   CREATE VIEW task_schedule_session_bucket_counts AS
-    SELECT s.session_id AS session_id, t.project_directory AS project_directory,
+    SELECT s.lineage_key AS session_id, t.project_directory AS project_directory,
            t.bucket AS bucket, COUNT(DISTINCT t.task_id) AS n
     FROM task_schedule_sessions s JOIN task_schedule t ON t.task_id=s.task_id
-    WHERE t.retired=0 GROUP BY s.session_id, t.project_directory, t.bucket;
+    WHERE t.retired=0 GROUP BY s.lineage_key, t.project_directory, t.bucket;
 `
 
 /** `task_schedule_failed` parks entries whose refresh threw, out of the hot queue. */
@@ -298,6 +311,20 @@ export const SCHEDULE_TRIGGERS: readonly TriggerSpec[] = [
     when: "EXISTS (SELECT 1 FROM task_schedule WHERE plan_id=NEW.plan_id AND finished_basis='plan')",
     queues: [["plan", "NEW.plan_id"]],
   },
+  // A plan's continuation session and its parent read the plan's tasks.
+  { table: "runner_continuations", event: "INSERT", queues: [["plan", "NEW.plan_id"]] },
+  {
+    table: "runner_continuations",
+    event: "UPDATE",
+    columns: ["plan_id", "session_id", "parent_id"],
+    queues: [
+      ["plan", "NEW.plan_id"],
+      ["plan", "OLD.plan_id", "OLD.plan_id IS NOT NEW.plan_id"],
+    ],
+  },
+  { table: "runner_continuations", event: "DELETE", queues: [["plan", "OLD.plan_id"]] },
+  // A renewal joins its successor to the previous session's lineage.
+  { table: "runner_architect_renewals", event: "INSERT", queues: [["lineage", "NEW.id"]] },
   { table: "runner_dispatch_controls", event: "INSERT", queues: [["plan", "NEW.plan_id"]] },
   { table: "runner_dispatch_controls", event: "UPDATE", queues: [["plan", "NEW.plan_id"]] },
   { table: "lazers_dispatch_pause", event: "INSERT", queues: [["pause", "NEW.scope"]] },
@@ -373,6 +400,13 @@ export function installTaskScheduleSchema(db: Database) {
     "UPDATE task_schedule_state SET ready=0, backfill_after=0, reservations_fp='', last_error=NULL",
   )
   installScheduleTriggers(db)
+  // Lineage before any task row: the backfill keys each session link by it. In creation order, so
+  // a previous session's lineage is stored before its successor's; one row per renewal.
+  if (hasTable(db, "runner_architect_renewals"))
+    for (const renewal of db
+      .query<{ id: string }, []>("SELECT id FROM runner_architect_renewals ORDER BY rowid")
+      .iterate())
+      refreshLineage(db, renewal.id)
 }
 
 /** Install through the module registry: one transaction, generation checked. */
