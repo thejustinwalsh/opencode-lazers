@@ -794,7 +794,9 @@
 }
 
 /* Older calls: a scroll area as tall as every row; only the stream's window of rows is drawn, at its place. */
+/* The scroller spans the table's grid; its windowed rows are grids of the same fixed columns. */
 .lazers-radar-history-scroll {
+  grid-column: 1 / -1;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -807,6 +809,7 @@
   top: 0;
 }
 .lazers-radar-history-window .lazers-kit-row {
+  grid-template-columns: var(--lazers-kit-columns);
   height: 28px;
 }
 
