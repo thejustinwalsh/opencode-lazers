@@ -842,6 +842,9 @@ test("the inspector reads the selected task's plan, prerequisites and dependents
     // The plan's title and the step come from the stored plan and row.
     expect(text).toContain("Chain")
     expect(detail.textContent).toContain("Chain")
+    // The details bar cuts the title at narrow widths; its tooltip carries the whole title.
+    const barTitle = h.container.querySelector<HTMLElement>(".lazers-tasks-inspector-title")!
+    expect(barTitle.title).toBe("Chain two")
   })
 })
 
