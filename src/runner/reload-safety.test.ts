@@ -60,6 +60,19 @@ test("work of a cancelled plan does not block a reload or appear as stale", () =
   expect(reload(db)).toMatchObject({ safe: true, workers: 0, staleAttempts: [] })
 })
 
+test("every host-active session blocks reload, including cancelled workers and untracked children", () => {
+  const db = database()
+  db.run("INSERT INTO runner_plans VALUES('p','cancelled',NULL)")
+  db.run(
+    "INSERT INTO runner_attempts(id,plan_id,state,session_id) VALUES('cancelled-worker','p','running','ses_cancelled')",
+  )
+  for (const sessionID of ["ses_cancelled", "ses_native_child", "ses_architect_without_plan"]) {
+    const result = reload(db, { sessions: [sessionID] })
+    expect(result).toMatchObject({ safe: false, otherHostSessions: 1 })
+    expect(result.line).toContain("1 other host session active")
+  }
+})
+
 test("check kinds and retained/adoption state labels need a live process to hold a reload", () => {
   const db = database()
   db.run("CREATE TABLE runner_retained_verifications(id TEXT, state TEXT)")

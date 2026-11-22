@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { observeVerificationProcesses } from "./reload-process-observation.ts"
 import {
+  MAX_OPEN_VERIFICATION_CANDIDATES,
   MAX_RECENT_TRANSITION_ROWS,
   RECENT_EFFECT_INTENTS_SQL,
   verificationProcessCandidates,
@@ -221,6 +222,207 @@ test("retained and adoption checks without process or settlement evidence stay u
       expect(observation.reason).toContain("retained:retained/task/quality")
       expect(observation.reason).toContain("adoption:adoption/task/quality")
     }
+  } finally {
+    db.close()
+    rmSync(workspace, { recursive: true, force: true })
+  }
+})
+
+test("completed checks under terminal operations keep unsettled subprocess groups observable", async () => {
+  const db = database()
+  const workspace = mkdtempSync(join(tmpdir(), "reload-terminal-checks-"))
+  try {
+    db.exec(`
+      CREATE TABLE runner_retained_verifications(id TEXT, state TEXT);
+      CREATE TABLE runner_retained_verification_checks(
+        operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+      );
+      CREATE TABLE runner_adoption_checks(
+        adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+      );
+    `)
+    const startedAt = Date.now() - 1_000
+    const checkJSON = JSON.stringify({ id: "quality", command: "bun run check" })
+    const receiptFor = (rootPID: number) =>
+      JSON.stringify({
+        id: "quality",
+        command: "bun run check",
+        cwd: workspace,
+        startedAt,
+        endedAt: startedAt + 500,
+        processCleanup: { state: "uncertain", capability: "process-group", rootPID },
+      })
+    db.run("INSERT INTO runner_retained_verifications VALUES('retained','failed')")
+    db.run(
+      `INSERT INTO runner_retained_verification_checks
+       VALUES('retained','task','quality',?,?,?, ?,?,'completed')`,
+      [checkJSON, workspace, startedAt, join(workspace, "retained-receipt.json"), receiptFor(7654)],
+    )
+    db.run(
+      `INSERT INTO runner_adoption_checks
+       VALUES('adoption','task','quality',?,?,?, ?,?,'completed')`,
+      [checkJSON, workspace, startedAt, join(workspace, "adoption-receipt.json"), receiptFor(8764)],
+    )
+
+    const live = await observeVerificationProcesses(db, {
+      now: () => Date.now(),
+      list: () => ({
+        status: 0,
+        stdout: "7655 7654 7654 00:01 /bin/sleep 30\n8765 8764 8764 00:01 /bin/sleep 30\n",
+      }),
+      cwd: (pid) => ({
+        status: 0,
+        stdout: `p${pid}\nfcwd\nn${workspace}\n`,
+      }),
+    })
+    expect(live).toEqual({ kind: "observed", processIDs: [7654, 8764] })
+
+    const exited = await observeVerificationProcesses(db, {
+      list: () => ({ status: 0, stdout: "" }),
+      cwd: () => ({ status: 0, stdout: "" }),
+    })
+    expect(exited).toEqual({ kind: "observed", processIDs: [] })
+  } finally {
+    db.close()
+    rmSync(workspace, { recursive: true, force: true })
+  }
+})
+
+test("terminal check acquisition is bounded and preserves unknown cleanup identity", async () => {
+  const db = database()
+  const workspace = mkdtempSync(join(tmpdir(), "reload-terminal-bound-"))
+  try {
+    db.exec(`
+      CREATE TABLE runner_retained_verifications(id TEXT, state TEXT);
+      CREATE TABLE runner_retained_verification_checks(
+        operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+      );
+      CREATE TABLE runner_adoption_checks(
+        adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+        created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+      );
+    `)
+    const startedAt = Date.now()
+    const checkJSON = JSON.stringify({ id: "quality", command: "bun run check" })
+    db.run("INSERT INTO runner_retained_verifications VALUES('retained','cancelled')")
+    const insert = db.query(
+      `INSERT INTO runner_retained_verification_checks
+       VALUES('retained','task',?,?,?,?,?,?,'completed')`,
+    )
+    const unsettled = JSON.stringify({
+      id: "quality",
+      command: "bun run check",
+      cwd: workspace,
+      startedAt,
+      endedAt: startedAt + 1,
+      processCleanup: { state: "uncertain", capability: "process-group", rootPID: 7654 },
+    })
+    for (let i = 0; i < MAX_OPEN_VERIFICATION_CANDIDATES + 1; i++)
+      insert.run(
+        `quality-${i}`,
+        checkJSON,
+        workspace,
+        startedAt,
+        join(workspace, `receipt-${i}.json`),
+        unsettled,
+      )
+    expect(() => verificationProcessCandidates(db)).toThrow(
+      "Too many retained verification checks to inspect",
+    )
+
+    db.exec("DELETE FROM runner_retained_verification_checks")
+    db.run(
+      `INSERT INTO runner_adoption_checks
+       VALUES('adoption','task','quality',?,?,?, ?,?,'completed')`,
+      [
+        checkJSON,
+        workspace,
+        startedAt,
+        join(workspace, "unknown-receipt.json"),
+        JSON.stringify({
+          id: "quality",
+          command: "bun run check",
+          cwd: workspace,
+          startedAt,
+          endedAt: startedAt + 1,
+          processCleanup: { state: "uncertain", capability: "direct-child", rootPID: 7654 },
+        }),
+      ],
+    )
+    db.run(
+      `INSERT INTO runner_adoption_checks
+       VALUES('adoption-phase','task','quality',?,?,?, ?,?,'completed')`,
+      [
+        checkJSON,
+        workspace,
+        startedAt,
+        join(workspace, "phase-receipt.json"),
+        JSON.stringify({
+          id: "quality",
+          command: "bun run check",
+          cwd: workspace,
+          startedAt,
+          endedAt: startedAt + 1,
+          phases: [{ command: "bun run check" }],
+        }),
+      ],
+    )
+    const unknown = await observeVerificationProcesses(db, {
+      list: () => ({ status: 0, stdout: "" }),
+      cwd: () => ({ status: 0, stdout: "" }),
+    })
+    expect(unknown.kind).toBe("unavailable")
+    if (unknown.kind === "unavailable") {
+      expect(unknown.reason).toContain("adoption:adoption/task/quality")
+      expect(unknown.reason).toContain("adoption:adoption-phase/task/quality")
+    }
+  } finally {
+    db.close()
+    rmSync(workspace, { recursive: true, force: true })
+  }
+})
+
+test("a reused recorded root PID with a different command is not treated as the check", async () => {
+  const db = database()
+  const workspace = mkdtempSync(join(tmpdir(), "reload-reused-root-pid-"))
+  try {
+    const startedAt = Date.now() - 1_000
+    addEffect(db, {
+      id: "reused-root",
+      command: "bun run check",
+      workspace,
+      startedAt,
+      receipt: {
+        check: {
+          id: "quality",
+          command: "bun run check",
+          cwd: workspace,
+          startedAt,
+          endedAt: startedAt + 500,
+          processCleanup: {
+            state: "uncertain",
+            capability: "process-group",
+            rootPID: 7654,
+          },
+        },
+      },
+    })
+    const observation = await observeVerificationProcesses(db, {
+      now: () => Date.now(),
+      list: () => ({
+        status: 0,
+        stdout: "7654 1 7654 00:01 /bin/sleep 30\n",
+      }),
+      cwd: (pid) => ({
+        status: 0,
+        stdout: `p${pid}\nfcwd\nn${workspace}\n`,
+      }),
+    })
+    expect(observation.kind).toBe("unavailable")
+    if (observation.kind === "unavailable") expect(observation.reason).toContain("reused-root")
   } finally {
     db.close()
     rmSync(workspace, { recursive: true, force: true })

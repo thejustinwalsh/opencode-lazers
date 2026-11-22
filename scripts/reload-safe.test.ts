@@ -88,6 +88,37 @@ test("reload-safe blocks a busy worker and unavailable host observations", async
   }
 })
 
+test("reload-safe blocks host-active sessions outside active runner records", async () => {
+  const f = fixture()
+  try {
+    for (const sessionID of ["ses_native_child", "ses_architect_without_plan"]) {
+      const result = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+        ...f.dependencies,
+        observeSessions: async () => ({ kind: "observed", sessionIDs: [sessionID] }),
+      })
+      expect(result.exitCode).toBe(1)
+      expect(result.stdout).toContain("1 other host session active")
+      expect(result.stdout).toContain("safe to reload: no")
+    }
+
+    const db = new Database(f.databasePath)
+    db.run("INSERT INTO runner_plans VALUES('cancelled','cancelled',NULL)")
+    db.run(
+      "INSERT INTO runner_attempts VALUES('cancelled-worker','cancelled','running','ses-cancelled')",
+    )
+    db.close()
+    const cancelledWorker = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+      ...f.dependencies,
+      observeSessions: async () => ({ kind: "observed", sessionIDs: ["ses-cancelled"] }),
+    })
+    expect(cancelledWorker.exitCode).toBe(1)
+    expect(cancelledWorker.stdout).toContain("1 other host session active")
+    expect(cancelledWorker.stdout).toContain("safe to reload: no")
+  } finally {
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
 test("reload-safe observes a late runDeclaredCheck phase and its process group through the CLI", async () => {
   const f = fixture()
   const workspace = join(f.root, "workspace")
@@ -168,6 +199,76 @@ test("reload-safe observes a late runDeclaredCheck phase and its process group t
   } finally {
     if (execution && !existsSync(releaseFile)) writeFileSync(releaseFile, "finish")
     await execution?.catch(() => undefined)
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test("reload-safe blocks surviving groups from completed checks after their parents terminate", async () => {
+  const f = fixture()
+  const workspace = join(f.root, "workspace")
+  mkdirSync(workspace)
+  const startedAt = Date.now() - 1_000
+  const checkJSON = JSON.stringify({ id: "quality", command: "bun run check" })
+  const receipt = (rootPID: number) =>
+    JSON.stringify({
+      id: "quality",
+      command: "bun run check",
+      cwd: workspace,
+      startedAt,
+      endedAt: startedAt + 500,
+      processCleanup: { state: "uncertain", capability: "process-group", rootPID },
+    })
+  const db = new Database(f.databasePath)
+  db.exec(`
+    CREATE TABLE runner_retained_verifications(id TEXT, state TEXT);
+    CREATE TABLE runner_retained_verification_checks(
+      operation_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+      created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+    );
+    CREATE TABLE runner_adoption_checks(
+      adoption_id TEXT, phase TEXT, check_id TEXT, check_json TEXT, workspace TEXT,
+      created_at INTEGER, receipt_path TEXT, receipt TEXT, state TEXT
+    );
+  `)
+  db.run("INSERT INTO runner_retained_verifications VALUES('retained','failed')")
+  db.run(
+    `INSERT INTO runner_retained_verification_checks
+     VALUES('retained','task','quality',?,?,?, ?,?,'completed')`,
+    [checkJSON, workspace, startedAt, join(f.root, "retained-receipt.json"), receipt(7654)],
+  )
+  db.run(
+    `INSERT INTO runner_adoption_checks
+     VALUES('adoption','task','quality',?,?,?, ?,?,'completed')`,
+    [checkJSON, workspace, startedAt, join(f.root, "adoption-receipt.json"), receipt(8764)],
+  )
+  db.close()
+  const observeProcesses = (stdout: string) => (readonlyDB: Database) =>
+    observeVerificationProcesses(readonlyDB, {
+      now: () => Date.now(),
+      list: () => ({ status: 0, stdout }),
+      cwd: (pid) => ({
+        status: 0,
+        stdout: `p${pid}\nfcwd\nn${workspace}\n`,
+      }),
+    })
+  try {
+    const live = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+      ...f.dependencies,
+      observeVerifications: observeProcesses(
+        "7655 7654 7654 00:01 /bin/sleep 30\n8765 8764 8764 00:01 /bin/sleep 30\n",
+      ),
+    })
+    expect(live.exitCode).toBe(1)
+    expect(live.stdout).toContain("2 verifications running")
+    expect(live.stdout).toContain("safe to reload: no")
+
+    const exited = await runReloadSafe([f.databasePath, f.missingOpenCodeDB], {
+      ...f.dependencies,
+      observeVerifications: observeProcesses(""),
+    })
+    expect(exited.exitCode).toBe(0)
+    expect(exited.stdout).toContain("0 verifications running")
+  } finally {
     rmSync(f.root, { recursive: true, force: true })
   }
 })

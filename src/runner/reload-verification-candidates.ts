@@ -8,6 +8,7 @@ import { withTestHangGuard } from "./test-hang-guard.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
 import { inspectCheckReceipt, type CheckReceiptIdentity } from "./reload-check-receipt.ts"
 import { DEFAULT_VERIFICATION_HARD_TIMEOUT_MS } from "./verification-timeout.ts"
+import { unsettledProcessCleanupSQL } from "./reload-unsettled-cleanup.ts"
 
 export const MAX_OPEN_VERIFICATION_CANDIDATES = 1_000
 export const MAX_RECENT_TRANSITION_ROWS = 4_096
@@ -262,10 +263,10 @@ function retainedCandidates(db: Database): VerificationProcessCandidate[] {
       []
     >(
       `SELECT c.operation_id,c.phase,c.check_id,c.check_json,c.workspace,c.created_at,
-              c.receipt_path,c.receipt
+               c.receipt_path,c.receipt
        FROM runner_retained_verification_checks c
-       JOIN runner_retained_verifications r ON r.id=c.operation_id
-       WHERE r.state IN ('pending','task-checks') AND c.state IN ('intended','uncertain')
+       WHERE c.state IN ('intended','uncertain')
+          OR (c.state='completed' AND ${unsettledProcessCleanupSQL("c.receipt", "c.check_json")})
        ORDER BY c.created_at,c.operation_id,c.phase,c.check_id
        LIMIT ${MAX_OPEN_VERIFICATION_CANDIDATES + 1}`,
     )
@@ -300,7 +301,9 @@ function adoptionCandidates(db: Database): VerificationProcessCandidate[] {
       []
     >(
       `SELECT adoption_id,phase,check_id,check_json,workspace,created_at,receipt_path,receipt
-       FROM runner_adoption_checks WHERE state IN ('intended','uncertain')
+       FROM runner_adoption_checks
+       WHERE state IN ('intended','uncertain')
+          OR (state='completed' AND ${unsettledProcessCleanupSQL("receipt", "check_json")})
        ORDER BY created_at,adoption_id,phase,check_id
        LIMIT ${MAX_OPEN_VERIFICATION_CANDIDATES + 1}`,
     )

@@ -28,6 +28,8 @@ export type ReloadSafety = {
   uncertainSteps: number
   /** "1 uncertain step on a blocked plan", or undefined when none. */
   uncertainLine: string | undefined
+  /** Host-active session IDs without a matching worker attempt or active Architect turn. */
+  otherHostSessions: number
   /** Running/preparing attempts whose sessions were positively observed idle or absent. */
   staleAttempts: Array<{ id: string; sessionID: string; state: string }>
   /** "Stale attempts: <attempt-id> (session <session-id>)", or undefined when none. */
@@ -202,12 +204,25 @@ export function reloadSafety(
   const architectObservation = architectTurnsInFlight(db, opencode, activeSessions, now)
   if (architectObservation.unavailable) observationErrors.push(architectObservation.unavailable)
   const architectTurns = architectObservation.turns.size
+  const workerSessions = new Set(
+    attempts
+      .filter((attempt) => activeSessions.has(attempt.session_id))
+      .map((attempt) => attempt.session_id),
+  )
+  const otherHostSessions =
+    observed.sessions.kind === "observed"
+      ? [...activeSessions].filter(
+          (sessionID) =>
+            !workerSessions.has(sessionID) && !architectObservation.turns.has(sessionID),
+        ).length
+      : 0
   const takeovers = count(
     db,
     `SELECT count(*) AS n FROM runner_takeovers WHERE state IN (${OPEN_TAKEOVER_STATES.map(() => "?").join(",")})`,
     ...OPEN_TAKEOVER_STATES,
   )
   const safe =
+    activeSessions.size === 0 &&
     workers === 0 &&
     verifications === 0 &&
     architectTurns === 0 &&
@@ -222,6 +237,8 @@ export function reloadSafety(
       ? `Stale attempts: ${staleAttempts.map((attempt) => `${attempt.id} (session ${attempt.sessionID})`).join(", ")}`
       : undefined
   const observationLine = observationErrors.length > 0 ? `, ${observationErrors.join(", ")}` : ""
+  const otherSessionsLine =
+    otherHostSessions > 0 ? `, ${noun(otherHostSessions, "other host session")} active` : ""
   return {
     safe,
     workers,
@@ -232,11 +249,12 @@ export function reloadSafety(
         ? `${noun(uncertainSteps, "uncertain step")} on a blocked plan`
         : undefined,
     architectTurns,
+    otherHostSessions,
     takeovers,
     architectTakeovers,
     staleAttempts,
     staleLine,
     observationErrors,
-    line: `${noun(workers, "worker")} running, ${noun(verifications, "verification")} running, ${noun(architectTurns, "Architect turn")} in flight${open}${finishing}${observationLine}, safe to reload: ${safe ? "yes" : "no"}`,
+    line: `${noun(workers, "worker")} running, ${noun(verifications, "verification")} running, ${noun(architectTurns, "Architect turn")} in flight${open}${finishing}${otherSessionsLine}${observationLine}, safe to reload: ${safe ? "yes" : "no"}`,
   }
 }
