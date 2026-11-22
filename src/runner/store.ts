@@ -1388,6 +1388,20 @@ export class RunnerStore {
       )
     )
       repository.atomic(retireConflictScans)
+    // An enabled contact stored before it kept no reason keeps the pause's text; read first, so a
+    // current database loads without a write. The state does not change: no transition.
+    if (
+      repository.read((db) =>
+        db
+          .query("SELECT 1 FROM runner_architect_contact WHERE state='enabled' AND reason<>''")
+          .get(),
+      )
+    )
+      repository.atomic((db) =>
+        db.exec(
+          "UPDATE runner_architect_contact SET reason='' WHERE state='enabled' AND reason<>''",
+        ),
+      )
     new RecoveryJournal(repository)
     ensureTaskScheduleSchema(repository)
     ensureTaskEventsSchema(repository)
@@ -1463,7 +1477,11 @@ export class RunnerStore {
   architectContactPaused(): boolean {
     return this.architectContact().state === "paused"
   }
-  /** Moves the contact setting through its XState machine; an invalid change throws. */
+  /**
+   * Moves the contact setting through its XState machine; an invalid change throws. The reason is
+   * the pause's: an enabled contact stores none, so it never reads like a pause (2026-11-19 live:
+   * an enable's text describing a held queue stayed on the enabled row).
+   */
   setArchitectContact(state: ArchitectContactState, reason: string) {
     return this.atomic((db) => {
       const current = this.architectContact()
@@ -1474,7 +1492,7 @@ export class RunnerStore {
       db.query(
         `INSERT INTO runner_architect_contact VALUES(?,?,?,?)
          ON CONFLICT(project_directory) DO UPDATE SET state=excluded.state,reason=excluded.reason,updated_at=excluded.updated_at`,
-      ).run(this.repository.projectDirectory, next, reason, Date.now())
+      ).run(this.repository.projectDirectory, next, next === "paused" ? reason : "", Date.now())
       this.repository.changed()
       return this.architectContact()
     })
