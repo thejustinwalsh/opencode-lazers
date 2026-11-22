@@ -103,7 +103,7 @@ import { taskExplanation, taskStateView } from "./task-state.ts"
 import { PROGRESS_STEPS, taskProgress } from "./task-progress.ts"
 import { attemptLane, taskStats } from "./stats.ts"
 import { criterionLine } from "./criterion.ts"
-import { eventLabel } from "./history.ts"
+import { eventLabel, eventPayloadText } from "./history.ts"
 import { REFERENCE_EXACT } from "../projects/code.ts"
 import css from "./panel.css?inline"
 
@@ -1822,7 +1822,7 @@ function TaskPanel(
             {event.event}
           </p>
           <Show when={payload() !== undefined} fallback={<p class="lazers-tasks-meta">Loading…</p>}>
-            <Ui.Code content={payload() ?? ""} language="json" />
+            <Ui.Code content={eventPayloadText(payload() ?? "")} language="json" />
           </Show>
         </Show>
       </div>
