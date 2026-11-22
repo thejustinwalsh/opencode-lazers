@@ -189,3 +189,22 @@ export function assemblePlanningView(parts: PlanningParts): PlanningView {
     ...(tasked.length ? { tasked } : {}),
   }
 }
+
+/** A `planning.detail` row (its list and cold columns, decoded) as the view: the latest revision. */
+export function planningViewOfRow(row: { readonly [column: string]: unknown }): PlanningView {
+  const revision = Number(row.revision)
+  return assemblePlanningView({
+    id: String(row.id),
+    title: String(row.title),
+    state: row.state as PlanningState,
+    revision,
+    shownRevision: revision,
+    body: row.body as PlanningBody,
+    validation: row.validation as Validation,
+    hashes: (row.hashes ?? {}) as Record<number, Hashes>,
+    findings: (row.findings ?? []) as StoredFinding[],
+    questions: (row.questions ?? []) as StoredQuestion[],
+    reviews: (row.reviews ?? []) as StoredReview[],
+    tasked: (row.tasked ?? []) as StoredTasked[],
+  })
+}
