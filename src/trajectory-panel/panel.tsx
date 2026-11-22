@@ -35,6 +35,7 @@ import { isSpanWidth, layoutMarks } from "./marks.ts"
 import type { MarkGlyph } from "./marks.ts"
 import { taskStatePresentation } from "./state-presentation.ts"
 import {
+  attemptActive,
   attemptDuration,
   attemptName,
   attemptSignals,
@@ -59,6 +60,7 @@ import {
   elapsedDurationLabel,
   eventPayload,
   currentTaskState,
+  isActiveAttemptState,
   sourceReferences,
 } from "./projection.ts"
 import type {
@@ -938,7 +940,9 @@ function PanelView(
   const headerModel = () => attemptModel(headerAttempt())
   const headerTiming = () => {
     const attempt = headerAttempt()
-    const duration = attempt ? spanOf(attempt) : null
+    if (!attempt) return null
+    // Active: elapsed so far. Finished: time the session worked, never the wall span.
+    const duration = isActiveAttemptState(attempt.state) ? spanOf(attempt) : attemptActive(attempt)
     return duration ? { text: durationText(duration.ms), open: duration.open } : null
   }
   const taskStatus = () => (report() ? currentTaskState(report()!) : "")

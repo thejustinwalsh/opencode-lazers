@@ -203,6 +203,7 @@ export function attemptFromRow(row: Raw, concern: ConcernSignal): TrajectoryAtte
     admittedModel: model.success ? model.data : null,
     observedCurrentModel: null,
     toolCount: { value: num(row.tool_count) ?? 0, source: "runner attempt tool_count" },
+    activeMs: num(row.active_ms) ?? null,
     checks: [],
   }
 }

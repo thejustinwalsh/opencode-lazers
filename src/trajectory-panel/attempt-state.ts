@@ -118,6 +118,16 @@ export function attemptDuration(
   return { ms: stop - start, open: working }
 }
 
+/**
+ * A finished attempt's working time: its session's completed model steps, not the span from start
+ * to its last recorded event (which holds idle turns, waits and post-acceptance adoption). Null
+ * while the attempt is active (the header shows elapsed time "so far") or before a step completed.
+ */
+export function attemptActive(attempt: Pick<TrajectoryAttempt, "state" | "activeMs">) {
+  if (isActiveAttemptState(attempt.state)) return null
+  return typeof attempt.activeMs === "number" ? { ms: attempt.activeMs, open: false } : null
+}
+
 /** What marks an attempt beside its state word: an open concern and an Architect takeover. */
 export function attemptSignals(attempt: Pick<TrajectoryAttempt, "concern" | "takeover">) {
   return {

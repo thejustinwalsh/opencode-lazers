@@ -260,7 +260,10 @@ const ATTEMPTS = `(SELECT a.id AS id, a.project_directory AS project_directory, 
     a.retry_count AS retry_count, json_extract(a.policy,'$.model') AS model,
     json_extract(a.policy,'$.takeover') IS NOT NULL AS takeover,
     (SELECT MAX(e.at) FROM task_events e
-      WHERE e.project_directory=a.project_directory AND e.attempt_id=a.id) AS last_event_at
+      WHERE e.project_directory=a.project_directory AND e.attempt_id=a.id) AS last_event_at,
+    (SELECT SUM(s.completed_at - s.created_at) FROM transcript_steps s
+      WHERE s.project_directory=a.project_directory AND s.session_id=a.session_id
+        AND s.completed_at >= s.created_at) AS active_ms
   FROM runner_attempts a) AS trajectory_attempts`
 
 export const trajectoryAttemptsSource = defineSource({

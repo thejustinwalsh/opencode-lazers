@@ -157,6 +157,8 @@ const Report = z
         admittedModel: Model.nullable(),
         observedCurrentModel: Model.nullable(),
         toolCount: z.object({ value: z.number().finite(), source: z.string() }).strip(),
+        /** Time the session was working (its completed model steps), ms; see `active_ms`. */
+        activeMs: z.number().finite().nullable().optional(),
         checks: z.array(Check),
       }),
     ),

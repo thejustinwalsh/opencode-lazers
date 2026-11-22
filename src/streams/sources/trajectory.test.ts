@@ -497,6 +497,19 @@ test("trajectory.attempts: a task's attempts in number order, with the takeover 
   for (const row of latest)
     expect(list.find((attempt) => attempt.id === row.attempt_id)!.last_event_at).toBe(row.at)
   expect(list[2]!.last_event_at).toBeNull()
+  // Active time: each attempt session's completed steps, summed.
+  const worked = made.repository.read((db) =>
+    db
+      .query<{ session_id: string; ms: number }, []>(
+        "SELECT session_id, SUM(completed_at - created_at) AS ms FROM transcript_steps WHERE completed_at >= created_at GROUP BY session_id",
+      )
+      .all(),
+  )
+  expect(worked.length).toBeGreaterThan(0)
+  for (const attempt of list)
+    expect(attempt.active_ms).toBe(
+      worked.find((row) => row.session_id === attempt.session_id)?.ms ?? null,
+    )
 })
 
 // ---- authorize ---------------------------------------------------------------------------------

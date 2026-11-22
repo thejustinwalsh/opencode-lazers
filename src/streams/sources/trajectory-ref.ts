@@ -110,6 +110,13 @@ export const trajectoryAttemptColumns = {
   takeover: "bool",
   /** The attempt's latest stored event time (`task_events`), epoch ms; null before one. */
   last_event_at: "float",
+  /**
+   * Time the attempt's session was working, ms: the sum of its completed model steps (each from
+   * the assistant message's creation to its completion, tool runs included; a session's steps do
+   * not overlap). Idle time between turns, waits and post-acceptance work are not in it. Null
+   * before a step completes.
+   */
+  active_ms: "float",
 } as const satisfies Columns
 
 export const trajectoryEffortColumns = {
