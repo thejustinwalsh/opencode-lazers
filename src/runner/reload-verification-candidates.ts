@@ -10,7 +10,7 @@ import { inspectCheckReceipt, type CheckReceiptIdentity } from "./reload-check-r
 import { DEFAULT_VERIFICATION_HARD_TIMEOUT_MS } from "./verification-timeout.ts"
 import { unsettledProcessCleanupSQL } from "./reload-unsettled-cleanup.ts"
 
-const MAX_OPEN_VERIFICATION_CANDIDATES = 1_000
+export const MAX_OPEN_VERIFICATION_CANDIDATES = 1_000
 export const MAX_RECENT_TRANSITION_ROWS = 4_096
 export const RECENT_EFFECT_INTENTS_SQL = `SELECT id,event,payload,created_at FROM runner_transitions
 ORDER BY id DESC LIMIT ${MAX_RECENT_TRANSITION_ROWS}`
