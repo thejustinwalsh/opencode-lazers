@@ -326,9 +326,14 @@ test("closing terminates a reader worker that does not acknowledge shutdown", as
     () => worker,
   )
   const read = reader.status({ now: NOW, dataDirectory: "." })
-  const readRejected = expect(read).rejects.toThrow("Retention reader closed")
+  const outcome = read.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
   await worker.nextRequest()
   await reader.close()
-  await readRejected
+  const error = await outcome
+  expect(error).toBeInstanceOf(Error)
+  expect((error as Error).message).toBe("Retention reader closed")
   expect(worker.terminated).toBe(true)
 })
