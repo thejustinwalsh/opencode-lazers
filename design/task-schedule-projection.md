@@ -197,8 +197,8 @@ row answers every chip:
 | ------------ | -------------------------------------------------------------------------------------------- |
 | `cancelled`  | plan or node cancelled                                                                       |
 | `failed`     | node `failed` or `exhausted`                                                                 |
-| `integrated` | node `incorporated`                                                                          |
-| `accepted`   | node `accepted`                                                                              |
+| `integrated` | node `incorporated`, or node `accepted` and plan `integrated`                                |
+| `accepted`   | node `accepted`, plan not integrated                                                         |
 | `paused`     | node `queued`/`ready`, plan not blocked or cancelled, plan, project or global dispatch pause |
 | `blocked`    | node `blocked`, or plan `blocked` with a non-terminal node                                   |
 | `running`    | node `running`, plan not blocked or cancelled                                                |

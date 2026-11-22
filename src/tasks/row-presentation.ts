@@ -188,6 +188,7 @@ export function taskRowPresentation(
     case "submitted":
       return state("submitted", "ring-dashed", "Proposed")
     case "accepted":
+      if (row.integrated) return state("integrated", "disc-check", "Integrated")
       return state("accepted", "ring-check", "Accepted", "Accepted; not yet integrated")
     case "incorporated":
       return state("integrated", "disc-check", "Integrated")

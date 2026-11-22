@@ -13,6 +13,9 @@ import { BUCKETS } from "./schema.ts"
  *     only stored node and plan state. The recorded chips already follow this.
  *  2. A plan whose body does not parse no longer reports "prerequisite plan facts are incomplete".
  *  3. Waits are whole: no 100-item caps and no "incomplete" flags.
+ *  4. An accepted task whose plan integrated is Integrated (rank and chip), not Accepted: no writer
+ *     moves the node to `incorporated` when its plan integrates, so the old Integrated chip was
+ *     always empty while the detail pane already showed such a task as Integrated.
  */
 
 /** The stored rows of a chip in schedule order, optionally for one creating session. */
