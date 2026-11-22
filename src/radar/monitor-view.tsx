@@ -836,7 +836,7 @@ export function RadarMonitorView(props: Props) {
                 )}
               </Show>
             </span>
-            <span class="lazers-radar-pane-title">
+            <span class="lazers-radar-pane-title" title={sessionHeading(session())}>
               {" · "}
               {sessionHeading(session())}
             </span>
@@ -849,7 +849,7 @@ export function RadarMonitorView(props: Props) {
           <>
             <strong>{node().title}</strong>
             <Show when={node().sub}>
-              <span class="lazers-radar-pane-title">
+              <span class="lazers-radar-pane-title" title={node().sub}>
                 {" · "}
                 {node().sub}
               </span>
