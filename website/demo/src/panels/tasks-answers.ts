@@ -251,8 +251,10 @@ export function reads(data: TasksData): Read[] {
 
 /**
  * What the service publishes after a change: the `changed` event of every open stream, so the
- * list, counters and detail each re-read their window over the moved data.
+ * list and counters re-read their window, and the tasks change feed, which the detail and the
+ * rows' current activity follow.
  */
 export function tasksChanged(emit: (type: string, data: unknown) => void) {
   for (const event of streams?.changes() ?? []) emit(`rpc.${Streams.id}.changed`, event)
+  emit("rpc.lazers.tasks.changed", { projectDirectory: PROJECT.canonical, version: Date.now() })
 }

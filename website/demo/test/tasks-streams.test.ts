@@ -87,5 +87,10 @@ test("a story step tells every open Tasks stream to re-read, so the list moves l
   tasksChanged((type, payload) => events.push({ type, data: payload }))
   expect(events).toEqual([
     { type: `rpc.${Streams.id}.changed`, data: { stream: "s", seq: expect.any(Number) } },
+    // The detail and the rows' current activity follow the tasks change feed.
+    {
+      type: "rpc.lazers.tasks.changed",
+      data: expect.objectContaining({ version: expect.any(Number) }),
+    },
   ])
 })
