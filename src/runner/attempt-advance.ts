@@ -11,6 +11,7 @@ import type { RuntimeJournal } from "./runtime-journal.ts"
 import type { VerificationReview } from "./verification-review.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { AttemptSettlementObservation } from "./attempt-settlement-observation.ts"
+import { hasOpenTakeoverForAttempt } from "./attempt-takeover-settlement.ts"
 import type { Dispatch } from "./dispatch.ts"
 import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { TaskRuntime } from "./runtime.ts"
@@ -146,6 +147,12 @@ export class AttemptAdvance {
       // The Architect is finishing this task itself. Its attempt has no native session, so absence
       // says nothing about it: only accept, a plan cancellation, or the abandonment hold ends it.
       if (isTakeoverAttempt(attempt.policy)) continue
+      if (
+        this.store.read((db) =>
+          hasOpenTakeoverForAttempt(db, this.core.directory, plan.id, attempt.id),
+        )
+      )
+        continue
       if (this.store.hasOpenEffect(plan.id, attempt.id)) continue
       const node = this.store.node(plan.id, attempt.task_id)
       let target: "accepted" | "failed" | "cancelled" | undefined
@@ -218,6 +225,7 @@ export class AttemptAdvance {
         } else continue
       } else continue
       this.store.fenced(this.owner, fence, (db) => {
+        if (hasOpenTakeoverForAttempt(db, this.core.directory, plan.id, attempt.id)) return
         if (this.store.planStatus(plan.id)?.version !== plan.version) return
         if (observationFence) {
           const currentPlan = this.store.plan(plan.id)
