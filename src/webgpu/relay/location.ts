@@ -6,7 +6,7 @@ import type {
 } from "./protocol.ts"
 import { CLAIM_LEASE_MS } from "./lease.ts"
 
-export const MAX_LOCATION_REQUESTS = 8
+const MAX_LOCATION_REQUESTS = 8
 const CANCELLED_RETENTION_MS = 30_000
 const MAX_RELAY_RECORDS = MAX_LOCATION_REQUESTS * 2
 
