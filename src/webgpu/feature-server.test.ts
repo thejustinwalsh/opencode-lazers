@@ -7,6 +7,9 @@ import { Effect } from "effect"
 import { registerLocalInference } from "./server.ts"
 import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference, RendererInference } from "./rpc.ts"
 import { defaultFeatures } from "./features.ts"
+import { InferenceRelay } from "./relay/protocol.ts"
+import { DesktopInferenceRelay } from "./relay/desktop.ts"
+import type { OpenCodeClient } from "@opencode/client/promise"
 
 test("saved switches enforce public RPC, cancel only disabled work, and remove native tools and review guidance", async () => {
   const data = new Map<string, unknown>()
@@ -196,6 +199,139 @@ test("saved switches enforce public RPC, cancel only disabled work, and remove n
           expect(await Effect.runPromise(worker.demand({}, {} as never))).toEqual({
             requested: false,
           })
+        })
+      }),
+    ),
+  )
+})
+
+test("a project-location public request reaches the default renderer through the live Desktop client", async () => {
+  const data = new Map<string, unknown>([["webgpu.features", defaultFeatures(true)]])
+  let publicApi!: RpcHandlers<typeof LocalInference>
+  let relay!: RpcHandlers<typeof InferenceRelay>
+  let emitEvent: ((event: unknown) => void) | undefined
+  const defaultCalls: { method: string; location?: string }[] = []
+  const features = defaultFeatures(true)
+  const ctx = {
+    options: {},
+    location: { directory: "/project", project: { canonical: "/project" } },
+    storage: {
+      get: (key: string) => Effect.succeed(data.get(key)),
+      set: (key: string, value: unknown) => Effect.sync(() => void data.set(key, value)),
+    },
+    permission: { assert: () => Effect.void },
+    tool: {
+      transform: () => Effect.succeed({ dispose: Effect.void }),
+      reload: Effect.void,
+    },
+    agent: {
+      transform: () => Effect.succeed({ dispose: Effect.void }),
+      reload: Effect.void,
+    },
+    rpc: {
+      register: (definition: { id: string }, handlers: unknown) =>
+        Effect.sync(() => {
+          if (definition.id === InferenceRelay.id) relay = handlers as typeof relay
+          else if (definition.id === LocalInference.id) publicApi = handlers as typeof publicApi
+          return {
+            dispose: Effect.void,
+            events: {
+              emit: (name: string, payload: { requestID: string }) =>
+                Effect.sync(() =>
+                  emitEvent?.({
+                    type: `rpc.${definition.id}.${name}`,
+                    location: { directory: "/project" },
+                    data: payload,
+                  }),
+                ),
+            },
+          }
+        }),
+    },
+  } as unknown as Parameters<typeof registerLocalInference>[0]
+  const client = {
+    rpc: (definition: { id: string }) => {
+      if (definition.id === InferenceRelay.id)
+        return {
+          discover: async (_input: unknown, options: { location?: { directory?: string } }) => {
+            expect(options.location?.directory).toBe("/project")
+            return Effect.runPromise(relay.discover({}, {} as never))
+          },
+          claim: (
+            input: Parameters<typeof relay.claim>[0],
+            options: { location?: { directory?: string } },
+          ) => {
+            expect(options.location?.directory).toBe("/project")
+            return Effect.runPromise(relay.claim(input, {} as never))
+          },
+          begin: (
+            input: Parameters<typeof relay.begin>[0],
+            options: { location?: { directory?: string } },
+          ) => {
+            expect(options.location?.directory).toBe("/project")
+            return Effect.runPromise(relay.begin(input, {} as never))
+          },
+          complete: (
+            input: Parameters<typeof relay.complete>[0],
+            options: { location?: { directory?: string } },
+          ) => {
+            expect(options.location?.directory).toBe("/project")
+            return Effect.runPromise(relay.complete(input, {} as never))
+          },
+          recover: (input: Parameters<typeof relay.recover>[0]) =>
+            Effect.runPromise(relay.recover(input, {} as never)),
+          acknowledge: (input: Parameters<typeof relay.acknowledge>[0]) =>
+            Effect.runPromise(relay.acknowledge(input, {} as never)),
+        }
+      if (definition.id === RendererInference.id)
+        return {
+          settings: async () => features,
+          ask: async (_input: unknown, options: { location?: { directory?: string } }) => {
+            defaultCalls.push({ method: "ask", location: options.location?.directory })
+            return {
+              ok: true,
+              text: "default authority",
+              error: "",
+              promptTokens: 1,
+              completionTokens: 2,
+            }
+          },
+        }
+      throw new Error(`Unexpected RPC: ${definition.id}`)
+    },
+    debug: { location: { list: async () => [{ directory: "/project" }] } },
+    event: {
+      subscribe: ({ signal }: { signal: AbortSignal }) =>
+        (async function* () {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) return resolve()
+            signal.addEventListener("abort", () => resolve(), { once: true })
+          })
+          yield undefined
+        })(),
+    },
+  } as unknown as OpenCodeClient
+  const manager = new DesktopInferenceRelay(() => client, new AbortController().signal)
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerLocalInference(ctx)
+        emitEvent = (event) => void manager.handleEvent(event)
+        manager.start()
+        yield* Effect.promise(async () => {
+          const response = await Effect.runPromise(
+            publicApi.ask(
+              { prompt: "project request", maxTokens: 16, timeoutMs: 5_000 },
+              {} as never,
+            ),
+          )
+          expect(response).toMatchObject({ ok: true, text: "default authority" })
+          expect(defaultCalls).toEqual([{ method: "ask", location: undefined }])
+          await expect(Effect.runPromise(relay.discover({}, {} as never))).resolves.toEqual({
+            requests: [],
+          })
+          await manager.close()
         })
       }),
     ),
