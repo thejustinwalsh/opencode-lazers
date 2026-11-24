@@ -634,6 +634,8 @@ export type CheckRunOptions = {
   signal?: AbortSignal
   /** Injectable native process-tree adapter, also used to exercise Windows semantics off-host. */
   processTreeAdapter?: WindowsProcessTreeAdapter
+  /** Metadata required by consumers that may recover the durable receipt after restart. */
+  verificationDeadline?: VerificationDeadlineReceipt
   /** Shared monotonic hard deadline for recognized multi-phase declarations. */
   hardDeadline?: number
   /** Shared inactivity deadline, reset only by real stdout/stderr progress. */
@@ -1031,6 +1033,9 @@ export async function runCheck(
       stdout,
       stderr,
       processCleanup,
+      ...(options.verificationDeadline === undefined
+        ? {}
+        : { verificationDeadline: options.verificationDeadline }),
       ...(options.isolation === undefined ? {} : { isolation: options.isolation }),
     }
     await writeCheckReceipt(receiptPath, receipt)
@@ -1189,6 +1194,9 @@ export async function runDeclaredCheck(
     stopCause: latest.stopCause,
     stdout: phases.map((phase) => phase.stdout).join(""),
     stderr: phases.map((phase) => phase.stderr).join(""),
+    ...(options.verificationDeadline === undefined
+      ? {}
+      : { verificationDeadline: options.verificationDeadline }),
     processCleanup:
       phases.find((phase) => phase.processCleanup?.state === "uncertain")?.processCleanup ??
       phases.find((phase) => phase.processCleanup?.state === "terminated")?.processCleanup ??

@@ -8,7 +8,7 @@ import {
 } from "./verification-timeout.ts"
 import type { VerificationDeadline, VerificationTimeoutTarget } from "./verification-timeout.ts"
 import { type TaskProposal } from "../task.ts"
-import { checkResourcesSettled, runDeclaredCheck, writeCheckReceipt } from "./artifacts.ts"
+import { checkResourcesSettled, runDeclaredCheck } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { PlanRow } from "./store.ts"
 import {
@@ -214,16 +214,13 @@ export class CheckActivities {
       artifact,
       effectiveVerificationCheck(check, deadline),
       receiptPath,
-      options === undefined && !profile
-        ? undefined
-        : { ...runOptions, ...(profile ? { profile } : {}) },
+      {
+        ...runOptions,
+        verificationDeadline: verificationReceiptDeadline(deadline),
+        ...(profile ? { profile } : {}),
+      },
     )
-    const annotated = {
-      ...receipt,
-      verificationDeadline: verificationReceiptDeadline(deadline),
-    }
-    await writeCheckReceipt(receiptPath, annotated)
-    return annotated
+    return receipt
   }
   async cancelCheckActivities(planID: string): Promise<VerificationActivity[]> {
     return abortVerificationActivities(
