@@ -36,9 +36,9 @@ export type RetainedRepairInputLineage =
   | { status: "invalid"; problem: string }
 
 /**
- * Resolve a retained-repair input through owner-authorized interrupted resume
- * receipts. This accepts old receipts without the new explicit marker only
- * when the caller has independently established an unchanged owner epoch.
+ * Resolve a retained-repair input through owner-authorized continuation receipts. This accepts
+ * old receipts without the new explicit marker only when the caller independently proves the
+ * owner did not change.
  */
 export function resolveRetainedRepairInputLineage(input: {
   operationID: string
@@ -101,25 +101,51 @@ export function resolveRetainedRepairInputLineage(input: {
         problem: "Retained repair continuation has conflicting durable authority markers",
       }
     if (recovery) {
-      if (
-        recovery.schema !== "lazers-retained-repair-recovery/v1" ||
-        receipt.terminalOutcome !== "interrupted" ||
-        recovery.operationID !== input.operationID ||
-        recovery.failedMessageID !== currentMessageID ||
-        recovery.interruptedInputID !== receipt.terminalInputID ||
-        recovery.interruptedInputID !== receipt.interruptedInputID ||
-        !Number.isSafeInteger(recovery.blockedTransitionID) ||
-        !Number.isSafeInteger(recovery.cancelledTransitionID) ||
-        !Number.isSafeInteger(recovery.failedResumeTransitionID) ||
-        (recovery.blockedTransitionID as number) <= 0 ||
-        (recovery.failedResumeTransitionID as number) <= 0 ||
-        (recovery.failedResumeTransitionID as number) >= (recovery.blockedTransitionID as number) ||
-        (recovery.cancelledTransitionID as number) <= (recovery.blockedTransitionID as number)
-      )
+      const commonRecovery =
+        recovery.operationID === input.operationID &&
+        recovery.owner === input.owner &&
+        recovery.failedMessageID === currentMessageID &&
+        Number.isSafeInteger(recovery.blockedTransitionID) &&
+        Number.isSafeInteger(recovery.cancelledTransitionID) &&
+        (recovery.blockedTransitionID as number) > 0 &&
+        (recovery.cancelledTransitionID as number) > (recovery.blockedTransitionID as number)
+      const interruptedRecovery =
+        recovery.schema === "lazers-retained-repair-recovery/v1" &&
+        receipt.terminalOutcome === "interrupted" &&
+        recovery.interruptedInputID === receipt.terminalInputID &&
+        recovery.interruptedInputID === receipt.interruptedInputID &&
+        Number.isSafeInteger(recovery.failedResumeTransitionID) &&
+        (recovery.failedResumeTransitionID as number) > 0 &&
+        (recovery.failedResumeTransitionID as number) < (recovery.blockedTransitionID as number)
+      const unpromptedRecovery =
+        recovery.schema === "lazers-retained-repair-recovery/v2" &&
+        recovery.preAdmissionFenceFailure === true &&
+        typeof recovery.reservedRepairMessageID === "string" &&
+        typeof recovery.predecessorMessageID === "string" &&
+        recovery.nativeInputID === receipt.terminalInputID &&
+        recovery.terminalOutcome === receipt.terminalOutcome &&
+        (receipt.terminalOutcome === "interrupted"
+          ? receipt.interruptedInputID === receipt.terminalInputID
+          : receipt.interruptedInputID === undefined) &&
+        Array.isArray(recovery.unpromptedMessageIDs) &&
+        recovery.unpromptedMessageIDs.length > 0 &&
+        recovery.unpromptedMessageIDs.every(
+          (messageID) => typeof messageID === "string" && messageID.length > 0,
+        ) &&
+        recovery.unpromptedMessageIDs[0] === recovery.reservedRepairMessageID &&
+        recovery.unpromptedMessageIDs[recovery.unpromptedMessageIDs.length - 1] ===
+          recovery.failedMessageID &&
+        (recovery.failedReservationTransitionID === null
+          ? recovery.failedMessageID ===
+            recovery.unpromptedMessageIDs[recovery.unpromptedMessageIDs.length - 1]
+          : Number.isSafeInteger(recovery.failedReservationTransitionID) &&
+            (recovery.failedReservationTransitionID as number) > 0 &&
+            (recovery.failedReservationTransitionID as number) <
+              (recovery.blockedTransitionID as number))
+      if (!commonRecovery || (!interruptedRecovery && !unpromptedRecovery))
         return {
           status: "invalid",
-          problem:
-            "Retained repair recovery receipt does not bind the exact interrupted reservation",
+          problem: "Retained repair recovery receipt does not bind the exact fenced reservation",
         }
     } else {
       if (

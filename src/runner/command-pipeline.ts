@@ -453,7 +453,11 @@ export class CommandPipeline {
       currentOwner.id !== recovery.owner ||
       !currentWorker ||
       this.retainedRepairObservation(currentWorker) !== recovery.workerObservation ||
-      currentWorker.messages.some((message) => message.id === recovery.failedMessageID) ||
+      currentWorker.messages.some(
+        (message) =>
+          message.id === recovery.failedMessageID ||
+          recovery.unpromptedMessageIDs.includes(message.id),
+      ) ||
       !this.retainedRepairRecoveryCurrent(old, recoveryAttempt, recovery)
     )
       throw new Error("Retained repair recovery changed during final native revalidation")

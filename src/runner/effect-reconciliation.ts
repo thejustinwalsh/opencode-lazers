@@ -180,6 +180,14 @@ export class EffectReconciliation {
         effect,
         {
           messageID: payload.messageID,
+          ...(effect.task_id ? { taskID: effect.task_id } : {}),
+          ...(typeof payload.repairID === "string" ? { repairID: payload.repairID } : {}),
+          ...(typeof payload.repairMessageID === "string"
+            ? { repairMessageID: payload.repairMessageID }
+            : {}),
+          ...(typeof payload.continuedFromInputID === "string"
+            ? { continuedFromInputID: payload.continuedFromInputID }
+            : {}),
           reconciled: true,
         },
         fence,
@@ -195,6 +203,7 @@ export class EffectReconciliation {
       ].includes(JSON.parse(effect.receipt ?? "{}").error)
     ) {
       this.store.fenced(this.owner, fence, (db) => {
+        const replacementMessageID = messageID()
         db.query(
           "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
         ).run(
@@ -205,11 +214,17 @@ export class EffectReconciliation {
           effect.id,
         )
         db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
-          messageID(),
+          replacementMessageID,
           effect.attempt_id!,
         )
         this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
           effectID: effect.id,
+          attemptID: effect.attempt_id,
+          sessionID: payload.sessionID,
+          workspace: payload.workspace,
+          previousMessageID: payload.messageID,
+          messageID: replacementMessageID,
+          ...(typeof payload.repairID === "string" ? { repairID: payload.repairID } : {}),
           continuation: "new durable message after native prompt guard",
         })
       })

@@ -189,13 +189,21 @@ export type RetainedRepairRecoverySeed = {
   operationID: string
   attemptID: string
   taskID: string
+  repairMessageID: string
+  predecessorMessageID: string
   failedMessageID: string
-  interruptedInputID: string
+  interruptedInputID?: string
+  lineage:
+    | { kind: "interrupted"; inputID: string; outcome: "interrupted" }
+    | { kind: "unprompted"; inputID: string; outcome: "succeeded" }
+  unpromptedMessageIDs: string[]
   owner: string
+  holdReason: string | null
   taskRevision: number
   planVersion: number
   planRevision: number
-  resumedTransitionID: number
+  resumedTransitionID: number | null
+  reservationTransitionID?: number | null
   blockedTransitionID: number
   cancelledTransitionID: number
   usage: { tokenCount: number | null; toolCount: number; cost: number | null }
