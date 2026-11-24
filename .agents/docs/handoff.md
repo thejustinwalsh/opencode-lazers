@@ -1,3 +1,6 @@
+> Historical snapshot. Current integration and release status is in
+> `.agents/plans/handoff-2026-11-24.md`. Recheck runtime state before acting on any item below.
+
 # Current dogfood handoff
 
 Updated 2026-11-17. The external dogfood driver is now Claude Code; Codex no

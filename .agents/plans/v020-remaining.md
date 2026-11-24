@@ -1,3 +1,6 @@
+> Historical snapshot. Current integration and release status is in
+> `.agents/plans/handoff-2026-11-24.md`. Recheck runtime state before acting on any item below.
+
 # v0.2.0: remaining work
 
 Written 2026-11-21, when the session that drove the release push ran low on budget. Read
