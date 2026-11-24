@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { assertNoNativeBinaries } from "./native-binary-check.ts"
+import { serverAssets, serverEntries } from "./build-server.ts"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
 const [tag, destination] = process.argv.slice(2)
@@ -11,14 +12,8 @@ if (!tag || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag) || !d
 const output = resolve(destination)
 const version = tag.slice(1)
 const runtimeScripts = [
-  "dist/processor.js",
-  "dist/repo-worker.js",
-  "dist/decision-worker.js",
-  "dist/transition-indexes-worker.js",
-  "dist/fallow-worker.js",
-  "dist/fallow-thread.js",
-  "dist/fallow.wasm",
-  "dist/fallow-threads.wasm",
+  ...serverEntries.map(([, file]) => `dist/${file}`),
+  ...serverAssets.map((file) => `dist/${file}`),
 ]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
@@ -43,18 +38,9 @@ try {
       recursive: true,
       filter: (file) => !/\.(?:test|fixture)\.[cm]?[jt]sx?$/.test(basename(file)),
     }),
-    ...[
-      "gui-experimental.cjs",
-      "server.js",
-      "processor.js",
-      "repo-worker.js",
-      "decision-worker.js",
-      "transition-indexes-worker.js",
-      "fallow-worker.js",
-      "fallow-thread.js",
-      "fallow.wasm",
-      "fallow-threads.wasm",
-    ].map((file) => cp(join(root, "dist", file), join(pkg, "dist", file))),
+    ...["dist/gui-experimental.cjs", ...runtimeScripts].map((file) =>
+      cp(join(root, file), join(pkg, file)),
+    ),
     writeFile(
       join(consumer, "package.json"),
       JSON.stringify({ name: "lazers-install-smoke", private: true }),

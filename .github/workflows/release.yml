@@ -32,7 +32,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run verify
       - run: git diff --exit-code
-      - run: bun test src/webgpu src/radar/packaging.test.ts
+      - run: bun run test src/webgpu src/radar/packaging.test.ts scripts/native-binary-check.test.ts
       - name: Build and smoke-install the release package
         env:
           RELEASE_TAG: ${{ inputs.version || github.ref_name }}

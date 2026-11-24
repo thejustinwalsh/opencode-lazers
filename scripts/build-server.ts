@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL("..", import.meta.url))
  * resolution keep one shared copy and native assets keep working. OpenCode then watches a
  * single file, and source edits do not reload live plugins until this build runs.
  */
-const entries = [
+export const serverEntries = [
   ["src/index.ts", "server.js"],
   ["src/context/processor.ts", "processor.js"],
   ["src/context/repo-worker.ts", "repo-worker.js"],
@@ -22,8 +22,10 @@ const entries = [
   ["src/retention/retention-reader-worker.ts", "retention-reader-worker.js"],
 ] as const
 
+export const serverAssets = ["fallow.wasm", "fallow-threads.wasm"] as const
+
 export async function buildServer() {
-  for (const [entry, file] of entries) {
+  for (const [entry, file] of serverEntries) {
     const result = await Bun.build({
       entrypoints: [`${root}${entry}`],
       outdir: `${root}dist`,
@@ -36,7 +38,7 @@ export async function buildServer() {
     if (!result.success) throw new AggregateError(result.logs, `Server build failed: ${entry}`)
   }
   // The fallow worker loads these modules beside itself through wasmURL.
-  for (const module of ["fallow.wasm", "fallow-threads.wasm"])
+  for (const module of serverAssets)
     copyFileSync(`${root}src/audit/wasm/${module}`, `${root}dist/${module}`)
 }
 
