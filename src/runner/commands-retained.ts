@@ -6,7 +6,6 @@ import { existsSync, realpathSync } from "node:fs"
 import { PlanInput } from "./schema.ts"
 import type { PlanRow, NodeRow, AttemptRow } from "./store.ts"
 import { appendRunnerEffectReceipt } from "./store.ts"
-import { RETAINED_REPAIR_FENCE_FAILURE_REASON } from "./interrupted-continuation.ts"
 import { samePhysicalWorkspace } from "./workspace-location.ts"
 import { createRetainedVerification } from "./retained-verification/store.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
@@ -424,6 +423,10 @@ export class CommandsRetained {
     const { command, ownerSession } = ctx
     const retry = command.action === "retry"
     const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
+    const repairReservation = this.store.latestRetainedRepair<{
+      messageID?: unknown
+      previousMessageID?: unknown
+    }>(plan.id, retainedRepairRecovery.taskID)
     const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
       (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
     )
@@ -438,6 +441,11 @@ export class CommandsRetained {
       recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
       recoveryTask.provenance.projectID !== this.projectID ||
       recoveryTask.provenance.projectDirectory !== this.directory ||
+      (retainedRepairRecovery.lineage.kind === "unprompted" &&
+        (typeof repairReservation?.messageID !== "string" ||
+          typeof repairReservation.previousMessageID !== "string" ||
+          repairReservation.messageID !== retainedRepairRecovery.repairMessageID ||
+          repairReservation.previousMessageID !== retainedRepairRecovery.predecessorMessageID)) ||
       this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !== undefined ||
       command.taskID !== retainedRepairRecovery.taskID ||
       command.attemptID !== retainedRepairRecovery.attemptID ||
@@ -461,11 +469,7 @@ export class CommandsRetained {
       .query(
         "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
       )
-      .run(
-        plan.id,
-        RETAINED_REPAIR_FENCE_FAILURE_REASON,
-        retainedRepairRecovery.planVersion + 1,
-      ).changes
+      .run(plan.id, plan.reason, retainedRepairRecovery.planVersion + 1).changes
     if (updatedAttempt !== 1 || updatedPlan !== 1)
       throw new Error("Retained repair recovery reservation changed during atomic admission")
     this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
@@ -475,19 +479,38 @@ export class CommandsRetained {
       budget: null,
       previousMessageID: retainedRepairRecovery.failedMessageID,
       messageID: resumedMessageID,
-      terminalInputID: retainedRepairRecovery.interruptedInputID,
-      terminalOutcome: "interrupted",
-      interruptedInputID: retainedRepairRecovery.interruptedInputID,
-      retainedRepairRecovery: {
-        schema: "lazers-retained-repair-recovery/v1",
-        operationID: retainedRepairRecovery.operationID,
-        failedMessageID: retainedRepairRecovery.failedMessageID,
-        interruptedInputID: retainedRepairRecovery.interruptedInputID,
-        owner: retainedRepairRecovery.owner,
-        failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
-        blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
-        cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
-      },
+      terminalInputID: retainedRepairRecovery.lineage.inputID,
+      terminalOutcome: retainedRepairRecovery.lineage.outcome,
+      ...(retainedRepairRecovery.lineage.kind === "interrupted"
+        ? { interruptedInputID: retainedRepairRecovery.lineage.inputID }
+        : {}),
+      retainedRepairRecovery:
+        retainedRepairRecovery.lineage.kind === "unprompted"
+          ? {
+              schema: "lazers-retained-repair-recovery/v2",
+              preAdmissionFenceFailure: true,
+              operationID: retainedRepairRecovery.operationID,
+              failedMessageID: retainedRepairRecovery.failedMessageID,
+              reservedRepairMessageID: repairReservation!.messageID,
+              predecessorMessageID: repairReservation!.previousMessageID,
+              nativeInputID: retainedRepairRecovery.lineage.inputID,
+              terminalOutcome: retainedRepairRecovery.lineage.outcome,
+              owner: retainedRepairRecovery.owner,
+              failedReservationTransitionID: retainedRepairRecovery.reservationTransitionID,
+              unpromptedMessageIDs: retainedRepairRecovery.unpromptedMessageIDs,
+              blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
+              cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
+            }
+          : {
+              schema: "lazers-retained-repair-recovery/v1",
+              operationID: retainedRepairRecovery.operationID,
+              failedMessageID: retainedRepairRecovery.failedMessageID,
+              interruptedInputID: retainedRepairRecovery.lineage.inputID,
+              owner: retainedRepairRecovery.owner,
+              failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
+              blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
+              cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
+            },
     })
     return {
       status: "retained-repair-recovered",

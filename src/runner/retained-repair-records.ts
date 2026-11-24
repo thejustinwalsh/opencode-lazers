@@ -18,15 +18,22 @@ import type { Dispatch } from "./dispatch.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { RunnerTransitionRecord } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import {
+  retainedRepairPredecessorPromptProven,
+  retainedRepairReservationsRemainUnprompted,
+  traceRetainedRepairReservations,
+} from "./retained-repair-recovery/lineage.ts"
 
 /** The transition events retained-repair lineage and recovery checks read. */
 export const RETAINED_REPAIR_EVENTS = [
   "RETAINED_REPAIR_REQUESTED",
   "ATTEMPT_RESUMED",
+  "PROMPT_NOT_DISPATCHED",
   "WORKER_STOPPED",
   "BLOCKED",
   "CANCEL",
   "CANCEL_REQUESTED",
+  "RECONCILE_REQUESTED",
 ] as const
 /** Transitions per read when the history is walked; a page size, not a limit. */
 const TRANSITION_PAGE = 500
@@ -253,6 +260,8 @@ export class RetainedRepairRecords {
       repair.route === undefined
     )
       return undefined
+    const operationID = repair.operationID
+    const repairMessageID = repair.messageID
     const plan = this.store.plan(attempt.plan_id)
     if (!plan || plan.owner !== repair.owner) return undefined
     const repairRoute = ModelPolicy.safeParse(repair.route)
@@ -300,6 +309,88 @@ export class RetainedRepairRecords {
         (entry) => entry.task_id === attempt.task_id && entry.event === "RETAINED_REPAIR_REQUESTED",
       )
       .at(-1)
+    const unpromptedRecoveryEntry = history.findLast((entry) => {
+      if (entry.task_id !== attempt.task_id || entry.event !== "ATTEMPT_RESUMED") return false
+      const receipt = this.parseTransitionPayload<{
+        retainedRepairRecovery?: Record<string, unknown>
+      }>(entry)
+      const recovery = receipt?.retainedRepairRecovery
+      return (
+        recovery?.schema === "lazers-retained-repair-recovery/v2" &&
+        recovery.operationID === repair.operationID &&
+        recovery.reservedRepairMessageID === repair.messageID
+      )
+    })
+    const unpromptedRecovery = unpromptedRecoveryEntry
+      ? this.parseTransitionPayload<{
+          retainedRepairRecovery?: Record<string, unknown>
+        }>(unpromptedRecoveryEntry)?.retainedRepairRecovery
+      : undefined
+    const unpromptedReservationChainMatches = () => {
+      const failedReservationID = unpromptedRecovery?.failedReservationTransitionID
+      if (
+        !repairTransition ||
+        !unpromptedRecovery ||
+        !Number.isSafeInteger(unpromptedRecovery.blockedTransitionID)
+      )
+        return false
+      const effects = this.store
+        .effects(attempt.plan_id)
+        .filter((effect) => effect.attempt_id === attempt.id)
+      const chain = traceRetainedRepairReservations({
+        operationID,
+        initialMessageID: repairMessageID,
+        attempt,
+        taskID: attempt.task_id,
+        afterTransitionID: repairTransition.id,
+        throughTransitionID: unpromptedRecovery.blockedTransitionID as number,
+        effects,
+        history,
+      })
+      return (
+        chain !== undefined &&
+        chain.transitionID === failedReservationID &&
+        JSON.stringify(chain.messageIDs) ===
+          JSON.stringify(unpromptedRecovery?.unpromptedMessageIDs) &&
+        chain.messageIDs.at(-1) === unpromptedRecovery?.failedMessageID &&
+        retainedRepairReservationsRemainUnprompted(
+          chain.messageIDs,
+          attempt.id,
+          attempt.task_id,
+          effects,
+        )
+      )
+    }
+    if (
+      unpromptedRecovery &&
+      (!repairTransition ||
+        !unpromptedReservationChainMatches() ||
+        !retainedRepairPredecessorPromptProven({
+          taskID: attempt.task_id,
+          projectID: this.projectID,
+          repair: {
+            operationID: repair.operationID,
+            messageID: repair.messageID,
+            previousMessageID: repair.previousMessageID,
+            nativeInputID: admissionInputID,
+            nativeAssignmentID: admissionAssignmentID,
+            sessionID: repair.sessionID,
+            workspace: repair.workspace,
+            workerObservation: repair.workerObservation as string,
+          },
+          repairTransition,
+          attempt,
+          effects: this.store
+            .effects(attempt.plan_id)
+            .filter((effect) => effect.attempt_id === attempt.id),
+          history,
+        }))
+    )
+      return undefined
+    const lineageStartMessageID =
+      typeof unpromptedRecovery?.failedMessageID === "string"
+        ? unpromptedRecovery.failedMessageID
+        : repair.messageID
     const transitions: RetainedRepairContinuationTransition[] = history
       .filter((entry) => entry.task_id === attempt.task_id && entry.event === "ATTEMPT_RESUMED")
       .flatMap((entry) => {
@@ -328,41 +419,62 @@ export class RetainedRepairRecords {
             to?: unknown
             reason?: unknown
           }>(cancelledTransition)
+          const interruptedRecovery =
+            recovery.schema === "lazers-retained-repair-recovery/v1" &&
+            recovery.operationID === repair.operationID &&
+            recovery.owner === repair.owner &&
+            recovery.interruptedInputID === repair.messageID &&
+            Number.isSafeInteger(failedResumeID) &&
+            failedResumeTransition?.event === "ATTEMPT_RESUMED" &&
+            failedResumeTransition.task_id === attempt.task_id &&
+            failedResumeTransition.id > (repairTransition?.id ?? 0) &&
+            failedResume !== undefined &&
+            failedResume.previousMessageID === repair.messageID &&
+            failedResume.messageID === recovery.failedMessageID &&
+            failedResume.terminalInputID === repair.messageID &&
+            failedResume.interruptedInputID === repair.messageID &&
+            failedResume.terminalOutcome === "interrupted" &&
+            failedResume.retainedRepairContinuation === undefined &&
+            failedResume.retainedRepairRecovery === undefined
+          const unpromptedRecoveryProof =
+            recovery.schema === "lazers-retained-repair-recovery/v2" &&
+            recovery.preAdmissionFenceFailure === true &&
+            recovery.operationID === repair.operationID &&
+            recovery.owner === repair.owner &&
+            recovery.reservedRepairMessageID === repair.messageID &&
+            recovery.predecessorMessageID === repair.previousMessageID &&
+            recovery.nativeInputID === admissionInputID &&
+            recovery.terminalOutcome === "succeeded" &&
+            recovery.failedMessageID === receipt.previousMessageID &&
+            receipt.attemptID === attempt.id &&
+            unpromptedReservationChainMatches() &&
+            receipt.terminalOutcome === "succeeded" &&
+            receipt.terminalInputID === admissionInputID &&
+            receipt.interruptedInputID === undefined
           if (
-            recovery.schema !== "lazers-retained-repair-recovery/v1" ||
-            recovery.operationID !== repair.operationID ||
-            recovery.interruptedInputID !== repair.messageID ||
+            (!interruptedRecovery && !unpromptedRecoveryProof) ||
             !repairTransition ||
-            !Number.isSafeInteger(failedResumeID) ||
             !Number.isSafeInteger(blockedID) ||
             !Number.isSafeInteger(cancelledID) ||
-            failedResumeTransition?.event !== "ATTEMPT_RESUMED" ||
-            failedResumeTransition.task_id !== attempt.task_id ||
             blockedTransition?.event !== "BLOCKED" ||
             blockedTransition.task_id !== null ||
             cancelledTransition?.event !== "CANCEL" ||
             cancelledTransition.task_id !== attempt.task_id ||
-            failedResumeTransition.id <= repairTransition.id ||
-            blockedTransition.id <= failedResumeTransition.id ||
+            (failedResumeTransition && blockedTransition.id <= failedResumeTransition.id) ||
+            (unpromptedRecoveryProof &&
+              (blockedTransition.id <= repairTransition.id ||
+                !unpromptedReservationChainMatches())) ||
             cancelledTransition.id <= blockedTransition.id ||
-            failedResume?.attemptID !== attempt.id ||
-            failedResume.previousMessageID !== repair.messageID ||
-            failedResume.messageID !== recovery.failedMessageID ||
-            failedResume.terminalInputID !== repair.messageID ||
-            failedResume.interruptedInputID !== repair.messageID ||
-            failedResume.terminalOutcome !== "interrupted" ||
-            failedResume.retainedRepairContinuation !== undefined ||
-            failedResume.retainedRepairRecovery !== undefined ||
             blocked?.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
             blocked.workerObservation !== undefined ||
-            cancelled?.from !== "running" ||
+            !cancelled ||
+            !["ready", "running"].includes(cancelled.from as string) ||
             cancelled.to !== "cancelled" ||
             cancelled.reason !== null ||
             history.some(
               (candidate) =>
                 candidate.task_id === null &&
                 candidate.event === "CANCEL_REQUESTED" &&
-                repairTransition &&
                 candidate.id > repairTransition.id &&
                 candidate.id < cancelledTransition.id,
             )
@@ -374,7 +486,7 @@ export class RetainedRepairRecords {
     const lineage = resolveRetainedRepairInputLineage({
       operationID: repair.operationID,
       attemptID: attempt.id,
-      originalMessageID: repair.messageID,
+      originalMessageID: lineageStartMessageID,
       assignedMessageID: attempt.message_id,
       owner: repair.owner,
       allowLegacyReceipt: true,
@@ -387,7 +499,12 @@ export class RetainedRepairRecords {
         : undefined
     const nativeAssignmentID =
       lineage.status === "continued"
-        ? currentContinuation?.previousMessageID
+        ? unpromptedRecovery &&
+          currentContinuation?.messageID === attempt.message_id &&
+          isRecord(currentContinuation.retainedRepairRecovery) &&
+          currentContinuation.retainedRepairRecovery.schema === "lazers-retained-repair-recovery/v2"
+          ? admissionAssignmentID
+          : currentContinuation?.previousMessageID
         : admissionAssignmentID
     if (typeof nativeAssignmentID !== "string" || !nativeAssignmentID) return undefined
     return {

@@ -296,6 +296,10 @@ export class WorkerPreparation {
         const personaGuidance = selectedPersona.success
           ? `\n\nSelected ${workerPersonaLabels[selectedPersona.data]} persona (advisory, independent of model/provider):\n${workerPersonaOverlay(selectedPersona.data)}`
           : ""
+        const repairInstruction =
+          retainedRepair?.continued && retainedRepair.terminalOutcome === "interrupted"
+            ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.`
+            : `Repair task ${attempt.task_id}`
         await this.host.prompt({
           sessionID: attempt.session_id,
           id: attempt.message_id,
@@ -304,7 +308,7 @@ export class WorkerPreparation {
           model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           ...(retainedRepair ? { moveIfNeeded: false } : {}),
           text: retainedRepair
-            ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
+            ? `${repairInstruction} Continue in the same retained workspace ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
             : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${this.repairFailureBrief(attempt)}${personaGuidance}`,
         })
         this.receipt(

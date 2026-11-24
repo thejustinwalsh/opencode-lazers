@@ -6,10 +6,7 @@ import { ModelPolicy, PlanInput } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
 import type { PlanRow, AttemptRow, EffectRow } from "./store.ts"
 import type { RetainedRepairPreparation } from "./retained-repair-preparation.ts"
-import {
-  RETAINED_REPAIR_FENCE_FAILURE_REASON,
-  terminalWorkerContinuationProblem as checkTerminalWorkerContinuation,
-} from "./interrupted-continuation.ts"
+import { terminalWorkerContinuationProblem as checkTerminalWorkerContinuation } from "./interrupted-continuation.ts"
 import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
 import { DispatchRouteDecisionSchema } from "../models/dispatch-resolution.ts"
 import type { CommandContext } from "./runtime-helpers.ts"
@@ -273,7 +270,6 @@ export class ContinuationPreparation {
       this.store.nodes(old.id).find((candidate) => candidate.task_id === attempt.task_id)?.state ===
         "cancelled" &&
       old.state === "blocked" &&
-      old.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
       this.store.latestRetainedRepair<{ attemptID?: unknown }>(old.id, attempt.task_id)
         ?.attemptID === attempt.id
     )

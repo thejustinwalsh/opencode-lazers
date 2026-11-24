@@ -22,8 +22,13 @@ import {
   runPlan,
   useRuntimeFixtureCleanup,
 } from "./runtime.fixture.ts"
+import { reproduceUnpromptedRetainedRepairFenceFailure } from "./retained-repair-recovery/fixture.ts"
 
 useRuntimeFixtureCleanup()
+
+type UnpromptedFenceState = Awaited<
+  ReturnType<typeof reproduceUnpromptedRetainedRepairFenceFailure>
+>
 
 test("retained repair carries an owned captured synthetic terminal input through same-worker dispatch", async () => {
   const { f, planID, task, original, artifact, worker } = await acceptedAttemptFixture({
@@ -539,6 +544,258 @@ test("a pre-existing retained-repair fence failure recovers the exact cancelled 
   expect(reopened.store.attempts(planID)).toHaveLength(1)
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(3)
+})
+
+test.each([
+  { name: "initial repair reservation", reconciledReservation: false },
+  { name: "reconciled prompt-guard reservation", reconciledReservation: true },
+])(
+  "an unprompted retained repair survives failed generic recovery and reconciliation with authentic predecessor lineage after $name",
+  async ({ reconciledReservation }) => {
+    const state = await reproduceUnpromptedRetainedRepairFenceFailure({ reconciledReservation })
+    const { f, planID, task, attempt, repair, reopened, failedReservation, worker, artifact } =
+      state
+    const promptsBeforeRecovery = f.events.filter((event) => event.startsWith("prompt:"))
+    expect(promptsBeforeRecovery).toHaveLength(1)
+    expect(worker.messages.some((message) => message.id === failedReservation.message_id)).toBe(
+      false,
+    )
+
+    const generic = recoveryCommand(state, "generic-resume-without-attempt")
+    delete (generic as Partial<typeof generic>).attemptID
+    await expect(reopened.runtime.command(generic, "owner")).rejects.toThrow()
+    await expect(
+      reopened.runtime.command(
+        {
+          requestID: "non-owner-cancel-after-fence",
+          planID,
+          action: "cancel",
+          reason: "This caller cannot cancel the retained repair.",
+        },
+        "not-owner",
+      ),
+    ).rejects.toThrow()
+
+    await reopened.runtime.command(
+      { requestID: "reconcile-cancelled-reservation", planID, action: "reconcile" },
+      "owner",
+    )
+    await reopened.runtime.tick()
+    expect(reopened.store.plan(planID)).toMatchObject({
+      state: "blocked",
+      reason: `Task ${task.id}: cancelled`,
+    })
+    expect(reopened.store.latestTransition(planID, null, "RECONCILE_REQUESTED")).toBeDefined()
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+    const promptNotDispatched = reopened.store
+      .activity(planID, task.id)
+      .findLast((entry) => entry.event === "PROMPT_NOT_DISPATCHED")
+
+    const recovered = await reopened.runtime.command(
+      recoveryCommand(state, "recover-unprompted-retained-repair"),
+      "owner",
+    )
+    expect(recovered).toMatchObject({ status: "retained-repair-recovered", attemptID: attempt.id })
+    const resumed = reopened.store.attempts(planID)[0]!
+    expect(reopened.store.attempts(planID)).toHaveLength(1)
+    expect(resumed).toMatchObject({
+      id: attempt.id,
+      state: "preparing",
+      session_id: attempt.session_id,
+      workspace: attempt.workspace,
+      base_commit: attempt.base_commit,
+      policy: attempt.policy,
+      artifact,
+      token_count: attempt.token_count,
+      tool_count: attempt.tool_count,
+      cost: attempt.cost,
+    })
+    const recoveryEvent = reopened.store
+      .activity(planID, task.id)
+      .filter((entry) => entry.event === "ATTEMPT_RESUMED")
+      .at(-1)!
+    expect(JSON.parse(recoveryEvent.payload)).toMatchObject({
+      attemptID: attempt.id,
+      previousMessageID: failedReservation.message_id,
+      messageID: resumed.message_id,
+      terminalInputID: repair.nativeInputID,
+      terminalOutcome: "succeeded",
+      retainedRepairRecovery: {
+        schema: "lazers-retained-repair-recovery/v2",
+        preAdmissionFenceFailure: true,
+        operationID: repair.operationID,
+        reservedRepairMessageID: repair.messageID,
+        predecessorMessageID: repair.previousMessageID,
+        nativeInputID: repair.nativeInputID,
+        terminalOutcome: "succeeded",
+        failedReservationTransitionID: promptNotDispatched?.id ?? null,
+        unpromptedMessageIDs: promptNotDispatched
+          ? [repair.messageID, failedReservation.message_id]
+          : [repair.messageID],
+      },
+      usageRetained: true,
+    })
+
+    await reopened.runtime.tick()
+    const prompt = reopened.store.effects(planID).find((effect) => {
+      if (effect.kind !== "prompt") return false
+      return (
+        (JSON.parse(effect.payload) as { messageID?: unknown }).messageID === resumed.message_id
+      )
+    })!
+    expect(prompt.state).toBe("completed")
+    expect(worker.messages.filter((message) => message.id === resumed.message_id)).toHaveLength(1)
+    expect(JSON.parse(prompt.receipt!)).toMatchObject({
+      messageID: resumed.message_id,
+      taskID: task.id,
+      repairID: repair.operationID,
+      repairMessageID: repair.messageID,
+      continuedFromInputID: repair.nativeInputID,
+    })
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+    await drive(reopened.runtime, 10)
+    expect(reopened.store.attempts(planID)).toHaveLength(1)
+    expect(reopened.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      session_id: attempt.session_id,
+      workspace: attempt.workspace,
+      token_count: attempt.token_count,
+      tool_count: attempt.tool_count,
+      cost: attempt.cost,
+    })
+    expect(
+      reopened.store.effects(planID).find((effect) => effect.kind === "verify:content"),
+    ).toMatchObject({ state: "completed" })
+  },
+)
+
+test.each([
+  {
+    name: "owner authority",
+    mutate: (state: UnpromptedFenceState) => {
+      const transition = state.reopened.store
+        .activity(state.planID, state.task.id)
+        .findLast((entry) => entry.event === "RETAINED_REPAIR_REQUESTED")!
+      const payload = JSON.parse(transition.payload) as Record<string, unknown>
+      payload.owner = "different-owner"
+      state.reopened.store.atomic((db) =>
+        db
+          .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+          .run(JSON.stringify(payload), transition.id),
+      )
+    },
+  },
+  {
+    name: "repair artifact",
+    mutate: (state: UnpromptedFenceState) => {
+      const transition = state.reopened.store
+        .activity(state.planID, state.task.id)
+        .findLast((entry) => entry.event === "RETAINED_REPAIR_REQUESTED")!
+      const payload = JSON.parse(transition.payload) as Record<string, unknown>
+      payload.artifact = "f".repeat(40)
+      state.reopened.store.atomic((db) =>
+        db
+          .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+          .run(JSON.stringify(payload), transition.id),
+      )
+    },
+  },
+  {
+    name: "native route",
+    mutate: (state: UnpromptedFenceState) => {
+      state.worker.model = { providerID: "openai", id: "changed-recovery-route" }
+    },
+  },
+  {
+    name: "native workspace",
+    mutate: (state: UnpromptedFenceState) => {
+      state.worker.directory = `${state.attempt.workspace}-changed`
+    },
+  },
+  {
+    name: "admitted reservation input",
+    mutate: (state: UnpromptedFenceState) => {
+      state.worker.messages.push({
+        id: state.repair.messageID,
+        text: "This reservation reached the worker.",
+      })
+    },
+  },
+  {
+    name: "live worker input",
+    mutate: (state: UnpromptedFenceState) => {
+      state.worker.pendingInput = true
+    },
+  },
+  {
+    name: "uncertain prompt effect",
+    mutate: (state: UnpromptedFenceState) => {
+      const effect = state.reopened.store
+        .effects(state.planID)
+        .find((candidate) => candidate.kind === "prompt")!
+      state.reopened.store.atomic((db) =>
+        db.query("UPDATE runner_effects SET state='uncertain' WHERE id=?").run(effect.id),
+      )
+    },
+  },
+  {
+    name: "unproven prompt-guard receipt",
+    reconciledReservation: true,
+    mutate: (state: UnpromptedFenceState) => {
+      const effect = state.reopened.store.effects(state.planID).find((candidate) => {
+        if (candidate.kind !== "prompt") return false
+        return (
+          (JSON.parse(candidate.payload) as { messageID?: unknown }).messageID ===
+          state.repair.messageID
+        )
+      })!
+      state.reopened.store.atomic((db) =>
+        db
+          .query("UPDATE runner_effects SET receipt=? WHERE id=?")
+          .run(JSON.stringify({ notSent: true, reason: "Unverified non-dispatch" }), effect.id),
+      )
+    },
+  },
+])(
+  "unprompted retained-repair recovery rejects changed $name evidence",
+  async ({ mutate, reconciledReservation = false }) => {
+    const state = await reproduceUnpromptedRetainedRepairFenceFailure({ reconciledReservation })
+    const before = recoveryAdmissionSnapshot(state)
+    mutate(state)
+    await expect(
+      state.reopened.runtime.command(
+        recoveryCommand(state, `reject-unprompted-${crypto.randomUUID()}`),
+        "owner",
+      ),
+    ).rejects.toThrow()
+    expectNoRecoveryAdmission(state, before)
+  },
+)
+
+test("an owner cancellation remains nonrecoverable for an unprompted retained repair", async () => {
+  const state = await reproduceUnpromptedRetainedRepairFenceFailure()
+  await state.reopened.runtime.command(
+    {
+      requestID: "cancel-unprompted-retained-repair",
+      planID: state.planID,
+      action: "cancel",
+      reason: "Do not continue this retained repair.",
+    },
+    "owner",
+  )
+  expect(state.reopened.store.plan(state.planID)?.state).toBe("cancelling")
+  expect(
+    state.reopened.store.latestTransition(state.planID, null, "CANCEL_REQUESTED"),
+  ).toBeDefined()
+  const beforeResume = recoveryAdmissionSnapshot(state)
+  await expect(
+    state.reopened.runtime.command(
+      recoveryCommand(state, "resume-after-unprompted-owner-cancel"),
+      "owner",
+    ),
+  ).rejects.toThrow()
+  expect(state.reopened.store.plan(state.planID)?.state).toBe("cancelling")
+  expectNoRecoveryAdmission(state, beforeResume)
 })
 
 test("retained repair recovery preserves dirty progress that changes during native revalidation", async () => {
