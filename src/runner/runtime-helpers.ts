@@ -191,6 +191,7 @@ export type RetainedRepairRecoverySeed = {
   taskID: string
   repairMessageID: string
   predecessorMessageID: string
+  repairAuthor: string
   failedMessageID: string
   interruptedInputID?: string
   lineage:

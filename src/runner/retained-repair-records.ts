@@ -23,6 +23,11 @@ import {
   retainedRepairReservationsRemainUnprompted,
   traceRetainedRepairReservations,
 } from "./retained-repair-recovery/lineage.ts"
+import {
+  currentRetainedRepairAuthorityMatches,
+  hasRecordedRetainedRepairAuthor,
+  retainedRepairAuthorMatchesHistory,
+} from "./retained-repair-recovery/authority.ts"
 
 /** The transition events retained-repair lineage and recovery checks read. */
 export const RETAINED_REPAIR_EVENTS = [
@@ -34,8 +39,12 @@ export const RETAINED_REPAIR_EVENTS = [
   "CANCEL",
   "CANCEL_REQUESTED",
   "RECONCILE_REQUESTED",
+  "OWNER_ADOPTED",
+  "OWNER_CONTINUED",
+  "OWNER_CONTINUATION_ROLLED_BACK",
+  "OWNER_REASSIGNED",
 ] as const
-/** Transitions per read when the history is walked; a page size, not a limit. */
+/** Transitions per read when repair and owner history is walked; a page size, not a limit. */
 const TRANSITION_PAGE = 500
 
 /** What `RetainedRepairRecords` reads from the coordinator and its sibling modules; calls are lazy arrows. */
@@ -249,8 +258,7 @@ export class RetainedRepairRecords {
       !repair.previousMessageID ||
       typeof repair.messageID !== "string" ||
       !repair.messageID ||
-      typeof repair.owner !== "string" ||
-      !repair.owner.trim() ||
+      !hasRecordedRetainedRepairAuthor(repair.owner) ||
       typeof repair.sessionID !== "string" ||
       typeof repair.workspace !== "string" ||
       typeof repair.defect !== "string" ||
@@ -263,7 +271,24 @@ export class RetainedRepairRecords {
     const operationID = repair.operationID
     const repairMessageID = repair.messageID
     const plan = this.store.plan(attempt.plan_id)
-    if (!plan || plan.owner !== repair.owner) return undefined
+    if (!plan) return undefined
+    const history = this.transitionHistory(attempt.plan_id, attempt.task_id)
+    const repairTransition = history.findLast(
+      (entry) =>
+        entry.task_id === attempt.task_id &&
+        entry.event === "RETAINED_REPAIR_REQUESTED" &&
+        this.parseTransitionPayload<{ operationID?: unknown }>(entry)?.operationID === operationID,
+    )
+    if (
+      !repairTransition ||
+      !retainedRepairAuthorMatchesHistory({
+        author: repair.owner,
+        currentOwnerID: plan.owner,
+        repairTransition,
+        history,
+      })
+    )
+      return undefined
     const repairRoute = ModelPolicy.safeParse(repair.route)
     const attemptRoute = this.retainedAttemptModel(plan, attempt)
     if (!repairRoute.success || !attemptRoute || !sameModelSnapshot(repairRoute.data, attemptRoute))
@@ -303,12 +328,6 @@ export class RetainedRepairRecords {
       )
         return undefined
     }
-    const history = this.transitionHistory(attempt.plan_id, attempt.task_id)
-    const repairTransition = history
-      .filter(
-        (entry) => entry.task_id === attempt.task_id && entry.event === "RETAINED_REPAIR_REQUESTED",
-      )
-      .at(-1)
     const unpromptedRecoveryEntry = history.findLast((entry) => {
       if (entry.task_id !== attempt.task_id || entry.event !== "ATTEMPT_RESUMED") return false
       const receipt = this.parseTransitionPayload<{
@@ -559,13 +578,14 @@ export class RetainedRepairRecords {
     attempt: AttemptRow,
     repair: RetainedRepairRecord,
   ) {
-    const current = () => {
+    const current = (expectedOwnerID?: string) => {
       const latestPlan = this.store.plan(plan.id)
       const latestAttempt = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
       const latestNode = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
       const latestRepair = this.retainedRepairForAttempt(attempt)
       return Boolean(
         ["running", "blocked"].includes(latestPlan?.state ?? "") &&
+        (expectedOwnerID === undefined || latestPlan?.owner === expectedOwnerID) &&
         latestAttempt?.state === "preparing" &&
         latestAttempt.message_id === attempt.message_id &&
         latestAttempt.session_id === attempt.session_id &&
@@ -581,9 +601,21 @@ export class RetainedRepairRecords {
     const model = ModelPolicy.safeParse(repair.route)
     if (!model.success) return false
     await this.host.waitForSession(attempt.session_id)
-    // Owner first, then one worker read: the freshest observation is the one that is validated.
-    const owner = await this.host.session(repair.owner)
-    if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
+    const currentPlan = this.store.plan(plan.id)
+    if (!currentPlan || !current(currentPlan.owner)) return false
+    // The live plan owner authorizes the prompt; repair.owner remains historical attribution.
+    const owner = await this.host.session(currentPlan.owner)
+    if (
+      !this.validArchitect(owner) ||
+      !currentRetainedRepairAuthorityMatches({
+        callerID: currentPlan.owner,
+        planOwnerID: currentPlan.owner,
+        ownerSession: owner,
+        projectID: this.projectID,
+      }) ||
+      !current(currentPlan.owner)
+    )
+      return false
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const expectedInputID = repair.nativeInputID
     const expectedOutcome = repair.continued ? repair.terminalOutcome! : "succeeded"
@@ -600,7 +632,7 @@ export class RetainedRepairRecords {
       ) ||
       observed?.messages.some((message) => message.id === attempt.message_id) ||
       !observed ||
-      !current()
+      !current(currentPlan.owner)
     )
       return false
     return this.preparationAllowed(attempt)
