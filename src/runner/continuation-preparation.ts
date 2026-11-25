@@ -7,7 +7,6 @@ import type { CommandInput as PlanCommand } from "./schema.ts"
 import type { PlanRow, AttemptRow, EffectRow } from "./store.ts"
 import type { RetainedRepairPreparation } from "./retained-repair-preparation.ts"
 import { terminalWorkerContinuationProblem as checkTerminalWorkerContinuation } from "./interrupted-continuation.ts"
-import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
 import { DispatchRouteDecisionSchema } from "../models/dispatch-resolution.ts"
 import type { CommandContext } from "./runtime-helpers.ts"
 import type { ArchitectOwnership } from "./architect-ownership.ts"
@@ -15,6 +14,7 @@ import type { Dispatch } from "./dispatch.ts"
 import type { RetainedRepairRecords } from "./retained-repair-records.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import { terminalWorkerHoldForContinuation } from "./terminal-worker-hold.ts"
 
 /** What `ContinuationPreparation` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type ContinuationPreparationDeps = {
@@ -87,11 +87,14 @@ export class ContinuationPreparation {
     const stopObservation = taskID
       ? this.store.latestTransition<Record<string, unknown>>(plan.id, taskID, "WORKER_STOPPED")
       : undefined
-    const blockedObservation = this.store.latestTransition<{ workerObservation?: unknown }>(
-      plan.id,
-      null,
-      "BLOCKED",
-    )?.workerObservation
+    const planHoldObservation = terminalWorkerHoldForContinuation(
+      this.store,
+      plan,
+      node,
+      attempt,
+      worker?.turn?.inputID,
+      this.matchesWorkerInput,
+    )
     let continuationPlan = plan
     if (attempt) {
       try {
@@ -112,10 +115,6 @@ export class ContinuationPreparation {
         // The retained attempt remains fail-closed if its route snapshot is malformed.
       }
     }
-    const planHoldObservation =
-      typeof blockedObservation === "object" && blockedObservation !== null
-        ? (blockedObservation as TerminalWorkerHold)
-        : undefined
     const effects = this.store.effects(plan.id)
     let taskCurrent = false
     if (attempt) {
