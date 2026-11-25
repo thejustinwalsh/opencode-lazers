@@ -87,7 +87,14 @@ export class ContinuationPreparation {
     const stopObservation = taskID
       ? this.store.latestTransition<Record<string, unknown>>(plan.id, taskID, "WORKER_STOPPED")
       : undefined
-    const planHoldObservation = terminalWorkerHoldForContinuation(this.store, plan, node, attempt)
+    const planHoldObservation = terminalWorkerHoldForContinuation(
+      this.store,
+      plan,
+      node,
+      attempt,
+      worker?.turn?.inputID,
+      this.matchesWorkerInput,
+    )
     let continuationPlan = plan
     if (attempt) {
       try {

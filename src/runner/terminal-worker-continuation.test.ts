@@ -1,12 +1,16 @@
 import { expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import type { AttemptRow } from "./store.ts"
 import { meterReads } from "./read-meter.fixture.ts"
 import {
   drive,
   fixture,
+  heldReviewInputFixture,
   holdFailedAttempt,
   registeredPlanCommand,
+  reviewInputCommand,
+  runPlan,
   useRuntimeFixtureCleanup,
 } from "./runtime.fixture.ts"
 
@@ -18,6 +22,16 @@ async function reconciledFailedTask() {
   const { planID, attempt, worker } = await holdFailedAttempt(f)
   const originalMessageID = attempt.message_id
 
+  await reconcileAndRehold(f, command, planID, attempt)
+  return { f, command, planID, attempt, worker, originalMessageID }
+}
+
+async function reconcileAndRehold(
+  f: ReturnType<typeof fixture>,
+  command: Awaited<ReturnType<typeof registeredPlanCommand>>,
+  planID: string,
+  attempt: AttemptRow,
+) {
   await command.execute({
     requestID: "reconcile-failed-terminal-worker",
     planID,
@@ -33,8 +47,58 @@ async function reconciledFailedTask() {
   expect(latestBlocked?.reason).toContain(`Task ${attempt.task_id}:`)
   expect(latestBlocked).not.toHaveProperty("workerObservation")
   expect(f.store.plan(planID)?.state).toBe("blocked")
+}
 
-  return { f, command, planID, attempt, worker, originalMessageID }
+async function reconciledSteeringFailedTask() {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const command = await registeredPlanCommand(f.runtime)
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  const inputID = "msg_owner_steering_after_assignment"
+  const steeringMessage = {
+    id: inputID,
+    type: "synthetic",
+    time: { created: Date.now() },
+    text: "Continue the same worker with this correction.",
+  }
+  worker.messages.push(steeringMessage)
+  f.runtime.progress.reconcileMessages(worker.id, worker.messages)
+  worker.busy = false
+  worker.outcome = "failed"
+  worker.turn = { inputID, state: "completed" }
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: attempt.id, state: "failed" })
+
+  await reconcileAndRehold(f, command, planID, attempt)
+  return { f, command, planID, attempt, worker, inputID }
+}
+
+async function reconciledReviewAliasFailedTask() {
+  const { f, attempt, worker, reviewInputID } = await heldReviewInputFixture()
+  const command = await registeredPlanCommand(f.runtime)
+  await f.runtime.command(reviewInputCommand(f, attempt, reviewInputID), "owner")
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+
+  worker.outcome = "failed"
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+    id: attempt.id,
+    state: "failed",
+  })
+  await reconcileAndRehold(f, command, f.receipt.planID, attempt)
+  return {
+    f,
+    command,
+    planID: f.receipt.planID,
+    attempt,
+    worker,
+    inputID: reviewInputID,
+  }
 }
 
 test("public reconcile and scheduler rehold retain the exact failed worker for explicit resume", async () => {
@@ -89,6 +153,50 @@ test("public reconcile and scheduler rehold retain the exact failed worker for e
     usageRetained: true,
   })
 })
+
+test.each([
+  ["captured native steering", reconciledSteeringFailedTask],
+  ["owner-reconciled review alias", reconciledReviewAliasFailedTask],
+] as const)(
+  "public reconcile and resume accept %s as the exact input lineage",
+  async (_, setup) => {
+    const { f, command, planID, attempt, inputID } = await setup()
+    expect(inputID).not.toBe(attempt.message_id)
+    const editedPath = join(attempt.workspace, "a.txt")
+    writeFileSync(editedPath, "retained authorized-input edit")
+
+    const resumed = await command.execute({
+      requestID: `resume-reconciled-${inputID}`,
+      planID,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue the same retained worker from its authorized native input",
+    })
+
+    expect(JSON.parse(String(resumed.content))).toMatchObject({ status: "resuming" })
+    expect(f.store.attempts(planID)).toHaveLength(1)
+    expect(f.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      state: "preparing",
+      session_id: attempt.session_id,
+      workspace: attempt.workspace,
+    })
+    expect(f.store.attempts(planID)[0]?.message_id).not.toBe(attempt.message_id)
+    expect(readFileSync(editedPath, "utf8")).toBe("retained authorized-input edit")
+    expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+    const resumedEvent = f.store
+      .activity(planID, attempt.task_id)
+      .find((entry) => entry.event === "ATTEMPT_RESUMED")!
+    expect(JSON.parse(resumedEvent.payload)).toMatchObject({
+      attemptID: attempt.id,
+      previousMessageID: attempt.message_id,
+      terminalInputID: inputID,
+      terminalOutcome: "failed",
+      usageRetained: true,
+    })
+  },
+)
 
 test.each(["unrelated-hold", "stale-native-input", "stale-terminal-observation"] as const)(
   "reconciled failed-worker continuation rejects %s",

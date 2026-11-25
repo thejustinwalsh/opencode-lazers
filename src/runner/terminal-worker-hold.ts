@@ -25,6 +25,8 @@ export function terminalWorkerHoldForContinuation(
   plan: PlanRow,
   node: NodeRow | undefined,
   attempt: AttemptRow | undefined,
+  inputID: string | null | undefined,
+  matchesWorkerInput: (attempt: AttemptRow, inputID: string | null | undefined) => boolean,
 ): TerminalWorkerHold | undefined {
   const { latestBlocked, latestReconcileID } = store.read((db) => {
     const latestBlocked = db
@@ -52,6 +54,8 @@ export function terminalWorkerHoldForContinuation(
   if (
     !node ||
     !attempt ||
+    !inputID ||
+    !matchesWorkerInput(attempt, inputID) ||
     plan.state !== "blocked" ||
     plan.artifact !== null ||
     node.task_id !== attempt.task_id ||
@@ -94,7 +98,7 @@ export function terminalWorkerHoldForContinuation(
         attempt.id,
         attempt.session_id,
         attempt.workspace,
-        attempt.message_id,
+        inputID,
         latestReconcileID,
         attempt.id,
         attempt.task_id,
