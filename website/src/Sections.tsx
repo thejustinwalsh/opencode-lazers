@@ -1304,8 +1304,8 @@ export function Install() {
           <a href={links.firstTask} {...stylex.props(in_.bigLink, t.inkLink)}>
             Your first task
           </a>
-          <a href={links.releases} {...stylex.props(in_.bigLink, t.inkLink)}>
-            Releases
+          <a href={links.npm} {...stylex.props(in_.bigLink, t.inkLink)}>
+            npm package
           </a>
         </nav>
       </div>
@@ -1380,8 +1380,8 @@ export function Footer() {
           </a>
         </nav>
         <p {...stylex.props(ft.note)}>
-          v0.1.0 &middot; Built for OpenCode Desktop 2.2.6 &middot; Runs inside OpenCode with no
-          separate service.
+          v0.2.0 &middot; Built for OpenCode Desktop &middot; Runs inside OpenCode with no separate
+          service.
         </p>
       </div>
     </footer>
