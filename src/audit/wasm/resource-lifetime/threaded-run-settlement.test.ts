@@ -7,7 +7,8 @@ test("success and helper-start failure settle memory and workers before the next
   const root = makeFixture()
   const pool = new ThreadPool()
   const trackMemory = createSharedMemoryTracker()
-  const aliveAtCreation: number[] = []
+  const aliveAfterRun: number[] = []
+  const snapshots: ReturnType<typeof trackMemory.snapshot>[] = []
 
   try {
     for (const failAfterSpawn of [false, true, false, true]) {
@@ -18,9 +19,7 @@ test("success and helper-start failure settle memory and workers before the next
           {
             maxThreads: 2,
             threadPool: pool,
-            onMemory: (memory) => {
-              aliveAtCreation.push(trackMemory(memory))
-            },
+            onMemory: (memory) => trackMemory.track(memory),
             onSpawn: (granted) => {
               if (failAfterSpawn && granted) throw new Error("injected helper-start failure")
             },
@@ -34,11 +33,17 @@ test("success and helper-start failure settle memory and workers before the next
       }
 
       await pool.settled()
-      await Bun.sleep(0)
+      // Let weak-reachability and any delayed finalizer callbacks settle after the run returns.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const snapshot = trackMemory.snapshot()
+      aliveAfterRun.push(snapshot.live)
+      snapshots.push(snapshot)
       expect(pool.liveCount).toBeLessThanOrEqual(2)
+      // End WeakRef.deref's temporary keep-alive window before starting another run.
+      await new Promise<void>((resolve) => setImmediate(resolve))
     }
 
-    expect(Math.max(...aliveAtCreation)).toBeLessThanOrEqual(1)
+    expect(Math.max(...aliveAfterRun), JSON.stringify(snapshots)).toBeLessThanOrEqual(1)
     expect(pool.reused).toBeGreaterThan(0)
   } finally {
     await pool.terminateAll()

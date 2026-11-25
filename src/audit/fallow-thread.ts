@@ -1,6 +1,6 @@
 import { parentPort } from "node:worker_threads"
 import { hostImports, StdoutBuffer, type ThreadStart } from "./fallow-wasi.ts"
-import { releaseFallowImports } from "./fallow-wasi-lifecycle.ts"
+import { releaseFallowImports, releaseFallowWasiMemory } from "./fallow-wasi-lifecycle.ts"
 
 /**
  * A helper thread of the threaded Fallow module: one rayon pool worker. For each run it is sent,
@@ -48,6 +48,7 @@ function runThread(start: ThreadStart): boolean {
     // only the outer map) so they cannot pin the shared memory between helper runs.
     releaseFallowImports(imports)
     if (host) releaseFallowImports(host.imports)
+    releaseFallowWasiMemory(host?.wasi)
     instance = undefined
     sinks.out.take()
     sinks.err.length = 0
