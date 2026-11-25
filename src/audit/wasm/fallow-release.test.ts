@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
-import { makeFixture, runOp, testThreadPool } from "./test-support.ts"
+import { makeFixture, threadedWasmModule } from "./test-support.ts"
+import { runFallowModule, ThreadPool } from "../fallow-wasi.ts"
+const testThreadPool = new ThreadPool()
 
 /**
  * Each threaded run declares a 4 GiB shared WebAssembly.Memory. Nothing frees it but the
@@ -13,7 +15,10 @@ let dir: string
 beforeAll(() => {
   dir = makeFixture()
 })
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterAll(async () => {
+  await testThreadPool.terminateAll()
+  rmSync(dir, { recursive: true, force: true })
+})
 
 test("repeated threaded runs in one process do not accumulate shared memories", async () => {
   const reusedBefore = testThreadPool.reused
@@ -22,17 +27,17 @@ test("repeated threaded runs in one process do not accumulate shared memories", 
   const runs = 8
   {
     for (let i = 0; i < runs; i++) {
-      runOp(
-        "health",
-        dir,
-        {},
+      runFallowModule(
+        threadedWasmModule,
+        { op: "health", root: dir, options: { threads: 2 } },
         {
+          maxThreads: 2,
+          threadPool: testThreadPool,
           onMemory: (memory) => {
             aliveAtCreation.push(memories.filter((ref) => ref.deref() !== undefined).length)
             memories.push(new WeakRef(memory))
           },
         },
-        "threads",
       )
       // Let the engine drop objects kept alive for the current turn, and the helpers rejoin.
       await testThreadPool.settled()

@@ -8,33 +8,27 @@ import {
   readlinkSync,
   realpathSync,
   lstatSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { MAX_FALLOW_THREADS, type GitCall, type RunOptions } from "../fallow-wasi.ts"
+import { runDirectFallowModule } from "./resource-lifetime/direct-analysis.ts"
+import { currentDirectAnalysisTestLifetime } from "./resource-lifetime/direct-analysis-test-context.ts"
 import {
-  MAX_FALLOW_THREADS,
-  runFallowModule,
-  ThreadPool,
-  type GitCall,
-  type RunOptions,
-} from "../fallow-wasi.ts"
+  closeDirectAnalysisScope,
+  openDirectAnalysisScope,
+} from "./resource-lifetime/direct-analysis-scope.ts"
 
 export const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
-const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
+export const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
 export const wasmModule = new WebAssembly.Module(wasmBytes)
 export const threadedWasmModule = new WebAssembly.Module(
   readFileSync(new URL("./fallow-threads.wasm", import.meta.url)),
 )
-
-/**
- * One helper-thread pool per test process, shared by every threaded run in every file, so a
- * suite starts the helpers once instead of two Bun workers per run. The linear memory is not
- * shared: a run's memory is released when the run returns (see `runFallowModule`).
- */
-export const testThreadPool = new ThreadPool()
 
 /** The shipped modules: one thread, and the threaded build run with `MAX_FALLOW_THREADS`. */
 export const moduleKinds = ["single", "threads"] as const
@@ -49,30 +43,57 @@ export function runOp(
   extra: Record<string, unknown> = {},
   options: RunOptions = {},
   kind: ModuleKind = "single",
-): OpResult {
-  const git: GitCall[] = []
-  const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
-  const outcome = runFallowModule(
-    kind === "threads" ? threadedWasmModule : wasmModule,
-    {
-      op,
-      root,
-      options: { threads, explain: true, css: true, cache: options.cache === true },
-      ...extra,
-    },
-    {
-      maxThreads: threads,
-      threadPool: testThreadPool,
-      ...options,
-      onGit: (call) => (git.push(call), options.onGit?.(call)),
-    },
-  )
-  const parsed = JSON.parse(outcome.stdout) as {
-    report?: Record<string, any>
-    error?: { code: string; message: string }
-  }
-  if (parsed.error) throw new Error(`${parsed.error.code}: ${parsed.error.message}`)
-  return { report: parsed.report ?? {}, git, stderr: outcome.stderr }
+): Promise<OpResult> {
+  const testLifetime = currentDirectAnalysisTestLifetime()
+  const completion = (async () => {
+    testLifetime?.assertActive()
+    const git: GitCall[] = []
+    const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
+    const directCompletion = runDirectFallowModule(
+      kind === "threads" ? threadedWasmModule : wasmModule,
+      {
+        op,
+        root,
+        options: { threads, explain: true, css: true, cache: options.cache === true },
+        ...extra,
+      },
+      {
+        maxThreads: threads,
+        ...options,
+        onGit: (call) => (git.push(call), options.onGit?.(call)),
+      },
+    )
+    const outcome = testLifetime
+      ? await testLifetime.waitFor(directCompletion)
+      : await directCompletion
+    const parsed = JSON.parse(outcome.stdout) as {
+      report?: Record<string, any>
+      error?: { code: string; message: string }
+    }
+    if (parsed.error) throw new Error(`${parsed.error.code}: ${parsed.error.message}`)
+    return { report: parsed.report ?? {}, git, stderr: outcome.stderr }
+  })()
+  void completion.catch(() => {})
+  return completion
+}
+
+/** Error code of a request that must fail. */
+export function errorCode(
+  op: string,
+  root: string,
+  extra: Record<string, unknown> = {},
+): Promise<string | undefined> {
+  const testLifetime = currentDirectAnalysisTestLifetime()
+  const completion = (async () => {
+    testLifetime?.assertActive()
+    const directCompletion = runDirectFallowModule(wasmModule, { op, root, ...extra })
+    const outcome = testLifetime
+      ? await testLifetime.waitFor(directCompletion)
+      : await directCompletion
+    return (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code
+  })()
+  void completion.catch(() => {})
+  return completion
 }
 
 export function trackedSources(root: string): string[] {
@@ -127,7 +148,7 @@ ${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k
 }
 `
 
-const fixtureFiles: Record<string, string> = {
+export const fixtureFiles: Record<string, string> = {
   "package.json": JSON.stringify({
     name: "fixture",
     type: "module",
@@ -178,5 +199,12 @@ export function makeFixture(extra: Record<string, string> = {}): string {
   git("init", "-q", "-b", "main")
   git("add", ".")
   git("commit", "-q", "-m", "fixture")
+  openDirectAnalysisScope(dir)
   return dir
+}
+
+/** Stop and drain direct analyses before removing a fixture used by timed-out test bodies. */
+export async function disposeFixture(dir: string): Promise<void> {
+  await closeDirectAnalysisScope(dir)
+  rmSync(dir, { recursive: true, force: true })
 }
