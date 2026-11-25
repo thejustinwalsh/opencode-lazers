@@ -1,16 +1,15 @@
 import { expect, test } from "bun:test"
 import { fileURLToPath } from "node:url"
+import { runOwnedTestProcess } from "../owned-test-process.ts"
 
 test("repeated production analyses reuse a retained helper pool", async () => {
   const script = fileURLToPath(new URL("./reusable-helper-pool-probe.ts", import.meta.url))
-  const child = Bun.spawn([process.execPath, script], { stdout: "pipe", stderr: "pipe" })
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ])
+  const { stdout, stderr, exitCode } = await runOwnedTestProcess([process.execPath, script], {
+    timeoutMs: 180_000,
+    forwardOutput: false,
+  })
 
-  expect(code, stderr).toBe(0)
+  expect(exitCode, `${stdout}\n${stderr}`).toBe(0)
   const result = JSON.parse(stdout.trim()) as {
     runs: number
     createdWhileRetained: number

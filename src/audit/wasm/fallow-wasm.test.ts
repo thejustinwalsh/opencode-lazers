@@ -15,6 +15,7 @@ import {
   closeOutstandingDirectAnalysisTestLifetimes,
   createDirectAnalysisTestRegistrar,
 } from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+import { runOwnedTestProcess } from "./owned-test-process.ts"
 
 afterEach(closeOutstandingDirectAnalysisTestLifetimes)
 const test = createDirectAnalysisTestRegistrar(bunTest)
@@ -222,14 +223,10 @@ describe("fallow-threads.wasm", () => {
 
   test("terminating the analysis worker leaves no helper alive: the process exits on its own", async () => {
     const script = join(import.meta.dir, "terminate-probe.ts")
-    const child = Bun.spawn([process.execPath, script, repoRoot], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const result = await runOwnedTestProcess([process.execPath, script, repoRoot], {
+      timeoutMs: 60_000,
     })
-    const timeout = setTimeout(() => child.kill(), 60_000)
-    const code = await child.exited
-    clearTimeout(timeout)
-    expect(await new Response(child.stdout).text()).toContain("cancelled")
-    expect(code).toBe(0)
+    expect(result.stdout).toContain("cancelled")
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0)
   }, 90_000)
 })
