@@ -62,6 +62,11 @@ function stripJsonComments(content: string): string {
   let inString = false
   let i = 0
   while (i < content.length) {
+    if (inString && content[i] === "\\") {
+      result += content.slice(i, i + 2)
+      i += 2
+      continue
+    }
     const two = content.slice(i, i + 2)
     if (!inString && two === "//") {
       i = skipLineComment(content, i)
@@ -72,7 +77,7 @@ function stripJsonComments(content: string): string {
       continue
     }
     const char = content[i]!
-    if (char === '"' && content[i - 1] !== "\\") inString = !inString
+    if (char === '"') inString = !inString
     result += char
     i++
   }
