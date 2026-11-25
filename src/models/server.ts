@@ -86,6 +86,7 @@ import {
   ModelPriceSourceSettingsStore,
   ModelPriceSourceWriteOutputSchema,
 } from "./price-source-settings.ts"
+import { startModelPriceSourcePolicyProjection } from "./price-source-projection.ts"
 import { createManagedUsagePriceProvider } from "./managed-usage-valuation.ts"
 import type { ManagedUsageIndexReader } from "./managed-usage-valuation.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
@@ -412,6 +413,19 @@ export function registerModelsServer(
   }
 
   return Effect.gen(function* () {
+    const pricePolicyProjection = startModelPriceSourcePolicyProjection({
+      repository,
+      projectDirectory,
+      read: () => priceSourceSettings.read(),
+      refreshMs: options.backgroundRefreshMs ?? REFRESH_CHECK_MS,
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS model price-source policy projection failed", {
+            error: String(error),
+          }),
+        ),
+    })
+    yield* Effect.addFinalizer(() => Effect.sync(() => pricePolicyProjection.stop()))
     // One decision worker per database per process, shared by every location's registration.
     const lease = acquireDecisionWorker({ path, readPriceInputs })
     yield* Effect.addFinalizer(() => Effect.sync(() => lease.release()))
@@ -548,6 +562,7 @@ export function registerModelsServer(
               { expectedRevision: request.expectedRevision, sources: request.sources },
               signal,
             )
+            await pricePolicyProjection.refresh()
             return ModelPriceSourceWriteOutputSchema.parse(result)
           },
           catch: failure,

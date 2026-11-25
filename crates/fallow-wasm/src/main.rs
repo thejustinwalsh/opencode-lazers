@@ -403,11 +403,14 @@ fn retention_probe(request: &Request) -> Outcome {
     let mut transient_sum = 0u64;
     let before_all = live();
     for (index, path) in request.paths.iter().enumerate() {
-        let Ok(source) = std::fs::read_to_string(root.join(path)) else { continue };
+        let Ok(source) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
         source_bytes += source.len() as u64;
         let base = live();
         reset_peak();
-        let info = fallow_extract::parse_from_content(FileId(index as u32), &root.join(path), &source);
+        let info =
+            fallow_extract::parse_from_content(FileId(index as u32), &root.join(path), &source);
         let transient = peak().saturating_sub(base);
         worst_transient = worst_transient.max(transient);
         transient_sum += transient;
@@ -425,17 +428,46 @@ fn retention_probe(request: &Request) -> Outcome {
         )*};
     }
     field!(
-        exports, imports, re_exports, dynamic_imports, dynamic_import_patterns, require_calls,
-        package_path_references, type_package_references, bin_path_references,
-        package_resolve_sites, member_accesses, semantic_facts, whole_object_uses, suppressions,
-        unknown_suppression_kinds, unused_import_bindings, type_referenced_import_bindings,
-        value_referenced_import_bindings, line_offsets, complexity, flag_uses, class_heritage,
-        exported_factory_returns, exported_factory_return_object_shapes, type_member_types,
-        injection_tokens, local_type_declarations, public_signature_type_references,
-        namespace_object_aliases, iconify_prefixes, iconify_icon_names, auto_import_candidates,
-        directives, client_only_dynamic_import_spans, security_sinks,
-        security_unresolved_callee_sites, tainted_bindings, sanitized_sink_args,
-        security_control_sites, callee_uses
+        exports,
+        imports,
+        re_exports,
+        dynamic_imports,
+        dynamic_import_patterns,
+        require_calls,
+        package_path_references,
+        type_package_references,
+        bin_path_references,
+        package_resolve_sites,
+        member_accesses,
+        semantic_facts,
+        whole_object_uses,
+        suppressions,
+        unknown_suppression_kinds,
+        unused_import_bindings,
+        type_referenced_import_bindings,
+        value_referenced_import_bindings,
+        line_offsets,
+        complexity,
+        flag_uses,
+        class_heritage,
+        exported_factory_returns,
+        exported_factory_return_object_shapes,
+        type_member_types,
+        injection_tokens,
+        local_type_declarations,
+        public_signature_type_references,
+        namespace_object_aliases,
+        iconify_prefixes,
+        iconify_icon_names,
+        auto_import_candidates,
+        directives,
+        client_only_dynamic_import_spans,
+        security_sinks,
+        security_unresolved_callee_sites,
+        tainted_bindings,
+        sanitized_sink_args,
+        security_control_sites,
+        callee_uses
     );
     Ok(serde_json::json!({
         "files": files,

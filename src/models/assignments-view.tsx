@@ -39,9 +39,11 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     assignmentCanSave,
     assignmentDirty,
     assignmentEditorTitleID,
+    assignmentInheritedRoute,
     assignmentLayer,
     assignmentLayerLabel,
     assignmentPersona,
+    assignmentPinIntent,
     assignmentPrefill,
     assignmentRoute,
     assignmentScope,
@@ -64,6 +66,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     selectedCatalogModel,
     state,
     updateAssignmentRoute,
+    useInheritedAssignmentRoute,
     visible,
     agentRoutes,
   } = ctl
@@ -205,7 +208,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     )
   }
   const detailsActions = () =>
-    assignmentSettings() && (assignmentDirty() || assignmentCanSave() || assignmentBusy()) ? (
+    assignmentSettings() ? (
       <>
         <Ui.Button
           size="small"
@@ -313,6 +316,28 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                   </p>
                 )}
               </Show>
+            )}
+          </Show>
+          <Show when={!assignmentLayer()?.route ? assignmentInheritedRoute() : undefined}>
+            {(inherited) => (
+              <div class="lazers-models-assignment-inherited">
+                <Show when={!assignmentPinIntent()}>
+                  <Ui.Button
+                    size="small"
+                    variant="ghost-muted"
+                    disabled={assignmentBlocked()}
+                    onClick={useInheritedAssignmentRoute}
+                  >
+                    Pin inherited route here
+                  </Ui.Button>
+                </Show>
+                <Show when={assignmentPinIntent()}>
+                  <p role="status">
+                    Saving will pin the {assignmentScopeLabel(inherited().scope)} route at{" "}
+                    {assignmentScopeLabel(assignmentScope())}.
+                  </p>
+                </Show>
+              </div>
             )}
           </Show>
           <p class="lazers-models-note">New workers use this route. Running workers keep theirs.</p>

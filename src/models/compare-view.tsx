@@ -25,6 +25,7 @@ import {
   sourceTitle,
 } from "./comparison-presentation.ts"
 import { BenchmarkModelPane, ObservedModelPane } from "./model-pane.tsx"
+import { PriceSourceControls } from "./price-source-controls.tsx"
 import { benchmarkPaneModel, observedPaneModel } from "./pane-presentation.ts"
 import { hasCompareLowerPane } from "./panel-shared.ts"
 import { Disclosure, Segmented, SplitPane, revealDetails } from "./panel-layout.tsx"
@@ -38,6 +39,7 @@ function SourcesDetails(props: { ctl: ModelsController }) {
       <For each={props.ctl.catalogNotes()}>
         {(note) => <p class="lazers-models-source-meta">{note}.</p>}
       </For>
+      <PriceSourceControls ctl={props.ctl} />
       <div class="lazers-models-sources" aria-label="Source snapshot coverage">
         <For each={visible()?.comparison?.sources ?? []}>
           {(source) => (
@@ -121,8 +123,6 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
     profile,
     projectedPoints,
     refreshAll,
-    state,
-    visible,
   } = ctl
   const [view, setView] = createSignal<"ranking" | "scatter">("ranking")
   const rows = createMemo(() => projectedRankRows(catalogEntries()))
@@ -270,7 +270,6 @@ function CompareTop(props: { ctl: ModelsController }) {
     observedCaption,
     observedPoints,
     openProviderSettings,
-    projectedPoints,
     refreshAll,
     scoreBasis,
     selectCompareMode,
@@ -445,11 +444,8 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
     epochCoverageLine,
     profile,
     scoreBasis,
-    visible,
   } = props.ctl
   const entry = () => catalogEntries().find((item) => item.id === props.ctl.selectedEntryID())
-  const day = (value: string | null | undefined) =>
-    value ? new Date(value).toLocaleDateString([], { day: "numeric", month: "short" }) : ""
   const perMillion = (value: number | null) =>
     value === null ? undefined : `${formatMarketAmount(value)}`
   const basis = () => {
@@ -605,7 +601,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
     selectedFacts,
     heldInspection,
     showObservedFor,
-    state,
     visible,
   } = ctl
   const sources = () => visible()?.comparison?.sources ?? []
@@ -642,9 +637,11 @@ function CompareInspector(props: { ctl: ModelsController }) {
                 priceSourceName: entry().price
                   ? benchmarkSourceName[entry().price!.source]
                   : undefined,
-                order: priceSourceOrder()
-                  .sources.map((source) => benchmarkSourceName[source])
-                  .join(", then "),
+                order: priceSourceOrder().configured
+                  ? priceSourceOrder()
+                      .sources.map((source) => benchmarkSourceName[source])
+                      .join(", then ")
+                  : "",
                 mix: BENCHMARK_PRICE_MIX,
                 sources: sources(),
                 warnings: sourceWarningLines(ctl),

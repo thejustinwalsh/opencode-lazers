@@ -22,12 +22,13 @@ import { openStream } from "../streams/client.ts"
 import type { StreamContext } from "../streams/source.ts"
 import {
   modelContributorsSource,
+  modelAssignmentsSource,
   modelPointsSource,
+  modelPricePolicySource,
   modelViewSource,
 } from "../streams/sources/models.ts"
 import type { ModelPointsFilter, ModelViewFilter } from "../streams/sources/models-ref.ts"
 import type { DecisionInspectionFacts } from "./decision-read.ts"
-import { modelAssignmentsSource } from "../streams/sources/models.ts"
 import { assignmentSettingsOf, type AssignmentLayerRow } from "./assignment-settings.ts"
 import { ensureModelAssignmentViewSchema } from "./assignment-view.ts"
 import type { ModelDecisionContributor, ModelDecisionOverview } from "./decision-contract.ts"
@@ -990,9 +991,17 @@ test("price-source settings persist an ordered whole-model policy without changi
     storage,
     sourceConnections,
     sourceAccessCalls,
+    live: true,
   })
-  repository.close()
   const methods = harness.methods()
+  const policyProjection = () =>
+    repository.read((db) =>
+      db
+        .query<{ revision: number; sources: string }, [string]>(
+          "SELECT revision,sources FROM model_price_source_policy WHERE project_directory=?",
+        )
+        .get(projectDirectory),
+    )
 
   try {
     const initial = await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" }))
@@ -1035,15 +1044,65 @@ test("price-source settings persist an ordered whole-model policy without changi
       status: "updated",
       policy: { revision: 1, sources: ["opencode", "openrouter"], fallback: "whole-model" },
     })
-    expect(
-      await Effect.runPromise(
-        methods.configurePriceSources({
-          sessionID: "ses-native",
-          expectedRevision: 1,
-          sources: ["opencode"],
-        }),
-      ),
-    ).toMatchObject({ status: "updated", policy: { revision: 2, sources: ["opencode"] } })
+    expect(policyProjection()).toEqual({
+      revision: 1,
+      sources: JSON.stringify(["opencode", "openrouter", "models-dev"]),
+    })
+    const streamContext: StreamContext = {
+      projectID,
+      projectDirectory,
+      projectIds: (id) => [id],
+      assertRead: async () => {},
+      assertAction: async (sessionID, action) => {
+        await authorizeModels(
+          harness.context as never,
+          sessionID,
+          projectID,
+          action,
+          [projectDirectory],
+          new AbortController().signal,
+        )
+      },
+    }
+    const streamFilter = await modelPricePolicySource.authorize!(
+      { projectDirectory, sessionID: "ses-native" },
+      streamContext,
+    )
+    const policyStream = openStream(
+      readerPool(path, { workers: 1 }),
+      modelPricePolicySource as never,
+      { filter: streamFilter, order: "project", window: 1, transport: "copy" },
+    )
+    try {
+      await policyStream.ready()
+      expect(policyStream.items[0]).toMatchObject({
+        revision: 1,
+        sources: ["opencode", "openrouter", "models-dev"],
+      })
+      const frameChanged = new Promise<void>((resolve) => {
+        policyStream.on("change", resolve)
+      })
+      expect(
+        await Effect.runPromise(
+          methods.configurePriceSources({
+            sessionID: "ses-native",
+            expectedRevision: 1,
+            sources: ["opencode"],
+          }),
+        ),
+      ).toMatchObject({ status: "updated", policy: { revision: 2, sources: ["opencode"] } })
+      await frameChanged
+      expect(policyStream.items[0]).toMatchObject({
+        revision: 2,
+        sources: ["opencode", "models-dev"],
+      })
+      expect(policyProjection()).toEqual({
+        revision: 2,
+        sources: JSON.stringify(["opencode", "models-dev"]),
+      })
+    } finally {
+      policyStream.close()
+    }
 
     const stale = await Effect.runPromise(
       methods.configurePriceSources({
@@ -1059,6 +1118,10 @@ test("price-source settings persist an ordered whole-model policy without changi
       current: { sources: ["opencode", "models-dev"] },
     })
     expect(harness.storageCalls.set).toBe(2)
+    expect(policyProjection()).toEqual({
+      revision: 2,
+      sources: JSON.stringify(["opencode", "models-dev"]),
+    })
     expect(
       [...storage.values()].every((value) => !JSON.stringify(value).includes("credential")),
     ).toBe(true)
@@ -1077,6 +1140,8 @@ test("price-source settings persist an ordered whole-model policy without changi
       await Effect.runPromise(reopened.methods().priceSources({ sessionID: "ses-native" })),
     ).toMatchObject({ policy: { revision: 2, sources: ["opencode", "models-dev"] } })
   } finally {
+    await harness.close()
+    repository.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
