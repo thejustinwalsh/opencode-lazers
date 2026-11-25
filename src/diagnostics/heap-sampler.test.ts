@@ -146,4 +146,6 @@ test("each line carries the stream reader pool counters, only when a pool exists
     await pool.close()
     seeded.close()
   }
+  await sampler.sample()
+  expect((await lines(sampler.outputPath)).at(-1)?.readerPools).toBeUndefined()
 })

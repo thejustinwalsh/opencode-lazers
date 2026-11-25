@@ -17,7 +17,7 @@ import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import { ModelPriceSourceSettingsSchema } from "./price-source-settings.ts"
 import { authorizeModels, registerModelsServer } from "./server.ts"
-import { readerPool } from "../streams/pool.ts"
+import { readerPool, readerPoolSnapshot } from "../streams/pool.ts"
 import { openStream } from "../streams/client.ts"
 import type { StreamContext } from "../streams/source.ts"
 import {
@@ -1068,11 +1068,13 @@ test("price-source settings persist an ordered whole-model policy without changi
       { projectDirectory, sessionID: "ses-native" },
       streamContext,
     )
-    const policyStream = openStream(
-      readerPool(path, { workers: 1 }),
-      modelPricePolicySource as never,
-      { filter: streamFilter, order: "project", window: 1, transport: "copy" },
-    )
+    const policyPool = readerPool(path, { workers: 1 })
+    const policyStream = openStream(policyPool, modelPricePolicySource as never, {
+      filter: streamFilter,
+      order: "project",
+      window: 1,
+      transport: "copy",
+    })
     try {
       await policyStream.ready()
       expect(policyStream.items[0]).toMatchObject({
@@ -1102,6 +1104,7 @@ test("price-source settings persist an ordered whole-model policy without changi
       })
     } finally {
       policyStream.close()
+      await policyPool.close()
     }
 
     const stale = await Effect.runPromise(
@@ -1144,6 +1147,7 @@ test("price-source settings persist an ordered whole-model policy without changi
     repository.close()
     rmSync(root, { recursive: true, force: true })
   }
+  expect(readerPoolSnapshot().filter(({ key }) => key.includes(path))).toEqual([])
 })
 
 test("Models task valuation uses the configured cached market index, not worker subscription cost", async () => {
