@@ -64,6 +64,7 @@ test("one mounted Flow inspector follows task, machine and selected-state change
   let node: ObservationNode | undefined = {
     planID: "1f58602c-e8ca-4a1b-99c6-32b183e418d2",
     taskID: "efd8459f-1dbe-4472-968b-f26f59504291",
+    reference: null,
     state: "accepted",
     version: 2,
     reason: null,
@@ -79,17 +80,17 @@ test("one mounted Flow inspector follows task, machine and selected-state change
     () => machine,
     () => selected,
   )
-  expect(inspector()).toMatchObject({ taskID: node.taskID, current: "No" })
+  expect(inspector()).toMatchObject({ taskID: node!.taskID, current: "No" })
 
   node = {
-    ...node,
+    ...node!,
     taskID: "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
     state: "running",
     reason: "Live progress worker",
     snapshot: { status: "active", value: "running" },
   }
   expect(inspector()).toMatchObject({
-    taskID: node.taskID,
+    taskID: node!.taskID,
     current: "Yes",
     matchesRecordedState: true,
     reason: "Live progress worker",

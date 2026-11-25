@@ -303,10 +303,43 @@ test("radar.nodes: a plan's nodes in plan order with the persisted machine snaps
   expect(shown.map((row) => [row.task_id, row.state, row.snapshot, row.machine_version])).toEqual(
     stored.map((row) => [row.task_id, row.state, JSON.parse(row.snapshot), row.machine_version]),
   )
+  expect(shown.map((row) => row.reference)).toEqual(
+    shown.map((row) => fixture.repository.referenceFor(String(row.task_id)) ?? null),
+  )
   // Another project's directory reads nothing.
   expect(
     await rows(radarNodesSource, { projectDirectory: "/elsewhere", scope: owner, planID }, "plan"),
   ).toEqual([])
+})
+
+test("radar.nodes stream frames carry and update the stored task reference", async () => {
+  const stream = openStream(pool, radarNodesSource, {
+    filter: { projectDirectory: project, scope: owner, planID: fixture.receipt.planID },
+    order: "plan",
+    window: 16,
+    transport: "copy",
+  })
+  try {
+    await stream.ready()
+    const initial = stream.items.find((row) => row.task_id === taskID)
+    expect(initial?.reference).toBe(fixture.repository.referenceFor(taskID))
+
+    let changed = false
+    stream.on("change", () => {
+      changed = true
+    })
+    const updatedReference = "LZ-UPDATED"
+    fixture.store.atomic((db) =>
+      db
+        .query("UPDATE task_schedule SET reference=? WHERE task_id=?")
+        .run(updatedReference, taskID),
+    )
+    for (let attempt = 0; attempt < 50 && !changed; attempt++) await Bun.sleep(20)
+    expect(changed).toBe(true)
+    expect(stream.items.find((row) => row.task_id === taskID)?.reference).toBe(updatedReference)
+  } finally {
+    stream.close()
+  }
 })
 
 test("radar.nativeCalls, radar.journal and radar.scheduler read their stored rows", async () => {

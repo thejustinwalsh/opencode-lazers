@@ -143,6 +143,8 @@ export const radarPlanEventDetail = { detail: "json" } as const satisfies Column
 export const radarNodeColumns = {
   plan_id: "text",
   task_id: "text",
+  /** The task's stored reference, joined from `task_schedule` for lifecycle picker labels. */
+  reference: "text",
   ordinal: "int",
   state: "text",
   version: "int",
