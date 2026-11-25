@@ -225,6 +225,7 @@ describe("fallow-threads.wasm", () => {
     const script = join(import.meta.dir, "terminate-probe.ts")
     const result = await runOwnedTestProcess([process.execPath, script, repoRoot], {
       timeoutMs: 60_000,
+      processGroup: "inherited",
     })
     expect(result.stdout).toContain("cancelled")
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0)

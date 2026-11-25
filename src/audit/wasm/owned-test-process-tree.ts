@@ -3,9 +3,9 @@ import type { OwnedTestProcessChild } from "./owned-test-process.ts"
 const PROCESS_TERM_GRACE_MS = 1_000
 const PROCESS_KILL_WAIT_MS = 5_000
 
-function processGroupExists(pid: number): boolean {
+function processTargetExists(pid: number, processGroup = false): boolean {
   try {
-    process.kill(-pid, 0)
+    process.kill(processGroup ? -pid : pid, 0)
     return true
   } catch (error) {
     const code =
@@ -48,7 +48,7 @@ async function hasWindowsDescendants(pid: number): Promise<boolean> {
 }
 
 async function processTreeExists(pid: number): Promise<boolean> {
-  return process.platform === "win32" ? hasWindowsDescendants(pid) : processGroupExists(pid)
+  return process.platform === "win32" ? hasWindowsDescendants(pid) : processTargetExists(pid, true)
 }
 
 export async function waitForProcessTreeExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -60,9 +60,28 @@ export async function waitForProcessTreeExit(pid: number, timeoutMs: number): Pr
   return true
 }
 
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (processTargetExists(pid)) {
+    if (Date.now() >= deadline) return false
+    await Bun.sleep(20)
+  }
+  return true
+}
+
 function signalProcessGroup(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
   try {
     process.kill(-pid, signal)
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error ? error.code : undefined
+    if (code !== "ESRCH") throw error
+  }
+}
+
+function signalProcess(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(pid, signal)
   } catch (error) {
     const code =
       typeof error === "object" && error !== null && "code" in error ? error.code : undefined
@@ -100,10 +119,29 @@ async function terminatePosixProcessGroup(pid: number): Promise<void> {
     signalProcessGroup(pid, "SIGKILL")
 }
 
-export async function terminateProcessTree(child: OwnedTestProcessChild): Promise<void> {
+async function terminatePosixProcess(pid: number): Promise<void> {
+  signalProcess(pid, "SIGTERM")
+  if (!(await waitForProcessExit(pid, PROCESS_TERM_GRACE_MS))) signalProcess(pid, "SIGKILL")
+}
+
+export async function terminateProcessTree(
+  child: OwnedTestProcessChild,
+  processGroup: "detached" | "inherited" = "detached",
+): Promise<void> {
   if (process.platform === "win32") await terminateWindowsProcessTree(child)
+  else if (processGroup === "inherited") await terminatePosixProcess(child.pid)
   else await terminatePosixProcessGroup(child.pid)
 
-  if (!(await waitForProcessTreeExit(child.pid, PROCESS_KILL_WAIT_MS)))
-    throw new Error("Owned test subprocess descendants remained after termination")
+  const processStopped =
+    process.platform === "win32"
+      ? await waitForProcessTreeExit(child.pid, PROCESS_KILL_WAIT_MS)
+      : processGroup === "inherited"
+        ? await waitForProcessExit(child.pid, PROCESS_KILL_WAIT_MS)
+        : await waitForProcessTreeExit(child.pid, PROCESS_KILL_WAIT_MS)
+  if (!processStopped)
+    throw new Error(
+      processGroup === "inherited" && process.platform !== "win32"
+        ? "Owned test subprocess remained after termination"
+        : "Owned test subprocess descendants remained after termination",
+    )
 }

@@ -68,6 +68,18 @@ export interface OutputPump {
   cancel(): Promise<void>
 }
 
+export interface OutputDrainTimeouts {
+  drainMs: number
+  cancelMs: number
+  settleMs: number
+}
+
+const DEFAULT_DRAIN_TIMEOUTS: OutputDrainTimeouts = {
+  drainMs: OUTPUT_DRAIN_MS,
+  cancelMs: OUTPUT_CANCEL_WAIT_MS,
+  settleMs: OUTPUT_CANCEL_WAIT_MS,
+}
+
 export function pumpOutput(
   stream: ReadableStream<Uint8Array>,
   capture: BoundedCapture,
@@ -114,26 +126,57 @@ export function withTimeout<T>(
   })
 }
 
-export async function drainAfterTermination(pumps: OutputPump[]): Promise<void> {
+export async function drainAfterTermination(
+  pumps: OutputPump[],
+  timeouts: OutputDrainTimeouts = DEFAULT_DRAIN_TIMEOUTS,
+): Promise<void> {
   try {
     await withTimeout(
       Promise.allSettled(pumps.map((pump) => pump.done)).then(() => {}),
-      OUTPUT_DRAIN_MS,
+      timeouts.drainMs,
       "Owned test subprocess output did not drain after termination",
     )
-  } catch (error) {
-    await Promise.all(pumps.map((pump) => pump.cancel()))
+  } catch (drainError) {
+    const cleanupErrors: unknown[] = []
+    const cancellationErrors: unknown[] = []
+    const cancellations = pumps.map((pump) => {
+      try {
+        return pump.cancel().then(
+          () => {},
+          (error: unknown) => {
+            cancellationErrors.push(error)
+          },
+        )
+      } catch (error) {
+        cancellationErrors.push(error)
+        return Promise.resolve()
+      }
+    })
+    try {
+      await withTimeout(
+        Promise.all(cancellations),
+        timeouts.cancelMs,
+        "Owned test subprocess stream cancellation did not settle",
+      )
+      cleanupErrors.push(...cancellationErrors)
+    } catch (error) {
+      cleanupErrors.push(...cancellationErrors, error)
+    }
     try {
       await withTimeout(
         Promise.allSettled(pumps.map((pump) => pump.done)).then(() => {}),
-        OUTPUT_CANCEL_WAIT_MS,
+        timeouts.settleMs,
         "Owned test subprocess output readers did not settle after cancellation",
       )
-    } catch (cancelError) {
-      throw new AggregateError([error, cancelError], "Could not settle owned subprocess output", {
-        cause: cancelError,
-      })
+    } catch (error) {
+      cleanupErrors.push(error)
     }
+    if (cleanupErrors.length > 0)
+      throw new AggregateError(
+        [drainError, ...cleanupErrors],
+        "Could not settle owned subprocess output",
+        { cause: drainError },
+      )
   }
 }
 

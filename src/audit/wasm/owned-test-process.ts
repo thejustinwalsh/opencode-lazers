@@ -35,6 +35,8 @@ export interface OwnedTestProcessOptions {
   cwd?: string
   env?: NodeJS.ProcessEnv
   signal?: AbortSignal
+  /** Use the caller's owned process group instead of creating an independently detached group. */
+  processGroup?: "detached" | "inherited"
   forwardOutput?: boolean
   onOutput?: (stream: ProcessStream, chunk: Uint8Array) => void
   spawn?: OwnedTestProcessSpawner
@@ -110,8 +112,10 @@ async function afterExit(
   child: OwnedTestProcessChild,
   pumps: CapturedOutput["pumps"],
   exitCode: number,
+  processGroup: "detached" | "inherited",
 ): Promise<RunOutcome> {
-  if (!(await waitForProcessTreeExit(child.pid, PROCESS_GROUP_CHECK_MS)))
+  const ownsProcessTree = process.platform === "win32" || processGroup === "detached"
+  if (ownsProcessTree && !(await waitForProcessTreeExit(child.pid, PROCESS_GROUP_CHECK_MS)))
     return {
       kind: "descendants",
       error: new Error("Owned test subprocess exited while descendants remained"),
@@ -131,10 +135,13 @@ async function afterExit(
 function observeChild(
   child: OwnedTestProcessChild,
   pumps: CapturedOutput["pumps"],
+  processGroup: "detached" | "inherited",
 ): Promise<RunOutcome> {
   const exit = observedExit(child)
   return Promise.race([exit, ...pumps.map(failedStream)])
-    .then((first) => (first.kind === "exit" ? afterExit(child, pumps, first.exitCode) : first))
+    .then((first) =>
+      first.kind === "exit" ? afterExit(child, pumps, first.exitCode, processGroup) : first,
+    )
     .catch((error: unknown): RunOutcome => ({ kind: "observation", error }))
 }
 
@@ -191,10 +198,11 @@ async function cleanupFailedChild(
   child: OwnedTestProcessChild,
   pumps: CapturedOutput["pumps"],
   operation: Promise<RunOutcome>,
+  processGroup: "detached" | "inherited",
 ): Promise<unknown> {
   let cleanupError: unknown
   try {
-    await terminateProcessTree(child)
+    await terminateProcessTree(child, processGroup)
   } catch (error) {
     cleanupError = error
   }
@@ -239,8 +247,9 @@ async function completeChild(
   child: OwnedTestProcessChild,
   options: OwnedTestProcessOptions,
 ): Promise<OwnedTestProcessResult> {
+  const processGroup = options.processGroup ?? "detached"
   const output = captureOutput(child, options)
-  const operation = observeChild(child, output.pumps)
+  const operation = observeChild(child, output.pumps, processGroup)
   const interruption = watchInterruption(options.signal, options.timeoutMs)
   let outcome: RunOutcome
   try {
@@ -256,7 +265,7 @@ async function completeChild(
       stderr: output.stderr.text(),
     }
   const details = failureDetails(outcome, options.timeoutMs)
-  const cleanupError = await cleanupFailedChild(child, output.pumps, operation)
+  const cleanupError = await cleanupFailedChild(child, output.pumps, operation, processGroup)
   throw createProcessError(details, cleanupError, output)
 }
 
@@ -299,7 +308,9 @@ function spawnOwnedChild(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    ...(process.platform === "win32" ? {} : { detached: true }),
+    ...(process.platform === "win32"
+      ? {}
+      : { detached: (options.processGroup ?? "detached") === "detached" }),
   })
 }
 
