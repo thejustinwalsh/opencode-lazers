@@ -29,6 +29,11 @@ import {
   retainedRepairReservationsRemainUnprompted,
   traceRetainedRepairReservations,
 } from "./retained-repair-recovery/lineage.ts"
+import {
+  currentRetainedRepairAuthorityMatches,
+  hasRecordedRetainedRepairAuthor,
+  retainedRepairAuthorMatchesHistory,
+} from "./retained-repair-recovery/authority.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 
@@ -105,10 +110,15 @@ export class RetainedRepairPreparation {
   ): Promise<RetainedRepairRecoverySeed> {
     if (!command.taskID || !command.attemptID || !command.reason)
       throw new Error("Retained repair recovery requires the exact task, attempt and reason")
-    if (!this.validArchitect(ownerSession) || ownerSession.projectID !== this.projectID)
+    if (
+      !currentRetainedRepairAuthorityMatches({
+        callerID: caller,
+        planOwnerID: plan.owner,
+        ownerSession,
+        projectID: this.projectID,
+      })
+    )
       throw new Error("Retained repair recovery requires the current same-project Architect owner")
-    if (caller !== plan.owner || ownerSession.id !== plan.owner)
-      throw new Error("Retained repair recovery requires the current plan owner")
     if (plan.state !== "blocked" || plan.artifact !== null)
       throw new Error("Retained repair recovery requires the original blocked, unintegrated plan")
 
@@ -161,7 +171,13 @@ export class RetainedRepairPreparation {
       typeof operationID !== "string" ||
       typeof repairMessageID !== "string" ||
       typeof previousMessageID !== "string" ||
-      repair?.owner !== plan.owner ||
+      !hasRecordedRetainedRepairAuthor(repair?.owner) ||
+      !retainedRepairAuthorMatchesHistory({
+        author: repair?.owner,
+        currentOwnerID: plan.owner,
+        repairTransition,
+        history,
+      }) ||
       repair?.attemptID !== attempt.id ||
       repairTransition.task_id !== task.id ||
       typeof repair?.sessionID !== "string" ||
@@ -369,9 +385,12 @@ export class RetainedRepairPreparation {
     const freshOwner = async () => {
       const current = await this.host.session(plan.owner)
       if (
-        !this.validArchitect(current) ||
-        current.id !== caller ||
-        current.projectID !== this.projectID
+        !currentRetainedRepairAuthorityMatches({
+          callerID: caller,
+          planOwnerID: plan.owner,
+          ownerSession: current,
+          projectID: this.projectID,
+        })
       )
         throw new Error("Retained repair recovery owner changed during native revalidation")
       return current
@@ -500,6 +519,7 @@ export class RetainedRepairPreparation {
       taskID: task.id,
       repairMessageID,
       predecessorMessageID: previousMessageID,
+      repairAuthor: repair.owner,
       failedMessageID: attempt.message_id,
       ...(lineage.kind === "interrupted" ? { interruptedInputID: repairMessageID } : {}),
       lineage,
@@ -541,6 +561,13 @@ export class RetainedRepairPreparation {
       owner?: unknown
     }>(plan.id, attempt.task_id)
     const history = this.transitionHistory(plan.id, attempt.task_id)
+    const currentRepairTransition = history.findLast(
+      (transition) =>
+        transition.task_id === attempt.task_id &&
+        transition.event === "RETAINED_REPAIR_REQUESTED" &&
+        this.parseTransitionPayload<Record<string, unknown>>(transition)?.operationID ===
+          recovery.operationID,
+    )
     const matching = (id: number, event: string, taskID: string | null) =>
       history.find(
         (transition) =>
@@ -584,7 +611,14 @@ export class RetainedRepairPreparation {
       currentRepair?.operationID === recovery.operationID &&
       currentRepair.messageID === recovery.repairMessageID &&
       currentRepair.previousMessageID === recovery.predecessorMessageID &&
-      currentRepair.owner === recovery.owner &&
+      currentRepair.owner === recovery.repairAuthor &&
+      currentRepairTransition !== undefined &&
+      retainedRepairAuthorMatchesHistory({
+        author: currentRepair.owner,
+        currentOwnerID: currentPlan.owner,
+        repairTransition: currentRepairTransition,
+        history,
+      }) &&
       currentAttempt.token_count === recovery.usage.tokenCount &&
       currentAttempt.tool_count === recovery.usage.toolCount &&
       currentAttempt.cost === recovery.usage.cost &&

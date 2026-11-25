@@ -450,6 +450,7 @@ export class CommandsRetained {
       command.taskID !== retainedRepairRecovery.taskID ||
       command.attemptID !== retainedRepairRecovery.attemptID ||
       !this.validArchitect(ownerSession) ||
+      ownerSession.id !== retainedRepairRecovery.owner ||
       !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
     )
       throw new Error("Retained repair recovery authorization changed before reservation")
@@ -495,7 +496,8 @@ export class CommandsRetained {
               predecessorMessageID: repairReservation!.previousMessageID,
               nativeInputID: retainedRepairRecovery.lineage.inputID,
               terminalOutcome: retainedRepairRecovery.lineage.outcome,
-              owner: retainedRepairRecovery.owner,
+              owner: retainedRepairRecovery.repairAuthor,
+              recoveredBy: retainedRepairRecovery.owner,
               failedReservationTransitionID: retainedRepairRecovery.reservationTransitionID,
               unpromptedMessageIDs: retainedRepairRecovery.unpromptedMessageIDs,
               blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
@@ -506,7 +508,8 @@ export class CommandsRetained {
               operationID: retainedRepairRecovery.operationID,
               failedMessageID: retainedRepairRecovery.failedMessageID,
               interruptedInputID: retainedRepairRecovery.lineage.inputID,
-              owner: retainedRepairRecovery.owner,
+              owner: retainedRepairRecovery.repairAuthor,
+              recoveredBy: retainedRepairRecovery.owner,
               failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
               blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
               cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
