@@ -31,19 +31,7 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 async function commit(dir: string, message: string) {
-  await run(
-    dir,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "-c",
-    "commit.gpgsign=false",
-    "commit",
-    "-q",
-    "-m",
-    message,
-  )
+  await run(dir, "commit", "-q", "-m", message)
   return run(dir, "rev-parse", "HEAD")
 }
 
@@ -73,6 +61,31 @@ test("repo config file at the base commit wins over a stored LAZERS config", asy
   expect(resolved.config).toEqual({ health: { maxCyclomatic: 5 } })
   await cleanupResolvedFallowConfig(resolved)
 })
+
+for (const name of [".fallowrc.json", ".fallowrc.jsonc"]) {
+  test(`${name} accepts Fallow's comments and trailing commas without changing strings`, async () => {
+    const { dir } = await repoWithConfig(undefined)
+    writeFileSync(
+      join(dir, name),
+      '{ // project entry points\n "entry": ["https://example.test/a,}",], /* thresholds */ "health": {"maxCyclomatic": 7,}, }',
+    )
+    await run(dir, "add", name)
+    const base = await commit(dir, "config")
+    const resolved = await resolveFallowConfig({
+      directory: dir,
+      baseCommit: base,
+      repository: repository(dir),
+    })
+    try {
+      expect(resolved.config).toEqual({
+        entry: ["https://example.test/a,}"],
+        health: { maxCyclomatic: 7 },
+      })
+    } finally {
+      await cleanupResolvedFallowConfig(resolved)
+    }
+  })
+}
 
 test("cleaning up a resolved config removes its temp directory, not only the file", async () => {
   const { dir, base } = await repoWithConfig({ health: { maxCyclomatic: 5 } })
