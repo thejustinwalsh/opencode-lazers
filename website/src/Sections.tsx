@@ -1074,21 +1074,7 @@ export function Local() {
 /* ================================================================== */
 /* Install: the back cover                                             */
 /* ================================================================== */
-const INSTALL_SH = `(
-  set -e
-  install_dir="$HOME/.local/share/opencode/lazers-plugin"
-  mkdir -p "$install_dir"
-  cd "$install_dir"
-  curl --fail --location \\
-    --output opencode-lazers-0.1.0.tgz \\
-    "https://github.com/thejustinwalsh/opencode-lazers/releases/download/v0.1.0/opencode-lazers-0.1.0.tgz"
-  bun add --ignore-scripts ./opencode-lazers-0.1.0.tgz
-  printf '%s/node_modules/opencode-lazers\\n' "$PWD"
-)`
-
-const CONFIG_JSON = `{
-  "plugins": ["/absolute/path/from-the-last-command/node_modules/opencode-lazers"]
-}`
+const INSTALL_SH = "opencode plugin add opencode-lazers@0.2.0"
 
 const in_ = stylex.create({
   top: {
@@ -1264,10 +1250,9 @@ export function Install() {
       <BeamCanvas kit={kit} />
       <div {...stylex.props(s.inner)}>
         <div {...stylex.props(in_.top)}>
-          <Heading id="install-title">Install v0.1.0</Heading>
+          <Heading id="install-title">Install v0.2.0</Heading>
           <ul aria-label="Requirements" {...stylex.props(in_.facts)}>
-            <li {...stylex.props(in_.fact)}>Bun</li>
-            <li {...stylex.props(in_.fact)}>OpenCode Desktop 2.2.6</li>
+            <li {...stylex.props(in_.fact)}>OpenCode Desktop</li>
             <li {...stylex.props(in_.fact)}>No build step</li>
           </ul>
         </div>
@@ -1278,11 +1263,11 @@ export function Install() {
               <span aria-hidden="true" {...stylex.props(in_.stepNum)}>
                 1
               </span>
-              <h3 {...stylex.props(in_.stepTitle)}>Install the release archive</h3>
+              <h3 {...stylex.props(in_.stepTitle)}>Install LAZERS</h3>
             </div>
             <p {...stylex.props(in_.note)}>
-              Run this in a terminal. It installs into a dedicated directory, skips lifecycle
-              scripts and prints the plugin path.
+              Run this in a terminal. OpenCode installs the package and adds it to your global
+              plugin configuration.
             </p>
             <CodeBlock code={INSTALL_SH} label="install commands" />
           </li>
@@ -1291,26 +1276,23 @@ export function Install() {
               <span aria-hidden="true" {...stylex.props(in_.stepNum)}>
                 2
               </span>
-              <h3 {...stylex.props(in_.stepTitle)}>Add the printed path to OpenCode</h3>
+              <h3 {...stylex.props(in_.stepTitle)}>Restart OpenCode</h3>
             </div>
             <p {...stylex.props(in_.note)}>
-              Merge it into the global <Code>plugins</Code> list, usually in{" "}
-              <Code>~/.config/opencode/opencode.json</Code>. Remove older LAZERS paths and keep one
-              LAZERS load path in total.
+              Restart Desktop and its background service. If upgrading from a checkout or archive,
+              remove its old LAZERS entry from your plugin configuration.
             </p>
-            <CodeBlock code={CONFIG_JSON} label="plugins entry" />
           </li>
           <li {...stylex.props(in_.step)}>
             <div {...stylex.props(in_.stepHead)}>
               <span aria-hidden="true" {...stylex.props(in_.stepNum)}>
                 3
               </span>
-              <h3 {...stylex.props(in_.stepTitle)}>Restart and pick Architect</h3>
+              <h3 {...stylex.props(in_.stepTitle)}>Pick Architect</h3>
             </div>
             <p {...stylex.props(in_.note)}>
-              Restart OpenCode Desktop and its background service. Select{" "}
-              <strong {...stylex.props(s.strong)}>Architect</strong> from the agent list, then open
-              Tasks or run <Code>/lz-tasks</Code> to check that the panel loads.
+              Select <strong {...stylex.props(s.strong)}>Architect</strong> from the agent list,
+              then open Tasks or run <Code>/lz-tasks</Code> to check that the panel loads.
             </p>
           </li>
         </ol>
