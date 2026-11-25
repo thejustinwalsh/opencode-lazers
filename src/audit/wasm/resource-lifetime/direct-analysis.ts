@@ -9,14 +9,10 @@ import {
 import { currentDirectAnalysisTestLifetime } from "./direct-analysis-test-context.ts"
 import { directAnalysisScopeFor } from "./direct-analysis-scope.ts"
 
-// The single module starts at 18 MiB; batch a small bounded number of runs between full GCs.
-const SINGLE_MODULE_GC_INTERVAL = 8
-let singleModuleRunsSinceGc = 0
-
 /**
- * Direct test analyses bypass fallow-worker's post-request collection. Bound retained instances
- * with periodic collection for single-thread modules and per-run collection for 4 GiB threaded
- * memories; helper workers are always terminated before the operation completes.
+ * Direct test analyses bypass fallow-worker's post-request collection. Collect after each run:
+ * whole-repository scans can grow a single-module heap enough to starve the next 4 GiB threaded
+ * allocation. Helper workers are always terminated before the operation completes.
  */
 export function runDirectFallowModule(
   module: WebAssembly.Module,
@@ -31,13 +27,24 @@ export function runDirectFallowModule(
     async () => {
       testLifetime?.assertActive()
       analysisStarted = true
+      collectAfterOperation = true
       if (isThreadedModule(module)) {
-        singleModuleRunsSinceGc = 0
-        collectAfterOperation = true
-      } else {
-        singleModuleRunsSinceGc++
-        collectAfterOperation = singleModuleRunsSinceGc >= SINGLE_MODULE_GC_INTERVAL
-        if (collectAfterOperation) singleModuleRunsSinceGc = 0
+        // Collect after the previous run's completion has unwound through its caller, not only
+        // from its in-scope cleanup while those async frames may still reference the instance.
+        await Bun.sleep(0)
+        const gcStarted = performance.now()
+        try {
+          Bun.gc(true)
+        } finally {
+          scope.metrics.gcMs += performance.now() - gcStarted
+        }
+        await Bun.sleep(0)
+        const settledGcStarted = performance.now()
+        try {
+          Bun.gc(true)
+        } finally {
+          scope.metrics.gcMs += performance.now() - settledGcStarted
+        }
       }
       const pool = options.threadPool ?? new ThreadPool(undefined, false)
       try {

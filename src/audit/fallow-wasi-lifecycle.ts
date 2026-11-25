@@ -8,6 +8,16 @@ type RunResources<Host> = {
   memory: WebAssembly.Memory | undefined
 }
 
+/** Clear inner bindings before dropping namespace maps; a retained namespace must not pin memory. */
+export function releaseFallowImports(
+  imports: Record<string, Record<string, unknown>> | undefined,
+): void {
+  if (!imports) return
+  for (const namespace of Object.values(imports))
+    for (const name of Object.keys(namespace)) delete namespace[name]
+  for (const name of Object.keys(imports)) delete imports[name]
+}
+
 /** Settle helper workers and release every reference owned by one completed WASI run. */
 export function settleFallowRun<Host>(
   pool: ThreadPool,
@@ -17,7 +27,7 @@ export function settleFallowRun<Host>(
   try {
     pool.settle(resources.helpers, keepHelpers)
   } finally {
-    for (const namespace of Object.keys(resources.imports)) delete resources.imports[namespace]
+    releaseFallowImports(resources.imports)
     resources.host = undefined
     resources.instance = undefined
     resources.memory = undefined

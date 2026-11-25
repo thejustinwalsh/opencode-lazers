@@ -549,6 +549,9 @@ export function runFallowModule(
             flag: helper.flag,
           }
           helper.worker.postMessage(start)
+          // The structured-clone handoff is complete; do not let this run's import callback
+          // environment retain its own copy of the 4 GiB memory through the helper payload.
+          Reflect.deleteProperty(start, "memory")
         } catch {
           nextTid--
           return (options.onSpawn?.(false), -1)

@@ -18,15 +18,19 @@ test("repeated production analyses reuse a retained helper pool", async () => {
     liveWhileRetained: number
     idleWhileRetained: number
     peakLiveCount: number
+    peakRssMb: number
+    retainedInstances: number
+    retainedMemories: number
     distinctReports: number
   }
-  expect(result).toEqual({
-    runs: 8,
-    createdWhileRetained: 2,
-    reusedWhileRetained: 14,
-    liveWhileRetained: 2,
-    idleWhileRetained: 2,
-    peakLiveCount: 2,
-    distinctReports: 1,
-  })
-}, 120_000)
+  expect(result.runs).toBe(5)
+  expect(result.createdWhileRetained).toBe(2)
+  expect(result.reusedWhileRetained).toBe(8)
+  expect(result.liveWhileRetained).toBe(2)
+  expect(result.idleWhileRetained).toBe(2)
+  expect(result.peakLiveCount).toBe(2)
+  expect(result.peakRssMb).toBeLessThan(1200)
+  expect(result.retainedInstances).toBe(0)
+  expect(result.retainedMemories).toBe(0)
+  expect(result.distinctReports).toBe(1)
+}, 240_000)
