@@ -1,8 +1,10 @@
 import { lstatSync, realpathSync } from "node:fs"
 import { join, normalize, sep } from "node:path"
 import { WASI } from "node:wasi"
-import { Worker } from "node:worker_threads"
-import { workerURL } from "../worker-url.ts"
+import { MAX_FALLOW_THREADS, ThreadPool } from "./fallow-thread-pool.ts"
+import { settleFallowRun } from "./fallow-wasi-lifecycle.ts"
+
+export { MAX_FALLOW_THREADS, ThreadPool } from "./fallow-thread-pool.ts"
 
 /**
  * Host for the Fallow WebAssembly module (a `wasm32-wasip1` command, `crates/fallow-wasm`).
@@ -162,70 +164,6 @@ export type RunOptions = {
   /** Threaded modules only: helper workers kept between runs. Without it each run starts its own. */
   threadPool?: ThreadPool
 }
-
-type Helper = { worker: Worker; flag: Int32Array }
-const HELPER_RUNNING = 0
-const HELPER_DONE = 1
-const HELPER_WAIT_MS = 100
-
-/**
- * Helper workers of the threaded module, kept between runs when a run's pool threads return
- * (`wasi_thread_start` ends) by the time the run does. A helper that is still inside the module
- * cannot be reused and is terminated. Idle helpers are unref'd, so they never keep the process
- * alive, and `terminateAll` ends every one of them.
- */
-export class ThreadPool {
-  private readonly idle: Helper[] = []
-  /** Helpers created and helpers reused, for tests and measurements. */
-  created = 0
-  reused = 0
-
-  constructor(private readonly script?: URL) {}
-
-  take(script?: URL): Helper {
-    const idle = this.idle.pop()
-    if (idle) {
-      this.reused++
-      return idle
-    }
-    this.created++
-    const worker = new Worker(
-      script ?? this.script ?? workerURL("./fallow-thread", import.meta.url),
-    )
-    // An idle helper must not keep the process alive.
-    worker.unref()
-    // A helper that traps cannot be reported from here, the main thread being inside the module;
-    // the request's timeout ends the run.
-    worker.on("error", () => {})
-    return { worker, flag: new Int32Array(new SharedArrayBuffer(4)) }
-  }
-
-  /** After a run: keep the helpers that left the module, end the others. */
-  settle(helpers: readonly Helper[], keep: boolean): void {
-    for (const helper of helpers) {
-      let done = false
-      if (keep) {
-        try {
-          Atomics.wait(helper.flag, 0, HELPER_RUNNING, HELPER_WAIT_MS)
-        } catch {}
-        done = Atomics.load(helper.flag, 0) === HELPER_DONE
-      }
-      if (done) this.idle.push(helper)
-      else void helper.worker.terminate()
-    }
-  }
-
-  terminateAll(): void {
-    for (const helper of this.idle.splice(0)) void helper.worker.terminate()
-  }
-
-  get idleCount(): number {
-    return this.idle.length
-  }
-}
-
-/** Most helper threads a module may start. The analyzer chooses 1 or 2 within this bound. */
-export const MAX_FALLOW_THREADS = 2
 
 /** Initial and maximum size, in 64 KiB pages, of the shared memory a threaded module imports. */
 export const SHARED_MEMORY = { initial: 65535, maximum: 65536 } as const
@@ -566,41 +504,54 @@ export function runFallowModule(
     err: [],
   }
   const threaded = isThreadedModule(module)
-  let memory: WebAssembly.Memory | undefined = threaded
-    ? new WebAssembly.Memory({ ...SHARED_MEMORY, shared: true })
-    : undefined
-  const { wasi, imports } = hostImports(
+  const resources: {
+    memory: WebAssembly.Memory | undefined
+    host: ReturnType<typeof hostImports> | undefined
+    instance: WebAssembly.Instance | undefined
+    imports: Record<string, Record<string, unknown>>
+    helpers: ReturnType<ThreadPool["take"]>[]
+  } = {
+    memory: threaded ? new WebAssembly.Memory({ ...SHARED_MEMORY, shared: true }) : undefined,
+    host: undefined,
+    instance: undefined,
+    imports: {},
+    helpers: [],
+  }
+  resources.host = hostImports(
     roots,
-    () => memory!,
+    () => resources.memory!,
     sinks,
     options.onGit,
     options.trace,
     options.cache ? join(roots[0]!, ".fallow") : undefined,
   )
-  const helpers: Helper[] = []
   const pool = options.threadPool ?? new ThreadPool(options.threadScript)
   const allowed = Math.min(options.maxThreads ?? 1, MAX_FALLOW_THREADS)
   let nextTid = 1
-  const instanceImports: Record<string, Record<string, unknown>> = { ...imports }
+  resources.imports = { ...resources.host.imports }
   if (threaded) {
-    instanceImports.env = { memory }
-    instanceImports.wasi = {
+    resources.imports.env = { memory: resources.memory }
+    resources.imports.wasi = {
       "thread-spawn": (arg: number) => {
         if (nextTid > allowed) return (options.onSpawn?.(false), -1)
         const tid = nextTid++
         try {
+          const flag = new Int32Array(new SharedArrayBuffer(4))
           const helper = pool.take(options.threadScript)
-          helper.flag = new Int32Array(new SharedArrayBuffer(4))
+          resources.helpers.push(helper)
+          helper.flag = flag
           const start: ThreadStart = {
             module,
-            memory: memory!,
+            memory: resources.memory!,
             roots,
             tid,
             arg,
             flag: helper.flag,
           }
           helper.worker.postMessage(start)
-          helpers.push(helper)
+          // The structured-clone handoff is complete; do not let this run's import callback
+          // environment retain its own copy of the 4 GiB memory through the helper payload.
+          Reflect.deleteProperty(start, "memory")
         } catch {
           nextTid--
           return (options.onSpawn?.(false), -1)
@@ -610,27 +561,35 @@ export function runFallowModule(
       },
     }
   }
-  const instance = new WebAssembly.Instance(module, instanceImports as WebAssembly.Imports)
-  memory = (instance.exports.memory as WebAssembly.Memory | undefined) ?? memory
-  options.onInstance?.(instance)
   let exitCode: number | undefined
   try {
-    // A threaded module imports its memory; `start` wants it as an export, so hand it an
-    // instance-shaped object.
-    exitCode = wasi.start(
-      (threaded
-        ? { exports: { memory, _start: () => (instance.exports._start as () => void)() } }
-        : instance) as never,
-    ) as number | undefined
-  } catch (error) {
-    if (error instanceof WasiExit) exitCode = error.code
-    else
-      throw new WasiTrap(
-        error instanceof Error ? error.message : String(error),
-        decoder.decode(Buffer.concat(sinks.err)),
-      )
+    resources.instance = new WebAssembly.Instance(module, resources.imports as WebAssembly.Imports)
+    resources.memory =
+      (resources.instance.exports.memory as WebAssembly.Memory | undefined) ?? resources.memory
+    options.onInstance?.(resources.instance)
+    try {
+      // A threaded module imports its memory; `start` wants it as an export, so hand it an
+      // instance-shaped object.
+      exitCode = resources.host!.wasi.start(
+        (threaded
+          ? {
+              exports: {
+                memory: resources.memory,
+                _start: () => (resources.instance!.exports._start as () => void)(),
+              },
+            }
+          : resources.instance) as never,
+      ) as number | undefined
+    } catch (error) {
+      if (error instanceof WasiExit) exitCode = error.code
+      else
+        throw new WasiTrap(
+          error instanceof Error ? error.message : String(error),
+          decoder.decode(Buffer.concat(sinks.err)),
+        )
+    }
   } finally {
-    pool.settle(helpers, options.threadPool !== undefined)
+    settleFallowRun(pool, resources, options.threadPool !== undefined)
   }
   return {
     stdout: decoder.decode(Buffer.concat(sinks.out)),

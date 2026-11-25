@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { fileURLToPath } from "node:url"
+import { runOwnedTestProcess } from "./owned-test-process.ts"
 
 /**
  * One analysis worker runs many analyses; each leaves its WebAssembly memory behind. Without a
@@ -9,9 +10,12 @@ import { fileURLToPath } from "node:url"
  */
 test("resident memory does not pile up over successive whole-project analyses", async () => {
   const script = fileURLToPath(new URL("./memory-probe.ts", import.meta.url))
-  const child = Bun.spawn([process.execPath, script], { stdout: "pipe", stderr: "pipe" })
-  const lines = (await new Response(child.stdout).text()).trim().split("\n").map(Number)
-  expect(await child.exited).toBe(0)
+  const { stdout, stderr, exitCode } = await runOwnedTestProcess([process.execPath, script], {
+    timeoutMs: 150_000,
+    forwardOutput: false,
+  })
+  const lines = stdout.trim().split("\n").map(Number)
+  expect(exitCode, `${stdout}\n${stderr}`).toBe(0)
   expect(lines).toHaveLength(5)
   // A loose ceiling, because the collector's timing varies: the same five runs peaked at 520 MB
   // without the collection and at 450 MB with it (single-threaded module, this repository). The

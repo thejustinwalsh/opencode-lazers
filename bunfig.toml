@@ -1,3 +1,11 @@
 [fmt]
 printWidth = 100
 semi = false
+
+[test]
+# These suites run unchanged in an isolated process through the harness test.
+pathIgnorePatterns = [
+  "src/audit/wasm/fallow-analysis.test.ts",
+  "src/audit/wasm/fallow-cache.test.ts",
+  "src/audit/wasm/fallow-wasm.test.ts",
+]
