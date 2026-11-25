@@ -22,7 +22,8 @@
   },
   "files": [
     "src",
-    "dist"
+    "dist",
+    "licenses"
   ],
   "scripts": {
     "package:release": "bun scripts/release-package.ts",
