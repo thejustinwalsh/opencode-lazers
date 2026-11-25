@@ -277,13 +277,15 @@ export const radarPlanEventsSource = defineSource({
 
 /**
  * The nodes of one plan in plan order, with what the lifecycle statechart needs: the recorded state
- * and the persisted machine snapshot whose value it highlights. `runner_nodes` holds a few rows per
- * plan (251 live); its primary key `(plan_id, task_id)` serves the filter.
+ * and the persisted machine snapshot whose value it highlights, plus the task's stored reference
+ * for picker labels. `runner_nodes` holds a few rows per plan (251 live); its primary key
+ * `(plan_id, task_id)` serves the filter.
  */
 export const radarNodesSource = defineSource({
   name: RADAR_SOURCES.nodes,
-  table: "runner_nodes",
-  tables: ["runner_nodes", "runner_plans"],
+  table: `(SELECT runner_nodes.*, task_schedule.reference AS reference
+    FROM runner_nodes LEFT JOIN task_schedule ON task_schedule.task_id=runner_nodes.task_id) AS runner_nodes`,
+  tables: ["runner_nodes", "runner_plans", "task_schedule"],
   key: ["task_id"],
   orders: {
     plan: [

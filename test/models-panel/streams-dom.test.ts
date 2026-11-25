@@ -5,6 +5,10 @@ import { build } from "vite"
 import { rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { withBenchmarks as scored } from "../../website/demo/src/panels/models-references.ts"
+import type {
+  ModelPriceSource,
+  ModelPriceSourcePolicy,
+} from "../../src/models/price-source-settings.ts"
 
 /**
  * The Models panel mounted in a DOM over real stream frames: the demo's mock project is turned
@@ -528,6 +532,24 @@ test("assignments: sources read from the stream, a saved route is confirmed by t
     "the default task",
   )
   await settle()
+  const saveButton = () =>
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Save",
+    )
+  click(root.querySelector('[data-agent="lazers-implementor"]')!)
+  await until(
+    () =>
+      root.querySelector('[data-agent="lazers-implementor"]')?.getAttribute("aria-pressed") ===
+      "true",
+    "the existing explicit mapping is selected",
+  )
+  await until(() => saveButton() !== undefined, "the disabled Save action")
+  expect(saveButton()!.disabled).toBe(true)
+  const uiPersona = [...root.querySelectorAll<HTMLElement>("[data-persona-row]")].find(
+    (row) => row.querySelector("strong")?.textContent === "UI",
+  )!
+  click(uiPersona)
+  await until(() => uiPersona.getAttribute("aria-pressed") === "true", "the UI persona")
   click(choose())
   await until(() => root.querySelector(".oc-dialog [role=option]") !== null, "the picker")
   expect([...root.querySelectorAll(".oc-dialog [role=option]")].map((o) => o.textContent)).toEqual([
@@ -578,6 +600,120 @@ test("assignments: sources read from the stream, a saved route is confirmed by t
     host.opens.slice(before).some((o) => o.source === "models.assignments" && o.window === 21),
   ).toBe(true)
   await until(() => text(root).includes("Saved"), "the confirmation")
+  await until(() => saveButton()!.disabled, "the unchanged explicit route is not saveable")
+})
+
+test("assignments: an inherited effective route can be explicitly pinned without editing it", async () => {
+  const inherited = {
+    schemaVersion: 1 as const,
+    target: { scope: "shared" as const },
+    persona: "ui" as const,
+    revision: 4,
+    route: { providerID: "anthropic", id: "claude-opus-5-5", variant: "high" },
+    updatedAt: Date.now(),
+  }
+  const withInheritedUI = (output: ModelSettings): ModelSettings => ({
+    ...output,
+    personas: output.personas.map((persona) =>
+      persona.persona === "ui"
+        ? { ...persona, layers: { ...persona.layers, shared: inherited } }
+        : persona,
+    ),
+  })
+  const { host, root } = mount({
+    settings: withInheritedUI,
+    preferences: { tab: "assignments", open: true },
+  })
+  await until(
+    () =>
+      host.lastOpen("models.assignments", (open) => typeof open.filter.taskID === "string") !==
+      undefined,
+    "the selected-task assignments stream",
+  )
+  await settle()
+  const saveButton = () =>
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Save",
+    )
+  await until(() => saveButton() !== undefined, "the disabled Save action")
+  expect(saveButton()!.disabled).toBe(true)
+  const pinButton = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent?.trim() === "Pin inherited route here",
+  )
+  expect(pinButton).toBeDefined()
+
+  click(pinButton!)
+  await until(
+    () => text(root).includes("Saving will pin the Shared default route at Project override."),
+    "the visible pin intent",
+  )
+  expect(saveButton()!.disabled).toBe(false)
+
+  const revertButton = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent?.trim() === "Revert",
+  )!
+  click(revertButton)
+  await until(
+    () => saveButton()!.disabled && text(root).includes("Pin inherited route here"),
+    "Revert clears the pin intent",
+  )
+
+  const systemsPersona = [...root.querySelectorAll<HTMLElement>("[data-persona-row]")].find(
+    (row) => row.querySelector("strong")?.textContent === "Systems",
+  )!
+  click(systemsPersona)
+  await until(
+    () => systemsPersona.getAttribute("aria-pressed") === "true" && saveButton()!.disabled,
+    "persona selection clears the draft",
+  )
+  const uiPersona = [...root.querySelectorAll<HTMLElement>("[data-persona-row]")].find(
+    (row) => row.querySelector("strong")?.textContent === "UI",
+  )!
+  click(uiPersona)
+  await until(
+    () => uiPersona.getAttribute("aria-pressed") === "true" && saveButton()!.disabled,
+    "the UI persona resets to its project layer",
+  )
+
+  click(root.querySelector('[data-segment="shared"]')!)
+  await until(
+    () =>
+      root.querySelector('[data-segment="shared"]')?.getAttribute("aria-checked") === "true" &&
+      saveButton()!.disabled,
+    "scope selection clears the pin intent",
+  )
+  expect(text(root)).not.toContain("Saving will pin")
+  click(root.querySelector('[data-segment="project"]')!)
+  await until(
+    () =>
+      root.querySelector('[data-segment="project"]')?.getAttribute("aria-checked") === "true" &&
+      saveButton()!.disabled &&
+      text(root).includes("Pin inherited route here"),
+    "the project scope resets to its inherited route",
+  )
+  click(
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Pin inherited route here",
+    )!,
+  )
+  await until(
+    () => text(root).includes("Saving will pin the Shared default route at Project override."),
+    "the pin intent after scope reset",
+  )
+  click(saveButton()!)
+  await until(() => host.calls.some((call) => call.method === "configure"), "the pin write")
+  expect(host.calls[0]).toMatchObject({
+    method: "configure",
+    input: {
+      persona: "ui",
+      target: { scope: "project" },
+      expectedRevision: 0,
+      route: { providerID: "anthropic", id: "claude-opus-5-5", variant: "high" },
+    },
+  })
+  await until(() => text(root).includes("Saved"), "the authoritative confirmation")
+  await until(() => saveButton()!.disabled, "authoritative confirmation clears the save intent")
+  expect(root.querySelector(".lazers-models-assignment-inherited [role=status]")).toBeNull()
 })
 
 /** The Sources disclosure of the pane over the selected model, opened. */
@@ -599,6 +735,24 @@ function openDisclosures(root: HTMLElement) {
 }
 const refreshButton = (root: ParentNode) =>
   root.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!
+async function openPriceSourceControls(root: HTMLElement) {
+  const estimate = [...root.querySelectorAll<HTMLDetailsElement>(".lazers-models-disclosure")].find(
+    (details) =>
+      details.querySelector("summary")?.textContent?.includes("Estimate basis and prices"),
+  )
+  await until(() => estimate !== undefined, "the estimate disclosure")
+  if (!estimate!.open) estimate!.querySelector("summary")!.click()
+  const sources = [
+    ...root.querySelectorAll<HTMLDetailsElement>(".lazers-models-sources-details"),
+  ].find((details) => details.querySelector("summary")?.textContent?.trim() === "Sources")
+  await until(() => sources !== undefined, "the source policy disclosure")
+  if (!sources!.open) sources!.querySelector("summary")!.click()
+  await until(
+    () => root.querySelector(".lazers-models-price-order-list") !== null,
+    "the order list",
+  )
+  return root.querySelector<HTMLOListElement>(".lazers-models-price-order-list")!
+}
 
 test("source refresh: asked on open, forced by the Refresh button, the disclosure shows each source's state", async () => {
   // models.dev has no snapshot and its latest refresh failed, as the comparison stream reports it.
@@ -665,21 +819,21 @@ test("source refresh: asked on open, forced by the Refresh button, the disclosur
   expect(text(root)).toMatch(/source refresh error/i)
 })
 
-test("price sources: the configured order is read and shown, and a Refresh reads it again", async () => {
-  let order = ["openrouter", "opencode"]
+test("price-source order: policy stream frames drive readback without the priceSources RPC", async () => {
+  let order: ModelPriceSource[] = ["openrouter", "opencode"]
   let revision = 0
-  const policy = () => ({
-    policy: { schemaVersion: 1, revision, sources: order, fallback: "whole-model" },
-    access: { openrouter: "configured", opencode: "configured" },
+  const policy = (): ModelPriceSourcePolicy => ({
+    schemaVersion: 1,
+    revision,
+    sources: [...order],
+    fallback: "whole-model",
   })
   const { host, root } = mount({
     comparison: scored,
-    priceSources: policy,
+    pricePolicy: policy,
     preferences: { compareMode: "benchmark", open: true },
   })
-  const reads = () => host.sourceCalls.filter((call) => call.method === "priceSources")
-  await until(() => reads().length >= 1, "the open-time read")
-  expect(reads()[0]!.input).toEqual({ sessionID: "ses-demo" })
+  await until(() => host.lastOpen("models.price-policy") !== undefined, "the policy stream")
   await until(() => pointIDs(root).length > 0, "the benchmark points")
   click(root.querySelector(".lazers-chart-point")!)
   await until(
@@ -688,14 +842,123 @@ test("price sources: the configured order is read and shown, and a Refresh reads
   )
   const pane = openDisclosures(root)
   await until(() => pane().includes("Price orderOpenRouter, then OpenCode"), "the read order")
+  expect(host.sourceCalls.filter((call) => call.method === "priceSources")).toEqual([])
 
-  // The service reorders its sources: the Refresh button reads the order again.
+  // A newer authoritative policy frame, not a snapshot/show read, updates the pane.
   order = ["opencode", "openrouter"]
   revision = 1
-  const before = reads().length
-  click(refreshButton(root))
-  await until(() => reads().length > before, "the order is read again")
+  host.release()
   await until(() => pane().includes("Price orderOpenCode, then OpenRouter"), "the new order")
+  expect(host.sourceCalls.filter((call) => call.method === "priceSources")).toEqual([])
+})
+
+test("price-source order: keyboard-operable reorder saves with the stream revision and confirms the frame", async () => {
+  const { host, root } = mount({
+    preferences: { compareMode: "projected", open: true },
+  })
+  await until(() => host.lastOpen("models.price-policy") !== undefined, "the policy stream")
+  await until(() => pointIDs(root).length > 0, "the benchmark points")
+  click(root.querySelector(".lazers-chart-point")!)
+  await until(() => root.querySelector(".lazers-models-disclosure") !== null, "the projected pane")
+  const orderList = await openPriceSourceControls(root)
+  const moveUp = root.querySelector<HTMLButtonElement>('button[aria-label="Move OpenCode up"]')!
+  const save = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent?.trim() === "Save order",
+  )!
+  expect(moveUp.disabled).toBe(false)
+  expect(save.disabled).toBe(true)
+  click(moveUp)
+  await until(() => !save.disabled, "the changed order is saveable")
+  click(save)
+  await until(
+    () => host.calls.some((call) => call.method === "configurePriceSources"),
+    "the policy write",
+  )
+  expect(host.calls.find((call) => call.method === "configurePriceSources")).toMatchObject({
+    input: {
+      sessionID: "ses-demo",
+      expectedRevision: 0,
+      sources: ["opencode", "openrouter"],
+    },
+  })
+  await until(
+    () => text(root).includes("Saved and confirmed by the current policy stream."),
+    "authoritative save confirmation",
+  )
+  await until(
+    () => text(orderList).indexOf("OpenCode") < text(orderList).indexOf("OpenRouter"),
+    "the updated policy frame",
+  )
+  expect(host.sourceCalls.filter((call) => call.method === "priceSources")).toEqual([])
+})
+
+test("price-source order: conflict and failure feedback never claims the order was saved", async () => {
+  let currentPolicy: ModelPriceSourcePolicy = {
+    schemaVersion: 1,
+    revision: 0,
+    sources: ["openrouter", "opencode"],
+    fallback: "whole-model",
+  }
+  const { host, root } = mount({
+    preferences: { compareMode: "projected", open: true },
+    pricePolicy: () => currentPolicy,
+    configurePriceSources: (input) => {
+      currentPolicy = {
+        ...currentPolicy,
+        revision: 1,
+        sources: ["openrouter", "opencode"],
+      }
+      return {
+        status: "conflict",
+        expectedRevision: input.expectedRevision,
+        currentRevision: currentPolicy.revision,
+        current: currentPolicy,
+      }
+    },
+  })
+  await until(() => host.lastOpen("models.price-policy") !== undefined, "the policy stream")
+  await until(() => pointIDs(root).length > 0, "the benchmark points")
+  click(root.querySelector(".lazers-chart-point")!)
+  await until(() => root.querySelector(".lazers-models-disclosure") !== null, "the projected pane")
+  const orderList = await openPriceSourceControls(root)
+  const save = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent?.trim() === "Save order",
+  )!
+  click(root.querySelector<HTMLButtonElement>('button[aria-label="Move OpenCode up"]')!)
+  await until(() => !save.disabled, "the changed order is saveable")
+  click(save)
+  await until(() => text(root).includes("Updated elsewhere (revision 1)"), "the conflict")
+  expect(text(root)).not.toContain("Saved and confirmed")
+  await until(
+    () => text(orderList).indexOf("OpenRouter") < text(orderList).indexOf("OpenCode"),
+    "the authoritative policy after conflict",
+  )
+
+  live!.host.dispose()
+  live!.root.remove()
+  const failed = mount({
+    preferences: { compareMode: "projected", open: true },
+    configurePriceSources: () => {
+      throw new Error("policy write denied")
+    },
+  })
+  await until(() => failed.host.lastOpen("models.price-policy") !== undefined, "the policy stream")
+  await until(() => pointIDs(failed.root).length > 0, "the benchmark points")
+  click(failed.root.querySelector(".lazers-chart-point")!)
+  await until(
+    () => failed.root.querySelector(".lazers-models-disclosure") !== null,
+    "the projected pane",
+  )
+  await openPriceSourceControls(failed.root)
+  const failedSave = [...failed.root.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent?.trim() === "Save order",
+  )!
+  click(failed.root.querySelector<HTMLButtonElement>('button[aria-label="Move OpenCode up"]')!)
+  await until(() => !failedSave.disabled, "the changed order is saveable")
+  click(failedSave)
+  await until(() => text(failed.root).includes("policy write denied"), "the write failure")
+  expect(text(failed.root)).not.toContain("Saved and confirmed")
+  expect(failed.host.sourceCalls.filter((call) => call.method === "priceSources")).toEqual([])
 })
 
 test("contributors: a run's Trajectory button hands the opener its task, project and directory", async () => {

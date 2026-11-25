@@ -12,11 +12,17 @@ import type { TaskMachineDefinition, TaskMachineState } from "../runner/task-mac
 export type MachineState = TaskMachineDefinition["states"][number]
 export type MachineTransition = MachineState["transitions"][number]
 
-export type ObservationPlan = { id: string; title: string | null; state: string }
+export type ObservationPlan = {
+  id: string
+  sequence: number | null
+  title: string | null
+  state: string
+}
 
 export type ObservationNode = {
   planID: string
   taskID: string
+  reference: string | null
   state: string
   version: number
   reason: string | null
@@ -46,6 +52,7 @@ export function planOf(row: Row<typeof taskPlanColumns>): ObservationPlan {
   const value = fields(row)
   return {
     id: String(value.plan_id),
+    sequence: typeof value.seq === "number" && Number.isFinite(value.seq) ? value.seq : null,
     title: (value.title as string | null) ?? null,
     state: String(value.state),
   }
@@ -71,6 +78,7 @@ export function nodeOf(
   return {
     planID: String(value.plan_id),
     taskID: String(value.task_id),
+    reference: (value.reference as string | null) ?? null,
     state: String(value.state),
     version: Number(value.version),
     reason: (value.reason as string | null) ?? null,

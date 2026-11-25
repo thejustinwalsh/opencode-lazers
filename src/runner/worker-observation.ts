@@ -4,6 +4,10 @@ import type { HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
 import type { PlanRow, AttemptRow } from "./store.ts"
 import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
+import {
+  completedIdleAttemptSettlementObservation,
+  type AttemptSettlementObservation,
+} from "./attempt-settlement-observation.ts"
 
 import type { RuntimeCore } from "./runtime-core.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
@@ -81,6 +85,19 @@ export class WorkerObservation {
         ...(inputID ? { inputID } : {}),
       }),
     )
+  }
+
+  attemptSettlementObservation(
+    attempt: AttemptRow,
+    session: HostSession,
+  ): AttemptSettlementObservation | undefined {
+    return completedIdleAttemptSettlementObservation({
+      attempt,
+      session,
+      projectID: this.projectID,
+      matchesWorkerInput: (inputID) => this.matchesWorkerInput(attempt, inputID),
+      sameModel: (left, right) => this.sameModel(left, right),
+    })
   }
 
   matchesWorkerInput(attempt: AttemptRow, inputID: string | null | undefined): boolean {

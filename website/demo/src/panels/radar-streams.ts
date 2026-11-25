@@ -114,6 +114,7 @@ function lifecycleRows(data: RadarData, open: Open, ids: RadarIds): DemoRow[] | 
       : data.workers.map((worker, ordinal) => ({
           plan_id: PLAN_ID,
           task_id: ids.taskID(worker.n),
+          reference: ids.ref(worker.n),
           ordinal,
           state: nodeState(worker),
           version: edgesOf(worker).length,

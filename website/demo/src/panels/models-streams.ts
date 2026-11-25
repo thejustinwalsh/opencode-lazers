@@ -8,6 +8,7 @@ import {
   modelCatalogColumns,
   modelContributorColumns,
   modelPointColumns,
+  modelPricePolicyColumns,
   modelViewColumns,
   modelViewDetail,
 } from "../../../../src/streams/sources/models-ref.ts"
@@ -25,7 +26,10 @@ import type {
   ModelDecisionFilters,
   ModelDecisionOverview,
 } from "../../../../src/models/decision-contract.ts"
-import type { ModelPriceSource } from "../../../../src/models/price-source-settings.ts"
+import type {
+  ModelPriceSource,
+  ModelPriceSourcePolicy,
+} from "../../../../src/models/price-source-settings.ts"
 
 /** What the demo's mock data answers, handed in by `models-answers.ts`. */
 export type ModelsDemoReads = {
@@ -34,6 +38,7 @@ export type ModelsDemoReads = {
   comparison(): ModelComparisonOutput
   settings(taskID: string | undefined): ModelSettingsOutput
   priceSources: readonly ModelPriceSource[]
+  pricePolicy: ModelPriceSourcePolicy
   pricesRetrievedAt: string
 }
 
@@ -54,6 +59,7 @@ const sources: Record<string, { columns: Columns; key: string[] }> = {
   [MODELS_SOURCES.benchmark]: { columns: modelBenchmarkColumns, key: ["id"] },
   [MODELS_SOURCES.contributors]: { columns: modelContributorColumns, key: ["id"] },
   [MODELS_SOURCES.assignments]: { columns: modelAssignmentColumns, key: ["id"] },
+  [MODELS_SOURCES.pricePolicy]: { columns: modelPricePolicyColumns, key: ["project_directory"] },
   [MODELS_SOURCES.candidates]: {
     columns: { ...modelCandidateColumns, ...modelCandidateDetail },
     key: ["id"],
@@ -289,6 +295,16 @@ export function modelStreams(reads: () => ModelsDemoReads, version: () => unknow
   return streamAnswers(sources, (open) => {
     if (open.source === MODELS_SOURCES.assignments)
       return assignmentRows(reads(), (open.filter.taskID as string | null) ?? null)
+    if (open.source === MODELS_SOURCES.pricePolicy) {
+      const policy = reads().pricePolicy
+      return [
+        {
+          project_directory: String(open.filter.projectDirectory ?? ""),
+          revision: policy.revision,
+          sources: policy.sources,
+        },
+      ]
+    }
     if (open.source === MODELS_SOURCES.candidates) return candidateRows(reads(), open)
     const request = open.filter.view as DecisionViewRequest | undefined
     return request ? viewSourceRows(viewOf(request), open) : []

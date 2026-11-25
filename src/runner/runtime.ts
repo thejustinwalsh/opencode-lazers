@@ -1183,6 +1183,9 @@ export class TaskRuntime {
           await this.outcomeDelivery.deliver(fence, true)
           closeoutDelivered = true
         }
+        // Terminal cleanup plans are handled below by the stamped cleanup path. Stepping them
+        // here would reload their full plans and effect histories on every idle tick.
+        if (candidate.state === "cleanup-blocked" || candidate.state === "cancelled") continue
         await this.reconcilePlan(candidate.id, fence, "step", async () => {
           // The body is read only for the plan being stepped, never for the whole candidate list.
           let plan = this.store.plan(candidate.id)
@@ -1220,14 +1223,19 @@ export class TaskRuntime {
       )
       for (const planID of terminalCleanupPlanIDs) {
         await this.reconcilePlan(planID, fence, "cleanup", async () => {
+          const facts = this.worktreeCleanup.cleanupFacts(planID)
+          const state = facts.plan?.state
+          if (!state || !["cleanup-blocked", "cancelled"].includes(state)) return
+          if (!this.worktreeCleanup.pendingOwnedWorktreeCleanup(facts)) return
+          if (!(await this.worktreeCleanup.worktreeCleanupFactsChanged(facts))) return
           const plan = this.store.plan(planID)
           if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) return
-          if (!this.worktreeCleanup.pendingOwnedWorktreeCleanup(plan)) return
-          if (plan.state === "cleanup-blocked") {
-            if (!(await this.worktreeCleanup.worktreeCleanupFactsChanged(plan))) return
-            await this.worktreeCleanup.cleanupWorktrees(plan, fence)
-          } else if (await this.worktreeCleanup.worktreeCleanupFactsChanged(plan))
-            await this.worktreeCleanup.cleanupWorktrees(plan, fence, "cancellation")
+          await this.worktreeCleanup.cleanupWorktrees(
+            plan,
+            fence,
+            plan.state === "cancelled" ? "cancellation" : "integration",
+            facts,
+          )
         })
         if (heartbeatFailed) throw heartbeatError
       }
@@ -1280,6 +1288,7 @@ export class TaskRuntime {
       throw new Error(
         `Verification activity ${uncertain.key} did not settle conclusively: ${checkSettlementProblem(uncertain)}`,
       )
+    this.worktreeCleanup.dispose()
   }
 
   backgroundBlockReason(session: HostSession): string | undefined {

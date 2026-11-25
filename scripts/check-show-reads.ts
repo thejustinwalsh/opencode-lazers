@@ -62,7 +62,7 @@ export const ALLOWED: Record<string, string> = {
   "Models.configure": "write: a model route mapping",
   "Models.refreshSources":
     "command: refresh due price sources; answers their status rows (one per source)",
-  "Models.priceSources": "price-source order and access stamp: one settings record",
+  "Models.configurePriceSources": "write: update the configured price-source order",
   "PlanningRpc.resolve": "write: answer a planning form",
   "Projects.saveProfile": "write: prove and activate a project profile",
   "Projects.setCode": "write: a project's code",

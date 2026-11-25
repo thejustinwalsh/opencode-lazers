@@ -5,9 +5,11 @@ import {
   machineSupported,
   nodeOf,
   observedTransition,
+  planOf,
   transitionOf,
   type ObservationNode,
 } from "./projection.ts"
+import { nodePickerLabel, planPickerLabel } from "./picker-label.ts"
 import { statechartLayout } from "./statechart.ts"
 
 const machine = taskMachineDefinition()
@@ -19,12 +21,21 @@ const nodeRow = (state: string, persisted: unknown, version = machine.version) =
   ({
     plan_id: planID,
     task_id: taskID,
+    reference: "LZ-17",
     ordinal: 0,
     state,
     version: 2,
     reason: null,
     machine_version: version,
     snapshot: persisted,
+  }) as never
+
+const planRow = (sequence: number, title: string | null) =>
+  ({
+    plan_id: planID,
+    seq: sequence,
+    title,
+    state: "running",
   }) as never
 
 /** A `radar.planEvents` row: the latest transition of one edge. */
@@ -52,6 +63,18 @@ test("the machine definition is the runner's: every state and edge, in declarati
     event: "ACCEPT",
     target: "accepted",
   })
+})
+
+test("lifecycle picker labels use stored plan titles or sequence and task references with state", () => {
+  const titled = planOf(planRow(42, "  Stored plan title  "))
+  const untitled = planOf(planRow(43, "   "))
+  expect(planPickerLabel(titled)).toBe("Stored plan title")
+  expect(planPickerLabel(untitled)).toBe("Plan 43")
+  expect(planPickerLabel({ ...untitled, sequence: null })).toBe("Plan")
+
+  const node = nodeOf(nodeRow("running", { status: "active", value: "queued" }), machine)
+  expect(nodePickerLabel(node)).toBe("running · LZ-17")
+  expect(nodePickerLabel({ ...node, reference: null })).toBe("running")
 })
 
 test("Flow only highlights a persisted snapshot that matches the recorded state", () => {

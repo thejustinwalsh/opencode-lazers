@@ -13,6 +13,7 @@ export const MODELS_SOURCES = {
   contributors: "models.contributors",
   assignments: "models.assignments",
   benchmark: "models.benchmark",
+  pricePolicy: "models.price-policy",
 } as const
 
 /** Every Models filter: the project is set by the service, whatever the caller sends. */
@@ -179,6 +180,13 @@ export const modelAssignmentColumns = {
   record: "json",
 } as const satisfies Columns
 
+/** The current project price-source policy, written by the Models service producer. */
+export const modelPricePolicyColumns = {
+  project_directory: "text",
+  revision: "int",
+  sources: "json",
+} as const satisfies Columns
+
 /**
  * Rows of one read: 7 subjects in the shared and project layers, 3 personas in the task layer and
  * 4 agents' host rows, at most 21; the window is that bound (`ASSIGNMENT_SUBJECTS`).
@@ -205,5 +213,10 @@ export const modelContributorsRef: SourceRef<
 > = sourceRef({ name: MODELS_SOURCES.contributors, columns: modelContributorColumns })
 export const modelAssignmentsRef: SourceRef<ModelAssignmentsFilter, typeof modelAssignmentColumns> =
   sourceRef({ name: MODELS_SOURCES.assignments, columns: modelAssignmentColumns })
+export type ModelPricePolicyFilter = Scoped
+export const modelPricePolicyRef: SourceRef<
+  ModelPricePolicyFilter,
+  typeof modelPricePolicyColumns
+> = sourceRef({ name: MODELS_SOURCES.pricePolicy, columns: modelPricePolicyColumns })
 export const modelBenchmarkRef: SourceRef<ModelBenchmarkFilter, typeof modelBenchmarkColumns> =
   sourceRef({ name: MODELS_SOURCES.benchmark, columns: modelBenchmarkColumns })
