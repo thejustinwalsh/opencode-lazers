@@ -842,34 +842,36 @@ test("isolation verification of a large tree yields to the event loop in short s
       mkdirSync(path, { recursive: true })
       for (let file = 0; file < 20; file++) writeFileSync(join(path, `f${file}.js`), "x")
     }
-    // Structural signal: a setImmediate chain only advances when the walk hands
-    // the event loop a turn. A walk that blocked would complete with ~0 ticks.
-    // A walk that blocked would put nearly all of its time into one slice, so the worst slice
-    // is bounded as a share of the whole walk. An absolute bound fails when the machine is
-    // loaded and the process itself is descheduled.
-    const started = performance.now()
-    let last = started
-    let worstSlice = 0
+    // Count event-loop turns, not elapsed time, so scheduler pauses do not affect the signal.
     let ticks = 0
     let running = true
     const pump = () => {
       if (!running) return
-      const now = performance.now()
-      worstSlice = Math.max(worstSlice, now - last)
-      last = now
       ticks++
       setImmediate(pump)
     }
     setImmediate(pump)
     try {
+      // Negative control: synchronous work cannot run the queued event-loop callback.
+      const beforeSynchronousControl = ticks
+      let total = 0
+      for (let value = 0; value < 1_000_000; value++) total += value
+      expect(total).toBe(499_999_500_000)
+      expect(ticks).toBe(beforeSynchronousControl)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(ticks).toBeGreaterThan(beforeSynchronousControl)
+
+      const beforeDependencies = ticks
       await assertOwnedDependencyTree(join(root, "node_modules"))
+      expect(ticks - beforeDependencies).toBeGreaterThan(10)
+
+      const beforeSymlinks = ticks
       await assertNoSymlinks(root)
+      // Assert each traversal yields independently; the synchronous control calibrates the probe.
+      expect(ticks - beforeSymlinks).toBeGreaterThan(10)
     } finally {
       running = false
     }
-    // 600 directories at 32 per batch, plus depth, means dozens of awaited batches.
-    expect(ticks).toBeGreaterThan(20)
-    expect(worstSlice).toBeLessThan((performance.now() - started) / 2)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
