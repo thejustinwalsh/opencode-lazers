@@ -1,18 +1,16 @@
 import { expect, test } from "bun:test"
 import { disposeFixture, makeFixture, threadedWasmModule } from "../test-support.ts"
 import { runFallowModule, ThreadPool, WasiTrap } from "../../fallow-wasi.ts"
+import { createSharedMemoryTracker } from "./shared-memory-tracker.ts"
 
 test("success and helper-start failure settle memory and workers before the next run", async () => {
   const root = makeFixture()
   const pool = new ThreadPool()
-  const memories: WeakRef<WebAssembly.Memory>[] = []
+  const trackMemory = createSharedMemoryTracker()
   const aliveAtCreation: number[] = []
 
   try {
     for (const failAfterSpawn of [false, true, false, true]) {
-      const aliveBeforeAllocation = memories.filter((ref) => ref.deref() !== undefined).length
-      await Bun.sleep(0)
-
       const run = () =>
         runFallowModule(
           threadedWasmModule,
@@ -21,8 +19,7 @@ test("success and helper-start failure settle memory and workers before the next
             maxThreads: 2,
             threadPool: pool,
             onMemory: (memory) => {
-              aliveAtCreation.push(aliveBeforeAllocation)
-              memories.push(new WeakRef(memory))
+              aliveAtCreation.push(trackMemory(memory))
             },
             onSpawn: (granted) => {
               if (failAfterSpawn && granted) throw new Error("injected helper-start failure")

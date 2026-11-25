@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { makeFixture, threadedWasmModule } from "./test-support.ts"
 import { runFallowModule, ThreadPool } from "../fallow-wasi.ts"
+import { createSharedMemoryTracker } from "./resource-lifetime/shared-memory-tracker.ts"
 const testThreadPool = new ThreadPool()
 
 /**
@@ -22,14 +23,11 @@ afterAll(async () => {
 
 test("repeated threaded runs in one process do not accumulate shared memories", async () => {
   const reusedBefore = testThreadPool.reused
-  const memories: WeakRef<WebAssembly.Memory>[] = []
+  const trackMemory = createSharedMemoryTracker()
   const aliveAtCreation: number[] = []
   const runs = 8
   {
     for (let i = 0; i < runs; i++) {
-      const aliveBeforeAllocation = memories.filter((ref) => ref.deref() !== undefined).length
-      // Do not let WeakRef.deref's keep-alive window overlap runFallowModule's collection.
-      await Bun.sleep(0)
       runFallowModule(
         threadedWasmModule,
         { op: "health", root: dir, options: { threads: 2 } },
@@ -37,8 +35,7 @@ test("repeated threaded runs in one process do not accumulate shared memories", 
           maxThreads: 2,
           threadPool: testThreadPool,
           onMemory: (memory) => {
-            aliveAtCreation.push(aliveBeforeAllocation)
-            memories.push(new WeakRef(memory))
+            aliveAtCreation.push(trackMemory(memory))
           },
         },
       )
