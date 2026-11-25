@@ -1,6 +1,21 @@
 # Install or upgrade LAZERS
 
-Install the published v0.1.0 archive in a dedicated directory. OpenCode Desktop 2.2.6 is the tested host for this release.
+LAZERS 0.2.0 targets OpenCode 2.3.0. Install the npm package with OpenCode's plugin installer:
+
+```sh
+opencode plugin add opencode-lazers@0.2.0
+```
+
+Restart Desktop and its service, then select **Architect** and open **Tasks**.
+The package includes the server, Desktop bundle, worker scripts, and Fallow WebAssembly modules. No plugin build is needed.
+
+When upgrading from a local checkout or archive, remove its LAZERS entry from the existing global `plugins` list so only the npm installation remains. Keep every other plugin entry. Also remove any legacy project copy under `.opencode/plugins/lazers`.
+
+To update later, use `opencode plugin add opencode-lazers@X.Y.Z` with the published version. See the [official plugin installation guide](https://opencode.ai/docs/plugins/).
+
+## Previous archive release
+
+The published v0.1.0 archive targets OpenCode Desktop 2.2.6. These instructions remain available for that release.
 
 ## Install v0.1.0
 
