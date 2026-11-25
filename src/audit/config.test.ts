@@ -65,9 +65,10 @@ test("repo config file at the base commit wins over a stored LAZERS config", asy
 for (const name of [".fallowrc.json", ".fallowrc.jsonc"]) {
   test(`${name} accepts Fallow's comments and trailing commas without changing strings`, async () => {
     const { dir } = await repoWithConfig(undefined)
+    const entry = ["https://example.test/a,}", "C:\\", 'quoted "//" /* literal */']
     writeFileSync(
       join(dir, name),
-      '{ // project entry points\n "entry": ["https://example.test/a,}",], /* thresholds */ "health": {"maxCyclomatic": 7,}, }',
+      `{ // project entry points\n "entry": ${JSON.stringify(entry).replace(/\]$/, ",]")}, /* thresholds */ "health": {"maxCyclomatic": 7,}, }`,
     )
     await run(dir, "add", name)
     const base = await commit(dir, "config")
@@ -78,7 +79,7 @@ for (const name of [".fallowrc.json", ".fallowrc.jsonc"]) {
     })
     try {
       expect(resolved.config).toEqual({
-        entry: ["https://example.test/a,}"],
+        entry,
         health: { maxCyclomatic: 7 },
       })
     } finally {
