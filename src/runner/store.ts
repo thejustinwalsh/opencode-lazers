@@ -25,6 +25,7 @@ import {
   type ArchitectContactState,
 } from "./architect-contact-machine.ts"
 import { progressRecencySQL } from "../progress/recency.ts"
+import { ensureCleanupRevisions } from "../observability/cleanup-revision.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
@@ -1365,6 +1366,7 @@ export class RunnerStore {
         retireOutboxLifecycle(db)
         installChangeIdentity(db)
         ensureObservationRevision(db)
+        ensureCleanupRevisions(db)
         ensureArchitectSourceJournalRevisions(db)
         // Generation 6: the human-evidence gate is retired; move its blocked plans on.
         retireHumanEvidenceGate(db)

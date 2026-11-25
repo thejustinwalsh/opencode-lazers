@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite"
-import { ensureCleanupRevisions } from "./cleanup-revision.ts"
 
 const DERIVED_COLUMNS: Record<string, readonly string[]> = {
   runner_progress: ["latest_observed_at", "plan_n", "attempt_n"],
@@ -63,5 +62,4 @@ export function ensureObservationRevision(db: Database) {
       db.exec(definition)
     }
   }
-  ensureCleanupRevisions(db)
 }

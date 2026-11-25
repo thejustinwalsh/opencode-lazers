@@ -3,12 +3,14 @@ import type { Database } from "bun:sqlite"
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { schemaModules } from "../database-schema.ts"
 import type { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
 import { meterRepository } from "./read-meter.fixture.ts"
 import {
   acceptedMergedFixture,
   fixture,
+  reopenRuntime,
   runPlan,
   useRuntimeFixtureCleanup,
 } from "./runtime.fixture.ts"
@@ -21,6 +23,27 @@ afterEach(() => {
   process.env.PATH = originalPath
   for (const directory of shims.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
+
+function emulateRunnerGeneration21(db: Database) {
+  const triggers = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'cleanup_revision_%'",
+    )
+    .all()
+  for (const { name } of triggers) db.exec(`DROP TRIGGER "${name.replaceAll('"', '""')}"`)
+  const module = db
+    .query<{ tables_json: string }, []>(
+      "SELECT tables_json FROM schema_modules WHERE module='runner'",
+    )
+    .get()!
+  const tables = (JSON.parse(module.tables_json) as string[]).filter(
+    (name) => name !== "cleanup_revisions",
+  )
+  db.exec("DROP TABLE cleanup_revisions")
+  db.query("UPDATE schema_modules SET generation=21,tables_json=? WHERE module='runner'").run(
+    JSON.stringify(tables),
+  )
+}
 
 /** A `git` first on PATH that logs each call, so a test can count subprocesses. */
 function gitShim() {
@@ -153,6 +176,7 @@ async function cleanupHistoryCost(
   historySize: number,
   gitCalls: () => number,
   unrelatedChurn = false,
+  reopenGeneration21 = false,
 ) {
   const clock = { offset: 0 }
   const { f, plan, attempt, integrate } = await acceptedMergedFixture({ clock })
@@ -249,6 +273,41 @@ async function cleanupHistoryCost(
       return (value as (...items: unknown[]) => unknown).apply(host, args)
     }
   }
+  if (reopenGeneration21) {
+    f.repository.atomic(emulateRunnerGeneration21)
+    const reopened = reopenRuntime(f)
+    f.repository = reopened.store.repository
+    f.store = reopened.store
+    f.runtime = reopened.runtime
+    const installed = f.repository.read((db) => ({
+      generation: db
+        .query<{ generation: number }, []>(
+          "SELECT generation FROM schema_modules WHERE module='runner'",
+        )
+        .get()?.generation,
+      tables: db
+        .query<{ tables_json: string }, []>(
+          "SELECT tables_json FROM schema_modules WHERE module='runner'",
+        )
+        .get()?.tables_json,
+      cleanupTable: db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='cleanup_revisions'",
+        )
+        .get()?.name,
+      cleanupTriggers: db
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM sqlite_master WHERE type='trigger' AND name LIKE 'cleanup_revision_%'",
+        )
+        .get()?.count,
+    }))
+    expect(installed.generation).toBe(schemaModules.runner.generation)
+    expect(JSON.parse(installed.tables ?? "[]")).toContain("cleanup_revisions")
+    expect(installed.cleanupTable).toBe("cleanup_revisions")
+    expect(installed.cleanupTriggers).toBeGreaterThan(0)
+    await f.runtime.tick()
+    expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+  }
   const planVersion = f.store.plan(plan.id)!.version
   const removalReceipt = f.store
     .effects(plan.id)
@@ -265,28 +324,18 @@ async function cleanupHistoryCost(
       f.inputFor([task], { requestID: `cleanup-unrelated-${historySize}` }),
       "owner",
     )
-    await f.runtime.command(
-      {
-        requestID: `cleanup-unrelated-run-${historySize}`,
-        planID: unrelatedPlan.planID,
-        action: "run",
-      },
-      "owner",
-    )
-    expect(f.store.plan(unrelatedPlan.planID)?.state).toBe("running")
     churn = { planID: unrelatedPlan.planID, taskID: task.id }
-    const cleanup = (
-      f.runtime as unknown as {
-        worktreeCleanup: { cleanupFacts(planID: string): unknown }
-      }
-    ).worktreeCleanup
-    cleanup.cleanupFacts(plan.id)
+    await f.runtime.tick()
   }
   hostCalls.length = 0
   const gitBefore = gitCalls()
   const sql = meterRepository(f.repository)
   const parse = JSON.parse
   let sourceReceiptDecodes = 0
+  let cleanupFactRows = 0
+  let cleanupFactBytes = 0
+  let cleanupFactBodyRows = 0
+  let cleanupFactReceiptDecodes = 0
   JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
     const value = args[0]
     if (typeof value === "string" && value.includes(`"workspace":"${attempt.workspace}"`))
@@ -295,11 +344,6 @@ async function cleanupHistoryCost(
   }) as typeof JSON.parse
   try {
     if (churn) {
-      const cleanup = (
-        f.runtime as unknown as {
-          worktreeCleanup: { cleanupFacts(planID: string): unknown }
-        }
-      ).worktreeCleanup
       for (let tick = 0; tick < 3; tick++) {
         f.repository.atomic((db) => {
           db.query("UPDATE runner_nodes SET reason=? WHERE plan_id=?").run(
@@ -333,10 +377,29 @@ async function cleanupHistoryCost(
             ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`,
           ).run("unrelated-cleanup-effect", churn!.planID, churn!.taskID, JSON.stringify({ tick }))
         })
-        cleanup.cleanupFacts(plan.id)
+        await f.runtime.tick()
       }
     } else {
       for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
+    }
+    if (churn) {
+      const cleanup = (
+        f.runtime as unknown as {
+          worktreeCleanup: { cleanupFacts(planID: string): unknown }
+        }
+      ).worktreeCleanup
+      const direct = meterRepository(f.repository)
+      const decodeCountBefore = sourceReceiptDecodes
+      cleanup.cleanupFacts(plan.id)
+      cleanupFactRows = direct.of(
+        /FROM runner_(?:effects|attempts|adoptions|adoption_checks)\b/i,
+      ).rows
+      cleanupFactBytes = direct.of(
+        /FROM runner_(?:effects|attempts|adoptions|adoption_checks)\b/i,
+      ).bytes
+      cleanupFactBodyRows = direct.of(/SELECT \* FROM runner_plans\b/i).rows
+      cleanupFactReceiptDecodes = sourceReceiptDecodes - decodeCountBefore
+      direct.stop()
     }
   } finally {
     JSON.parse = parse
@@ -349,10 +412,12 @@ async function cleanupHistoryCost(
       .rows,
     cleanupHistoryBytes: sql.of(/FROM runner_(?:effects|attempts|adoptions|adoption_checks)\b/i)
       .bytes,
-    bodyRows: sql.of(/SELECT[^;]*\bbody\b[^;]*\bFROM (?:runner_plans|tasks|runner_attempts)\b/i)
-      .rows,
     sourceReceiptDecodes,
     fullPlanRows: sql.of(/SELECT \* FROM runner_plans\b/i).rows,
+    cleanupFactRows,
+    cleanupFactBytes,
+    cleanupFactBodyRows,
+    cleanupFactReceiptDecodes,
     hostCalls,
     gitCalls: gitCalls() - gitBefore,
   }
@@ -366,18 +431,23 @@ async function cleanupHistoryCost(
 
 test("unrelated active-plan churn does not reread cleanup history at small and large scale", async () => {
   const gitCalls = gitShim()
-  const small = await cleanupHistoryCost(5, gitCalls, true)
-  const large = await cleanupHistoryCost(500, gitCalls, true)
+  const small = await cleanupHistoryCost(5, gitCalls, true, true)
+  const large = await cleanupHistoryCost(500, gitCalls, true, true)
   expect(small.cleanupHistoryRows).toBe(0)
   expect(large.cleanupHistoryRows).toBe(0)
   expect(small.cleanupHistoryBytes).toBe(0)
   expect(large.cleanupHistoryBytes).toBe(0)
-  expect(small.bodyRows).toBe(0)
-  expect(large.bodyRows).toBe(0)
   expect(small.sourceReceiptDecodes).toBe(0)
   expect(large.sourceReceiptDecodes).toBe(0)
-  expect(small.fullPlanRows).toBe(0)
-  expect(large.fullPlanRows).toBe(0)
+  expect(small.cleanupFactRows).toBe(0)
+  expect(large.cleanupFactRows).toBe(0)
+  expect(small.cleanupFactBytes).toBe(0)
+  expect(large.cleanupFactBytes).toBe(0)
+  expect(small.cleanupFactBodyRows).toBe(0)
+  expect(large.cleanupFactBodyRows).toBe(0)
+  expect(small.cleanupFactReceiptDecodes).toBe(0)
+  expect(large.cleanupFactReceiptDecodes).toBe(0)
+  expect(large.fullPlanRows).toBe(small.fullPlanRows)
   expect(small.hostCalls).toEqual([])
   expect(large.hostCalls).toEqual([])
   expect(small.gitCalls).toBe(0)
