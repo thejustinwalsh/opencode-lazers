@@ -80,8 +80,12 @@ function stripJsonComments(content: string): string {
 }
 
 /** Parses a `.fallowrc.json`/`.jsonc` text config. TOML configs are passed through as opaque text. */
-function parseJsonConfig(path: string, content: string): object | null {
-  const text = path.endsWith(".jsonc") ? stripJsonComments(content) : content
+function parseJsonConfig(content: string): object | null {
+  // Fallow accepts comments and trailing commas in both JSON config filenames.
+  const text = stripJsonComments(content).replace(
+    /("(?:\\.|[^"\\])*")|,\s*(?=[}\]])/g,
+    (match, string: string | undefined) => string ?? "",
+  )
   const parsed: unknown = JSON.parse(text)
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
     throw new Error("config-invalid: expected a JSON object")
@@ -131,7 +135,7 @@ export async function resolveFallowConfig(input: {
   if (repoFile) {
     const config =
       repoFile.path.endsWith(".json") || repoFile.path.endsWith(".jsonc")
-        ? parseJsonConfig(repoFile.path, repoFile.content)
+        ? parseJsonConfig(repoFile.content)
         : null
     if (config && isRemoteExtends(config))
       throw new Error("remote-extends-unsupported: config extends a remote URL")
