@@ -37,6 +37,7 @@ type RelayRpcOptions = { location: { directory: string }; signal: AbortSignal }
 
 type MainRelayOptions = {
   now?: () => number
+  onActivity?: (active: boolean) => void
 }
 
 const isRelayEvent = (event: unknown): event is RelayEvent => {
@@ -134,7 +135,7 @@ export class DesktopInferenceRelay {
   constructor(
     private readonly getClient: () => OpenCodeClient | undefined,
     private readonly signal: AbortSignal,
-    options: MainRelayOptions = {},
+    private readonly options: MainRelayOptions = {},
   ) {
     this.now = options.now ?? Date.now
   }
@@ -427,6 +428,7 @@ export class DesktopInferenceRelay {
     }
     if (this.active.size >= MAX_IN_FLIGHT) return undefined
     this.active.set(entry.key, entry)
+    if (this.active.size === 1) this.options.onActivity?.(true)
     return entry
   }
 
@@ -594,7 +596,9 @@ export class DesktopInferenceRelay {
   }
 
   private releaseLocal(entry: ActiveRequest) {
-    if (this.active.get(entry.key) === entry) this.active.delete(entry.key)
+    if (this.active.get(entry.key) !== entry) return
+    this.active.delete(entry.key)
+    if (this.active.size === 0) this.options.onActivity?.(false)
   }
 
   private forget(entry: ActiveRequest) {

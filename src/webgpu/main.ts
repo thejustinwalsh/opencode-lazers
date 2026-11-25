@@ -22,6 +22,7 @@ import {
   RENDERER_ARMED_STOP_MS,
 } from "./renderer-armed-capture.ts"
 import { DesktopInferenceRelay } from "./relay/desktop.ts"
+import { RendererActivity } from "./renderer-activity.ts"
 
 const ProcessLeaseSchema = Schema.Struct({
   ...ModelLeasePersistenceSchema.fields,
@@ -40,9 +41,13 @@ const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) 
 export const setupMain: Plugin.MainSetup = (ctx) => {
   // Main-only: renderer module evaluation must not read Node process exports.
   const processIdentity = `${pid}:${performance.timeOrigin}`
+  const rendererActivity = new RendererActivity(() =>
+    ctx.windows.list().map((window) => window.webContents),
+  )
   const inferenceRelay = new DesktopInferenceRelay(
     () => ctx.client,
     ctx.signal ?? new AbortController().signal,
+    { onActivity: (active) => rendererActivity.set(active) },
   )
   const configured = ctx.options.dataDirectory
   if (configured !== undefined && typeof configured !== "string")
@@ -185,6 +190,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     })
   }
   const watch = (window: NonNullable<ReturnType<typeof ctx.windows.get>>) => {
+    rendererActivity.watch(window.webContents)
     const disconnected = () => lost(window.id)
     const unresponsive = () => {
       const correlation = lifecycleData(window)
@@ -394,6 +400,8 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
           // A failed persistent write must leave the prior durable state unproven.
         }
         throw error
+      } finally {
+        rendererActivity.set(false)
       }
     })()
     return stopping

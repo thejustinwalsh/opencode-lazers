@@ -224,6 +224,50 @@ test("Desktop resync finds missed notifications and forwards to the default work
   relay.close()
 })
 
+test("renderer activity spans concurrent relay requests and ends on transport failure too", async () => {
+  const relay = new LocationInferenceRelay()
+  const completions: ((value: typeof result) => void)[] = []
+  let fail = false
+  const transport = fakeClient(relay, () => {
+    if (fail) throw new Error("transport broke")
+    return new Promise<typeof result>((resolve) => completions.push(resolve))
+  })
+  const activity: boolean[] = []
+  const main = new DesktopInferenceRelay(() => transport.client, new AbortController().signal, {
+    onActivity: (active) => activity.push(active),
+  })
+  try {
+    const first = relay.forward("ask", request, new AbortController().signal)
+    const second = relay.forward("ask", request, new AbortController().signal)
+    await main.resync()
+    await waitUntil(() => completions.length === 2)
+    expect(activity).toEqual([true])
+    completions[0]!(result)
+    await first
+    expect(activity).toEqual([true])
+    completions[1]!(result)
+    await second
+    await waitUntil(() => activity.length === 2)
+    expect(activity).toEqual([true, false])
+
+    fail = true
+    const failure = relay
+      .forward("ask", request, new AbortController().signal)
+      .catch((error) => error)
+    main.handleEvent({
+      type: `rpc.${InferenceRelay.id}.available`,
+      location: { directory: location },
+      data: { requestID: relay.discover().requests[0]!.requestID },
+    })
+    expect(await failure).toMatchObject({ message: expect.stringContaining("transport broke") })
+    await waitUntil(() => activity.length === 4)
+    expect(activity).toEqual([true, false, true, false])
+  } finally {
+    await main.close()
+    relay.close()
+  }
+})
+
 test("a ready renderer accepts a one-second request after handoff overhead without inflating it", async () => {
   let now = 10_000
   const relay = new LocationInferenceRelay(
