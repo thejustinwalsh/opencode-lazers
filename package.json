@@ -1,7 +1,16 @@
 {
   "name": "opencode-lazers",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.2.0",
+  "description": "Architect-led task orchestration and live agent panels for OpenCode.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thejustinwalsh/opencode-lazers.git"
+  },
+  "homepage": "https://tjw.dev/opencode-lazers/",
+  "bugs": "https://github.com/thejustinwalsh/opencode-lazers/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "packageManager": "bun@1.4.4-canary.20261030.1",
   "exports": {
@@ -13,7 +22,8 @@
   },
   "files": [
     "src",
-    "dist"
+    "dist",
+    "licenses"
   ],
   "scripts": {
     "package:release": "bun scripts/release-package.ts",

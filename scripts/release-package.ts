@@ -34,6 +34,7 @@ try {
   await Promise.all([
     writeFile(join(pkg, "package.json"), JSON.stringify(manifest, null, 2) + "\n"),
     cp(join(root, "README.md"), join(pkg, "README.md")),
+    cp(join(root, "licenses"), join(pkg, "licenses"), { recursive: true }),
     cp(join(root, "src"), join(pkg, "src"), {
       recursive: true,
       filter: (file) => !/\.(?:test|fixture)\.[cm]?[jt]sx?$/.test(basename(file)),

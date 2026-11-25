@@ -156,7 +156,7 @@ export const links = {
     "https://github.com/thejustinwalsh/opencode-lazers/blob/main/docs/tutorials/first-task.md",
   controls:
     "https://github.com/thejustinwalsh/opencode-lazers/blob/main/docs/reference/user-controls.md",
-  releases: "https://github.com/thejustinwalsh/opencode-lazers/releases",
+  npm: "https://www.npmjs.com/package/opencode-lazers",
   opencode: "https://opencode.ai",
   xstate: "https://stately.ai/docs/xstate",
   fallow: "https://fallow.tools",
