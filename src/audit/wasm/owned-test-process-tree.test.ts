@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import {
+  createWindowsProcessOwnership,
   hasWindowsProcessDescendants,
   terminateWindowsProcessTree,
   type WindowsProcessIdentity,
@@ -176,6 +177,41 @@ test("reports identity changes that race the Windows termination call", async ()
     "identity changed before termination",
   )
   expect(terminationAttempts).toBe(1)
+})
+
+test("observes a rejected Windows identity query before delayed cleanup consumes it", async () => {
+  const unhandled: unknown[] = []
+  const recordUnhandled = (reason: unknown) => unhandled.push(reason)
+  const identityFailure = new Error("Windows process identity query failed")
+  let rejectIdentity!: (error: Error) => void
+  const identity = new Promise<WindowsProcessIdentity | undefined>((_resolve, reject) => {
+    rejectIdentity = reject
+  })
+  const owned = createWindowsProcessOwnership(root.pid, identity)
+  const liveRoot: WindowsProcessRecord = { ...root, parentPid: 1 }
+  let processQueries = 0
+  const operations: WindowsProcessTreeOperations = {
+    async listProcesses() {
+      processQueries++
+      return [liveRoot]
+    },
+    async terminateProcess() {
+      return "terminated"
+    },
+  }
+
+  process.on("unhandledRejection", recordUnhandled)
+  try {
+    rejectIdentity(identityFailure)
+    await Bun.sleep(0)
+
+    expect(unhandled).toEqual([])
+    expect(owned.exitedAt).toBeUndefined()
+    await expect(terminateWindowsProcessTree(owned, operations)).rejects.toBe(identityFailure)
+    expect(processQueries).toBe(0)
+  } finally {
+    process.off("unhandledRejection", recordUnhandled)
+  }
 })
 
 test("refuses to terminate a reused root PID", async () => {

@@ -144,8 +144,12 @@ function observeWindowsProcessIdentity(pid: number): Promise<WindowsProcessIdent
   })
 }
 
-export function createWindowsProcessOwnership(pid: number): WindowsProcessOwnership {
-  return { pid, identity: observeWindowsProcessIdentity(pid) }
+export function createWindowsProcessOwnership(
+  pid: number,
+  identity: Promise<WindowsProcessIdentity | undefined> = observeWindowsProcessIdentity(pid),
+): WindowsProcessOwnership {
+  void identity.catch(() => undefined)
+  return { pid, identity }
 }
 
 function knowledgeFor(
