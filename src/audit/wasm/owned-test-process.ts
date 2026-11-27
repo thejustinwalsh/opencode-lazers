@@ -5,7 +5,11 @@ import {
   pumpOutput,
   withTimeout,
 } from "./owned-test-process-output.ts"
-import { terminateProcessTree, waitForProcessTreeExit } from "./owned-test-process-tree.ts"
+import {
+  registerOwnedProcessTree,
+  terminateProcessTree,
+  waitForProcessTreeExit,
+} from "./owned-test-process-tree.ts"
 import type { ProcessStream } from "./owned-test-process-output.ts"
 
 export interface OwnedTestProcessChild {
@@ -115,7 +119,7 @@ async function afterExit(
   processGroup: "detached" | "inherited",
 ): Promise<RunOutcome> {
   const ownsProcessTree = process.platform === "win32" || processGroup === "detached"
-  if (ownsProcessTree && !(await waitForProcessTreeExit(child.pid, PROCESS_GROUP_CHECK_MS)))
+  if (ownsProcessTree && !(await waitForProcessTreeExit(child.pid, PROCESS_GROUP_CHECK_MS, child)))
     return {
       kind: "descendants",
       error: new Error("Owned test subprocess exited while descendants remained"),
@@ -302,7 +306,7 @@ function spawnOwnedChild(
       ) as Record<string, string>)
     : undefined
   const spawn = options.spawn ?? ((cmd, spawnOptions) => Bun.spawn(cmd, spawnOptions))
-  return spawn(command, {
+  const child = spawn(command, {
     cwd: options.cwd,
     env: environment,
     stdin: "ignore",
@@ -312,6 +316,8 @@ function spawnOwnedChild(
       ? {}
       : { detached: (options.processGroup ?? "detached") === "detached" }),
   })
+  registerOwnedProcessTree(child)
+  return child
 }
 
 /**

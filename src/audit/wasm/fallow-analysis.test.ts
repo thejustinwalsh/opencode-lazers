@@ -4,6 +4,7 @@ import {
   closeOutstandingDirectAnalysisTestLifetimes,
   createDirectAnalysisTestRegistrar,
 } from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+import { withRepositorySnapshot } from "./repository-snapshot.ts"
 import {
   disposeFixture,
   makeFixture,
@@ -247,28 +248,31 @@ describe("both modules answer alike", () => {
 
 describe("this repository (invariants only; its findings change daily)", () => {
   test("every report runs without error, is deterministic, and has plausible counts, on both modules", async () => {
-    const sections = [
-      "deadCode",
-      "cycles",
-      "architecture",
-      "featureFlagReport",
-      "duplicationReport",
-      "health",
-    ]
-    const seen = new Map<string, string>()
-    for (const kind of moduleKinds)
-      for (const name of sections) {
-        const first = (await runOp(name, repoRoot, {}, {}, kind)).report
-        expect(first.kind ?? first.summary ?? first, `${kind} ${name}`).toBeTruthy()
-        const text = JSON.stringify(strip(first))
-        // Same module twice, and the other module, give the same bytes.
-        expect(JSON.stringify(strip((await runOp(name, repoRoot, {}, {}, kind)).report))).toBe(text)
-        const other = seen.get(name)
-        if (other !== undefined) expect(text, `${name} differs between modules`).toBe(other)
-        seen.set(name, text)
-        if (name === "deadCode") expect(first.total_issues).toBeGreaterThanOrEqual(0)
-        if (name === "duplicationReport")
-          expect(first.clone_groups.length).toBeGreaterThanOrEqual(0)
-      }
+    await withRepositorySnapshot(repoRoot, checkReports)
   }, 280_000)
 })
+
+async function checkReports(root: string): Promise<void> {
+  const sections = [
+    "deadCode",
+    "cycles",
+    "architecture",
+    "featureFlagReport",
+    "duplicationReport",
+    "health",
+  ]
+  const seen = new Map<string, string>()
+  for (const kind of moduleKinds)
+    for (const name of sections) {
+      const first = (await runOp(name, root, {}, {}, kind)).report
+      expect(first.kind ?? first.summary ?? first, `${kind} ${name}`).toBeTruthy()
+      const text = JSON.stringify(strip(first))
+      // Same module twice, and the other module, give the same bytes.
+      expect(JSON.stringify(strip((await runOp(name, root, {}, {}, kind)).report))).toBe(text)
+      const other = seen.get(name)
+      if (other !== undefined) expect(text, `${name} differs between modules`).toBe(other)
+      seen.set(name, text)
+      if (name === "deadCode") expect(first.total_issues).toBeGreaterThanOrEqual(0)
+      if (name === "duplicationReport") expect(first.clone_groups.length).toBeGreaterThanOrEqual(0)
+    }
+}
