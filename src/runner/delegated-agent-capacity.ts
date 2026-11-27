@@ -604,13 +604,25 @@ export class DelegatedAgentCapacity {
       )
       .get(requestKey)
     if (existing?.state === "queued") {
-      if (options.attemptID)
-        db.query(
-          "UPDATE delegated_agent_admissions SET attempt_id=?,updated_at=? WHERE id=? AND state='queued'",
-        ).run(options.attemptID, this.clock.now(), existing.id)
+      db.query(
+        `UPDATE delegated_agent_admissions
+         SET project_key=?,project_directory=?,attempt_id=COALESCE(?,attempt_id),updated_at=?
+         WHERE id=? AND state='queued'`,
+      ).run(
+        projectKey,
+        ordering.project_directory,
+        options.attemptID ?? null,
+        this.clock.now(),
+        existing.id,
+      )
       return existing.id
     }
-    if (existing?.state === "admitted" && !options.requeueAdmitted) return existing.id
+    if (existing?.state === "admitted" && !options.requeueAdmitted) {
+      db.query(
+        "UPDATE delegated_agent_admissions SET project_key=?,project_directory=?,updated_at=? WHERE id=? AND state='admitted'",
+      ).run(projectKey, ordering.project_directory, this.clock.now(), existing.id)
+      return existing.id
+    }
 
     const now = this.clock.now()
     const id = existing?.id ?? crypto.randomUUID()

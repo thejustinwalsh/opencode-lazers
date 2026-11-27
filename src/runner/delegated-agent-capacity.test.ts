@@ -345,6 +345,60 @@ test("scheduling and inspection snapshots do not settle admission rows", async (
   ).toBe("admitted")
 })
 
+test("an existing queued attempt follows the current project key without losing its queue position", async () => {
+  const f = fixture()
+  await f.capacity.ready()
+  const candidate = {
+    ...submitCandidate(f.store, f.repository, f.projectDirectory, 1),
+    attemptNumber: 1,
+  }
+  const legacy = new DelegatedAgentCapacity(f.repository, `path:${f.projectDirectory}`)
+  await legacy.ready()
+  const requestID = await legacy.ensureRunnerQueued(candidate)
+  const before = f.repository.read((db) =>
+    db
+      .query<{ queue_order: number }, [string]>(
+        "SELECT queue_order FROM delegated_agent_admissions WHERE id=?",
+      )
+      .get(requestID)!,
+  )
+  const attemptID = crypto.randomUUID()
+
+  expect(await f.capacity.admitRunnerAttempt(candidate, attemptID)).toBe(true)
+  expect(
+    f.repository.read((db) =>
+      db
+        .query(
+          "SELECT id,project_key,state,attempt_id,queue_order FROM delegated_agent_admissions WHERE id=?",
+        )
+        .get(requestID),
+    ),
+  ).toEqual({
+    id: requestID,
+    project_key: "github.com/example/project",
+    state: "admitted",
+    attempt_id: attemptID,
+    queue_order: before.queue_order,
+  })
+})
+
+test("an admitted attempt changes project identity without allocating another slot", async () => {
+  const f = fixture()
+  await f.capacity.ready()
+  const candidate = {
+    ...submitCandidate(f.store, f.repository, f.projectDirectory, 1),
+    attemptNumber: 1,
+  }
+  const legacy = new DelegatedAgentCapacity(f.repository, `path:${f.projectDirectory}`)
+  await legacy.ready()
+  const requestID = await legacy.ensureRunnerQueued(candidate)
+  const attemptID = insertAdmittedAttempt(f.repository, legacy, requestID, candidate)
+  expect(typeof attemptID).toBe("string")
+  expect(await f.capacity.admitRunnerAttempt(candidate, attemptID as string)).toBe(true)
+  expect(await f.capacity.settings()).toMatchObject({ active: 1, queued: 0 })
+  expect(await f.capacity.admitRunnerAttempt(candidate, "unrelated-attempt")).toBe(false)
+})
+
 test("a dead native queue owner cannot leave an orphan head ahead of live helpers", async () => {
   const f = fixture()
   const projectKey = "github.com/example/project"
