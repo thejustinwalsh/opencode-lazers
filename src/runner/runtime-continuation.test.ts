@@ -14,6 +14,42 @@ import {
 
 useRuntimeFixtureCleanup()
 
+test("same-attempt correction delivers the Architect reason and its own failed check", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: "echo current-check-defect >&2; exit 7",
+  })
+  await runPlan(f)
+  await drive(f.runtime, 8)
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+
+  await f.runtime.command(
+    {
+      requestID: "correct-current-failed-check",
+      planID: f.receipt.planID,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      action: "resume",
+      reason: "Repair the current check before reporting completion",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const resumed = f.store.attempts(f.receipt.planID)[0]!
+  const text = f.sessions
+    .get(attempt.session_id)!
+    .messages.find((message) => message.id === resumed.message_id)?.text
+  expect(text).toContain("Repair the current check before reporting completion")
+  expect(text).toContain("current-check-defect")
+  expect(text).toContain("exit 7")
+  expect(text).toContain(`lz-inspect-plan with planID ${f.receipt.planID}`)
+  expect(text).not.toContain("stderr:\n")
+  expect(resumed.id).toBe(attempt.id)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
 test("an explicit resume continues one process-replaced interrupted attempt without inventing idle proof", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)
@@ -95,6 +131,9 @@ test("an explicit resume continues one process-replaced interrupted attempt with
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
   expect(f.store.attempts(planID)).toHaveLength(1)
   expect(f.store.attempts(planID)[0]?.message_id).toBe(assigned.message_id)
+  expect(worker.messages.find((message) => message.id === assigned.message_id)?.text).toContain(
+    resume.reason,
+  )
 
   worker.busy = false
   worker.outcome = undefined

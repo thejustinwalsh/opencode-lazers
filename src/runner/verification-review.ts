@@ -672,14 +672,25 @@ export class VerificationReview {
       }
     return missing
   }
-  /** Failing check output from the previous attempt, so a repair attempt sees every defect. */
+  /** Supply the correction and failed checks for the exact resumed input or a repair attempt. */
   repairFailureBrief(attempt: AttemptRow): string {
-    if (!JSON.parse(attempt.policy).repairAttempt) return ""
-    const previous = this.store
-      .attempts(attempt.plan_id)
-      .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
-      .at(-1)
-    if (!previous) return ""
+    const resumed = this.store.latestTransition<{
+      attemptID?: string
+      messageID?: string
+      reason?: string
+    }>(attempt.plan_id, attempt.task_id, "ATTEMPT_RESUMED")
+    const continuing = resumed?.attemptID === attempt.id && resumed.messageID === attempt.message_id
+    const previous = continuing
+      ? attempt
+      : JSON.parse(attempt.policy).repairAttempt
+        ? this.store
+            .attempts(attempt.plan_id)
+            .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
+            .at(-1)
+        : undefined
+    const correction =
+      continuing && resumed.reason ? `\n\nArchitect correction: ${resumed.reason}` : ""
+    if (!previous) return correction
     const fenced = (label: string, text: string) => {
       if (!text.trim()) return ""
       let fence = "```"
@@ -687,19 +698,31 @@ export class VerificationReview {
         if (match[0].length >= fence.length) fence = "`".repeat(match[0].length + 1)
       return `\n${label}:\n${fence}\n${text}\n${fence}`
     }
+    const checkIDs = [
+      ...new Set([
+        ...this.store.repository
+          .get(attempt.task_id)!
+          .proposal.verification.map((check) => check.id),
+        FALLOW_CHECK_ID,
+      ]),
+    ]
     const sections = this.store
       .read((db) =>
         db
-          .query<{ body: string }, [string]>(
-            "SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' ORDER BY rowid",
+          .query<{ body: string }, [string, string, number]>(
+            `SELECT body FROM runner_evidence WHERE rowid IN (
+              SELECT MAX(rowid) FROM runner_evidence WHERE attempt_id=? AND kind='verification'
+              AND json_extract(body,'$.id') IN (SELECT value FROM json_each(?))
+              GROUP BY json_extract(body,'$.id')
+            ) ORDER BY rowid LIMIT ?`,
           )
-          .all(previous.id),
+          .all(previous.id, JSON.stringify(checkIDs), checkIDs.length),
       )
       .map((row) => JSON.parse(row.body) as RunnerCheckReceipt)
       .filter((receipt) => !checkSucceeded(receipt))
       .map(
         (receipt) =>
-          `- ${receipt.id}: \`${receipt.command}\` exit ${receipt.exitCode ?? "unknown"}${fenced("stdout", receipt.stdout)}${fenced("stderr", receipt.stderr)}`,
+          `- ${receipt.id}: \`${receipt.command}\` exit ${receipt.exitCode ?? "unknown"}${continuing ? "" : `${fenced("stdout", receipt.stdout)}${fenced("stderr", receipt.stderr)}`}`,
       )
     const reported = this.store.latestTransition<ScopeReport>(
       attempt.plan_id,
@@ -721,9 +744,9 @@ export class VerificationReview {
             .join("\n\n")
         : ""
     const checks = sections.length
-      ? `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
+      ? `\n\n${continuing ? "This attempt" : "The previous attempt"} failed verification. Fix every failing check:\n${sections.join("\n")}${continuing ? `\nCheck output: lz-inspect-plan with planID ${attempt.plan_id} and full=true.` : ""}`
       : ""
-    return `${checks}${scope ? `\n\n${scope}` : ""}`
+    return `${correction}${checks}${scope ? `\n\n${scope}` : ""}`
   }
   failAttempt(
     plan: PlanRow,
