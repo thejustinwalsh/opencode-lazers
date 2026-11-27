@@ -1,10 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { Window } from "happy-dom"
-import solid from "vite-plugin-solid"
-import { build } from "vite"
+import type { Window as HappyWindow } from "happy-dom"
 import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { installTasksLayout } from "../../../test/observation-panels/virtual-layout.ts"
+import { compile } from "../src/story.ts"
+import { stories as storySources } from "../stories/index.ts"
 
 /**
  * Smoke test: each story's panel mounts in a DOM, every chapter can be entered settled, and every
@@ -16,7 +15,7 @@ const outDir = fileURLToPath(
   new URL("../../../node_modules/.cache/website-demo-test", import.meta.url),
 )
 type Bundle = typeof import("./entry.ts")
-let bundle: Bundle
+let bundle: Bundle | undefined
 
 const globals = [
   "window",
@@ -46,6 +45,12 @@ const globals = [
 ] as const
 
 beforeAll(async () => {
+  // Parent enumerates chapters from pure definitions; only a chapter child needs the DOM bundle.
+  if (!process.env.ONLY) return
+  const [{ build }, { default: solid }] = await Promise.all([
+    import("vite"),
+    import("vite-plugin-solid"),
+  ])
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
   await build({
@@ -64,9 +69,15 @@ beforeAll(async () => {
   })
   bundle = (await import(pathToFileURL(`${outDir}/demo-test.js`).href)) as Bundle
 })
-afterAll(() => rm(outDir, { recursive: true, force: true }))
+afterAll(async () => {
+  if (process.env.ONLY) await rm(outDir, { recursive: true, force: true })
+})
 
-async function inDom<T>(run: (dom: Window) => Promise<T>): Promise<T> {
+async function inDom<T>(run: (dom: HappyWindow) => Promise<T>): Promise<T> {
+  const [{ Window }, { installTasksLayout }] = await Promise.all([
+    import("happy-dom"),
+    import("../../../test/observation-panels/virtual-layout.ts"),
+  ])
   const dom = new Window({ url: "https://demo.localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 420 })
   const uninstall = installTasksLayout(dom)
@@ -120,7 +131,7 @@ async function inDom<T>(run: (dom: Window) => Promise<T>): Promise<T> {
   }
 }
 
-const realStories = () => (bundle?.stories ?? []).map((source) => bundle.compile(source))
+const realStories = () => storySources.map((source) => compile(source))
 
 /**
  * Panels keep module-level view caches, and Solid delegates events on the first document it sees,
@@ -145,6 +156,8 @@ test("every chapter of every story performs its actions on real elements", async
 
 test("one chapter performs its actions", async () => {
   if (!process.env.ONLY) return
+  const activeBundle = bundle
+  if (!activeBundle) throw new Error("The chapter child did not build its DOM bundle")
   // One DOM for the whole run: Solid delegates events on the first document it renders into.
   await inDom(async (dom) => {
     for (const story of realStories()) {
@@ -155,12 +168,12 @@ test("one chapter performs its actions", async () => {
         const warn = console.warn
         console.warn = (...args: unknown[]) => void warnings.push(args.join(" "))
         try {
-          const module = await bundle.panels[story.panel]()
+          const module = await activeBundle.panels[story.panel]()
           const root = dom.document.createElement("div")
           dom.document.body.append(root)
-          let current = bundle.dataAt(story, 0)
+          let current = activeBundle.dataAt(story, 0)
           const host: { mounted?: { changed(data: never): void; dispose(): void } } = {}
-          const engine = new bundle.Engine({
+          const engine = new activeBundle.Engine({
             story,
             root: root as never,
             post: () => {},
