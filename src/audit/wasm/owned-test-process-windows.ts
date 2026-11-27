@@ -130,9 +130,14 @@ const nativeWindowsProcessTreeOperations: WindowsProcessTreeOperations = {
   terminateProcess: terminateWindowsProcess,
 }
 
-export function observeWindowsProcessIdentity(
-  pid: number,
-): Promise<WindowsProcessIdentity | undefined> {
+interface ProcessTreeKnowledge {
+  known: Map<number, WindowsProcessIdentity>
+  exitedAt: Map<number, number>
+}
+
+const processTreeKnowledge = new WeakMap<WindowsProcessOwnership, ProcessTreeKnowledge>()
+
+function observeWindowsProcessIdentity(pid: number): Promise<WindowsProcessIdentity | undefined> {
   return listWindowsProcesses().then((processes) => {
     const process = processes.find((entry) => entry.pid === pid)
     return process ? { pid, startedAt: process.startedAt } : undefined
@@ -143,115 +148,242 @@ export function createWindowsProcessOwnership(pid: number): WindowsProcessOwners
   return { pid, identity: observeWindowsProcessIdentity(pid) }
 }
 
+function knowledgeFor(
+  ownership: WindowsProcessOwnership,
+  root: WindowsProcessIdentity,
+): ProcessTreeKnowledge {
+  let knowledge = processTreeKnowledge.get(ownership)
+  if (!knowledge) {
+    knowledge = {
+      known: new Map([[root.pid, root]]),
+      exitedAt: new Map(),
+    }
+    processTreeKnowledge.set(ownership, knowledge)
+  }
+  return knowledge
+}
+
+function validateRootObservation(
+  root: WindowsProcessIdentity,
+  processes: readonly WindowsProcessRecord[],
+  rootExitedAt: number | undefined,
+): WindowsProcessRecord | undefined {
+  const currentRoot = processes.find((entry) => entry.pid === root.pid)
+  if (currentRoot && currentRoot.startedAt !== root.startedAt)
+    throw new Error(`Windows root PID ${root.pid} no longer has its observed identity`)
+  if (!currentRoot && rootExitedAt === undefined)
+    throw new Error(`Windows root PID ${root.pid} exited without an observed exit time`)
+  return currentRoot
+}
+
+function isOwnedChild(
+  process: WindowsProcessRecord,
+  parent: WindowsProcessIdentity,
+  byPID: ReadonlyMap<number, WindowsProcessRecord>,
+  root: WindowsProcessIdentity,
+  rootExitedAt: number | undefined,
+  descendantExitTimes: ReadonlyMap<number, number>,
+): boolean {
+  if (process.startedAt < parent.startedAt) return false
+  const currentParent = byPID.get(parent.pid)
+  if (currentParent) return currentParent.startedAt === parent.startedAt
+  const parentExitedAt =
+    parent.pid === root.pid ? rootExitedAt : descendantExitTimes.get(parent.pid)
+  return parentExitedAt !== undefined && process.startedAt <= parentExitedAt
+}
+
+function knownOwnedIdentity(
+  process: WindowsProcessRecord,
+  root: WindowsProcessIdentity,
+  rootExitedAt: number | undefined,
+  byPID: ReadonlyMap<number, WindowsProcessRecord>,
+  known: Map<number, WindowsProcessIdentity>,
+  descendantExitTimes: ReadonlyMap<number, number>,
+): WindowsProcessIdentity | undefined {
+  const parent = known.get(process.parentPid)
+  if (!parent || !isOwnedChild(process, parent, byPID, root, rootExitedAt, descendantExitTimes))
+    return undefined
+  const existing = known.get(process.pid)
+  if (existing && existing.startedAt !== process.startedAt) return undefined
+  const identity = existing ?? { pid: process.pid, startedAt: process.startedAt }
+  if (!existing) known.set(process.pid, identity)
+  return identity
+}
+
+function discoverSnapshotDescendants(
+  processes: readonly WindowsProcessRecord[],
+  root: WindowsProcessIdentity,
+  rootExitedAt: number | undefined,
+  known: Map<number, WindowsProcessIdentity>,
+  descendantExitTimes: ReadonlyMap<number, number>,
+  descendants: Map<number, WindowsProcessIdentity>,
+): boolean {
+  const byPID = new Map(processes.map((entry) => [entry.pid, entry]))
+  let added = false
+  for (const process of processes) {
+    if (process.pid === root.pid) continue
+    const alreadyKnown = known.has(process.pid)
+    const identity = knownOwnedIdentity(
+      process,
+      root,
+      rootExitedAt,
+      byPID,
+      known,
+      descendantExitTimes,
+    )
+    if (!identity) continue
+    descendants.set(process.pid, identity)
+    if (!alreadyKnown) added = true
+  }
+  return added
+}
+
+function recordExitedDescendants(
+  root: WindowsProcessIdentity,
+  processes: readonly WindowsProcessRecord[],
+  known: ReadonlyMap<number, WindowsProcessIdentity>,
+  descendantExitTimes: Map<number, number>,
+): void {
+  const byPID = new Map(processes.map((entry) => [entry.pid, entry]))
+  for (const identity of known.values()) {
+    if (identity.pid === root.pid) continue
+    const current = byPID.get(identity.pid)
+    if (current && current.startedAt !== identity.startedAt)
+      throw new Error(`Windows descendant PID ${identity.pid} no longer has its observed identity`)
+    if (!current && !descendantExitTimes.has(identity.pid))
+      descendantExitTimes.set(identity.pid, Date.now())
+  }
+}
+
 function descendantsOf(
   root: WindowsProcessIdentity,
   processes: readonly WindowsProcessRecord[],
   rootExitedAt: number | undefined,
   known: Map<number, WindowsProcessIdentity>,
+  descendantExitTimes: Map<number, number>,
 ): WindowsProcessIdentity[] {
-  const byPID = new Map(processes.map((entry) => [entry.pid, entry]))
-  const currentRoot = byPID.get(root.pid)
-  if (currentRoot && currentRoot.startedAt !== root.startedAt)
-    throw new Error(`Windows root PID ${root.pid} no longer has its observed identity`)
-  if (!currentRoot && rootExitedAt === undefined)
-    throw new Error(`Windows root PID ${root.pid} exited without an observed exit time`)
-
+  validateRootObservation(root, processes, rootExitedAt)
+  recordExitedDescendants(root, processes, known, descendantExitTimes)
   const descendants = new Map<number, WindowsProcessIdentity>()
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const process of processes) {
-      if (process.pid === root.pid) continue
-      const parent = known.get(process.parentPid)
-      if (!parent) continue
-      const currentParent = byPID.get(parent.pid)
-      if (currentParent && currentParent.startedAt !== parent.startedAt) continue
-      const exitBoundary = currentParent || parent.pid !== root.pid ? undefined : rootExitedAt
-      if (!currentParent && exitBoundary === undefined) continue
-      if (process.startedAt < parent.startedAt) continue
-      if (exitBoundary !== undefined && process.startedAt > exitBoundary) continue
-
-      const existing = known.get(process.pid)
-      if (existing && existing.startedAt !== process.startedAt) continue
-      if (!existing) {
-        const identity = { pid: process.pid, startedAt: process.startedAt }
-        known.set(process.pid, identity)
-        descendants.set(process.pid, identity)
-        changed = true
-      } else if (process.pid !== root.pid) {
-        descendants.set(process.pid, existing)
-      }
-    }
-  }
+  let added: boolean
+  do {
+    added = discoverSnapshotDescendants(
+      processes,
+      root,
+      rootExitedAt,
+      known,
+      descendantExitTimes,
+      descendants,
+    )
+  } while (added)
   return [...descendants.values()]
+}
+
+async function ownedRootIdentity(
+  ownership: WindowsProcessOwnership,
+): Promise<WindowsProcessIdentity> {
+  const root = await ownership.identity
+  if (!root || root.pid !== ownership.pid)
+    throw new Error(`Windows root PID ${ownership.pid} identity could not be observed`)
+  return root
 }
 
 export async function hasWindowsProcessDescendants(
   ownership: WindowsProcessOwnership,
   operations: WindowsProcessTreeOperations = nativeWindowsProcessTreeOperations,
 ): Promise<boolean> {
-  const root = await ownership.identity
-  if (!root || root.pid !== ownership.pid)
-    throw new Error(`Windows root PID ${ownership.pid} identity could not be observed`)
+  const root = await ownedRootIdentity(ownership)
   const processes = await operations.listProcesses()
-  const known = new Map([[root.pid, root]])
-  return descendantsOf(root, processes, ownership.exitedAt, known).length > 0
+  const knowledge = knowledgeFor(ownership, root)
+  return (
+    descendantsOf(root, processes, ownership.exitedAt, knowledge.known, knowledge.exitedAt).length >
+    0
+  )
+}
+
+async function terminateOwnedProcess(
+  identity: WindowsProcessIdentity,
+  subject: "root" | "descendant",
+  operations: WindowsProcessTreeOperations,
+): Promise<void> {
+  const result = await operations.terminateProcess(identity)
+  if (result === "identity-mismatch")
+    throw new Error(`Windows ${subject} PID ${identity.pid} identity changed before termination`)
+  if (result === "uncertain")
+    throw new Error(`Windows ${subject} PID ${identity.pid} termination could not be confirmed`)
+}
+
+async function terminateRoot(
+  ownership: WindowsProcessOwnership,
+  root: WindowsProcessIdentity,
+  observedRoot: WindowsProcessRecord | undefined,
+  operations: WindowsProcessTreeOperations,
+): Promise<number> {
+  if (observedRoot) {
+    await terminateOwnedProcess(root, "root", operations)
+    ownership.exitedAt ??= Date.now()
+    return ownership.exitedAt
+  }
+  if (ownership.exitedAt === undefined)
+    throw new Error(`Windows root PID ${root.pid} exited without an observed exit time`)
+  return ownership.exitedAt
+}
+
+function orderedTargets(
+  pending: readonly WindowsProcessIdentity[],
+  discovered: readonly WindowsProcessIdentity[],
+): WindowsProcessIdentity[] {
+  const targets = new Map([...pending, ...discovered].map((entry) => [entry.pid, entry]))
+  return [...targets.values()].sort((left, right) => right.startedAt - left.startedAt)
+}
+
+async function terminateDescendantRound(
+  root: WindowsProcessIdentity,
+  exitedAt: number,
+  known: Map<number, WindowsProcessIdentity>,
+  descendantExitTimes: Map<number, number>,
+  pending: WindowsProcessIdentity[],
+  operations: WindowsProcessTreeOperations,
+): Promise<{ rootAlive: boolean; pending: WindowsProcessIdentity[] }> {
+  const currentProcesses = await operations.listProcesses()
+  const discovered = descendantsOf(root, currentProcesses, exitedAt, known, descendantExitTimes)
+  for (const target of orderedTargets(pending, discovered))
+    await terminateOwnedProcess(target, "descendant", operations)
+
+  const remainingProcesses = await operations.listProcesses()
+  const remainingRoot = validateRootObservation(root, remainingProcesses, exitedAt)
+  const remaining = descendantsOf(root, remainingProcesses, exitedAt, known, descendantExitTimes)
+  return { rootAlive: remainingRoot !== undefined, pending: remaining }
 }
 
 export async function terminateWindowsProcessTree(
   ownership: WindowsProcessOwnership,
   operations: WindowsProcessTreeOperations = nativeWindowsProcessTreeOperations,
 ): Promise<void> {
-  const root = await ownership.identity
-  if (!root || root.pid !== ownership.pid)
-    throw new Error(`Windows root PID ${ownership.pid} identity could not be observed`)
-
-  let exitedAt = ownership.exitedAt
-  const known = new Map<number, WindowsProcessIdentity>([[root.pid, root]])
+  const root = await ownedRootIdentity(ownership)
+  const knowledge = knowledgeFor(ownership, root)
   const initialProcesses = await operations.listProcesses()
-  const initialRoot = initialProcesses.find((entry) => entry.pid === root.pid)
-  if (initialRoot && initialRoot.startedAt !== root.startedAt)
-    throw new Error(`Windows root PID ${root.pid} no longer has its observed identity`)
-  const initialDescendants = descendantsOf(root, initialProcesses, exitedAt, known)
+  const initialRoot = validateRootObservation(root, initialProcesses, ownership.exitedAt)
+  let pending = descendantsOf(
+    root,
+    initialProcesses,
+    ownership.exitedAt,
+    knowledge.known,
+    knowledge.exitedAt,
+  )
+  const exitedAt = await terminateRoot(ownership, root, initialRoot, operations)
 
-  if (initialRoot) {
-    const result = await operations.terminateProcess(root)
-    if (result === "identity-mismatch")
-      throw new Error(`Windows root PID ${root.pid} identity changed before termination`)
-    if (result === "uncertain")
-      throw new Error(`Windows root PID ${root.pid} termination could not be confirmed`)
-    exitedAt ??= Date.now()
-    ownership.exitedAt ??= exitedAt
-  } else if (exitedAt === undefined) {
-    throw new Error(`Windows root PID ${root.pid} exited without an observed exit time`)
-  }
-  known.set(root.pid, root)
-
-  let pending = initialDescendants
   for (let round = 0; round < PROCESS_TREE_TERMINATION_ROUNDS; round++) {
-    const currentProcesses = await operations.listProcesses()
-    const discovered = descendantsOf(root, currentProcesses, exitedAt, known)
-    const targets = new Map([...pending, ...discovered].map((entry) => [entry.pid, entry]))
-    for (const target of [...targets.values()].sort(
-      (left, right) => right.startedAt - left.startedAt,
-    )) {
-      const result = await operations.terminateProcess(target)
-      if (result === "identity-mismatch")
-        throw new Error(`Windows descendant PID ${target.pid} identity changed before termination`)
-      if (result === "uncertain")
-        throw new Error(`Windows descendant PID ${target.pid} termination could not be confirmed`)
-      if (result === "terminated" || result === "already-exited") {
-        const identity = known.get(target.pid)
-        if (identity) known.set(target.pid, identity)
-      }
-    }
-
-    const remainingProcesses = await operations.listProcesses()
-    const remainingRoot = remainingProcesses.find((entry) => entry.pid === root.pid)
-    if (remainingRoot && remainingRoot.startedAt !== root.startedAt)
-      throw new Error(`Windows root PID ${root.pid} identity changed during cleanup`)
-    pending = descendantsOf(root, remainingProcesses, exitedAt, known)
-    if (!remainingRoot && pending.length === 0) return
+    const result = await terminateDescendantRound(
+      root,
+      exitedAt,
+      knowledge.known,
+      knowledge.exitedAt,
+      pending,
+      operations,
+    )
+    pending = result.pending
+    if (!result.rootAlive && pending.length === 0) return
   }
 
   throw new Error("Windows process-tree termination could not be confirmed")

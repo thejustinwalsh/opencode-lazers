@@ -5,7 +5,14 @@ import {
   createDirectAnalysisTestRegistrar,
 } from "./resource-lifetime/direct-analysis-test-lifetime.ts"
 import { withRepositorySnapshot } from "./repository-snapshot.ts"
-import { disposeFixture, makeFixture, moduleKinds, repoRoot, runOp } from "./test-support.ts"
+import {
+  disposeFixture,
+  makeFixture,
+  moduleKinds,
+  repoRoot,
+  runOp,
+  trackedSources,
+} from "./test-support.ts"
 
 afterEach(closeOutstandingDirectAnalysisTestLifetimes)
 const test = createDirectAnalysisTestRegistrar(bunTest)

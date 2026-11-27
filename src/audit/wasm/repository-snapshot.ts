@@ -10,6 +10,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { closeDirectAnalysisScope } from "./resource-lifetime/direct-analysis-scope.ts"
 import { trackedSources } from "./test-support.ts"
 
 function commitSnapshot(root: string, message: string): void {
@@ -51,6 +52,10 @@ export async function withRepositorySnapshot<T>(
     commitSnapshot(snapshotRoot, "snapshot")
     return await run(snapshotRoot)
   } finally {
-    rmSync(snapshotRoot, { recursive: true, force: true })
+    try {
+      await closeDirectAnalysisScope(snapshotRoot)
+    } finally {
+      rmSync(snapshotRoot, { recursive: true, force: true })
+    }
   }
 }
