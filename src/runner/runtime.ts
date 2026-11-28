@@ -1215,10 +1215,9 @@ export class TaskRuntime {
         })
         if (heartbeatFailed) throw heartbeatError
       }
-      if (waits.length)
-        await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
-          this.queueReview.requestQueueReview(waits, fence),
-        )
+      await sectionAsync("tick:queueReview", () =>
+        this.queueReview.requestQueueReview(waits, fence),
+      )
       // Worktree cleanup of cancelled and blocked plans holds no dispatch reservation, so it runs
       // after the plans that can make progress: a slow removal delays only itself.
       const terminalCleanupPlanIDs = section("tick:terminalCleanupPlanIDs", () =>
