@@ -492,3 +492,173 @@ test("ambiguous creation metadata cannot bind the wrong admitted helper", async 
   ).toBeUndefined()
   expect(await f.capacity.settings()).toMatchObject({ active: 2 })
 })
+
+test("registered project capacity includes workers admitted before path identity resolves", async () => {
+  const f = fixture()
+  await setLimit(f.capacity, f.repository, 1)
+  const pathCapacity = new DelegatedAgentCapacity(f.repository, `path:${f.projectDirectory}`)
+  await pathCapacity.ready()
+  const first = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const request = await pathCapacity.ensureRunnerQueued({ ...first, attemptNumber: 1 })
+  const attempt = insertAdmittedAttempt(f.repository, pathCapacity, request, first)
+  expect(typeof attempt).toBe("string")
+  const before = f.repository.read((db) =>
+    db.query("SELECT id,queue_order FROM delegated_agent_admissions WHERE id=?").get(request),
+  )
+  f.repository.atomic((db) => {
+    db.query("INSERT INTO lazers_projects(key,created_at) VALUES(?,?)").run(
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+    db.query("INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)").run(
+      f.projectDirectory,
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+  })
+  const second = submitCandidate(f.store, f.repository, f.projectDirectory, 2)
+  const next = await f.capacity.ensureRunnerQueued({ ...second, attemptNumber: 1 })
+  expect(insertAdmittedAttempt(f.repository, f.capacity, next, second)).toBe(false)
+  expect(await pathCapacity.key()).toBe("github.com/example/project")
+  expect(await pathCapacity.settings()).toMatchObject({ limit: 1, active: 1, queued: 1 })
+  expect(await f.capacity.settings()).toMatchObject({ limit: 1, active: 1, queued: 1 })
+  expect(
+    f.repository.read((db) =>
+      db.query("SELECT id,queue_order FROM delegated_agent_admissions WHERE id=?").get(request),
+    ),
+  ).toEqual(before)
+  expect(
+    f.repository.read((db) =>
+      db.query("SELECT state FROM runner_attempts WHERE id=?").get(attempt),
+    ),
+  ).toEqual({ state: "preparing" })
+  f.repository.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='verifying' WHERE id=?").run(attempt),
+  )
+  expect(typeof insertAdmittedAttempt(f.repository, f.capacity, next, second)).toBe("string")
+  expect(await pathCapacity.settings()).toMatchObject({ limit: 1, active: 1, queued: 0 })
+})
+
+test("a Git fallback uses the registered capacity pool without rewriting another project", async () => {
+  const f = fixture()
+  await setLimit(f.capacity, f.repository, 1)
+  const first = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const request = await f.capacity.ensureRunnerQueued({ ...first, attemptNumber: 1 })
+  expect(typeof insertAdmittedAttempt(f.repository, f.capacity, request, first)).toBe("string")
+  f.repository.atomic((db) => {
+    db.query("INSERT INTO lazers_projects(key,created_at) VALUES(?,?)").run(
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+    db.query("INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)").run(
+      f.projectDirectory,
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+  })
+  const other = new TaskRepository(f.databasePath, join(f.root, "other-project"))
+  repositories.push(other)
+  new RunnerStore(other)
+  const otherCapacity = new DelegatedAgentCapacity(other, "github.com/example/other")
+  const helper = await otherCapacity.ensureNativeQueued({
+    parentSessionID: "other-architect",
+    toolCallID: "other-tool",
+    agent: "research",
+    description: "Other project",
+  })
+  const fallback = new DelegatedAgentCapacity(f.repository, `path:${f.projectDirectory}`)
+  await fallback.ready()
+  const second = submitCandidate(f.store, f.repository, f.projectDirectory, 2)
+  const next = await fallback.ensureRunnerQueued({ ...second, attemptNumber: 1 })
+  expect(insertAdmittedAttempt(f.repository, fallback, next, second)).toBe(false)
+  expect(await fallback.settings()).toMatchObject({ limit: 1, active: 1, queued: 1 })
+  expect(
+    f.repository.read((db) =>
+      db.query("SELECT project_key,state FROM delegated_agent_admissions WHERE id=?").get(helper),
+    ),
+  ).toEqual({ project_key: "github.com/example/other", state: "queued" })
+})
+
+test("a native helper and a runner share capacity after late project registration", async () => {
+  const f = fixture()
+  await setLimit(f.capacity, f.repository, 1)
+  const fallback = new DelegatedAgentCapacity(f.repository, `path:${f.projectDirectory}`)
+  const helper = await fallback.ensureNativeQueued({
+    parentSessionID: "architect",
+    toolCallID: "research-tool",
+    agent: "research",
+    description: "Research",
+  })
+  await fallback.waitForNative(helper, AbortSignal.timeout(1000))
+  f.repository.atomic((db) => {
+    db.query("INSERT INTO lazers_projects(key,created_at) VALUES(?,?)").run(
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+    db.query("INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)").run(
+      f.projectDirectory,
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+  })
+  const next = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const request = await f.capacity.ensureRunnerQueued({ ...next, attemptNumber: 1 })
+  expect(insertAdmittedAttempt(f.repository, f.capacity, request, next)).toBe(false)
+  expect(await fallback.settings()).toMatchObject({ limit: 1, active: 1, queued: 1 })
+  await fallback.releaseNativeRequest(helper)
+  expect(typeof insertAdmittedAttempt(f.repository, f.capacity, request, next)).toBe("string")
+  expect(await fallback.settings()).toMatchObject({ limit: 1, active: 1, queued: 0 })
+})
+
+test("a queued native waiter keeps its request through a project identity change", async () => {
+  const f = fixture()
+  const pathKey = `path:${f.projectDirectory}`
+  setProjectSetting(f.repository, pathKey, "limit", 1)
+  let wake!: () => void
+  const sleeping = Promise.withResolvers<void>()
+  const fallback = new DelegatedAgentCapacity(f.repository, pathKey, {
+    now: Date.now,
+    sleep: async () =>
+      new Promise<void>((resolve) => {
+        wake = resolve
+        sleeping.resolve()
+      }),
+  })
+  const blocker = await fallback.ensureNativeQueued({
+    parentSessionID: "architect",
+    toolCallID: "first",
+    agent: "research",
+    description: "First",
+  })
+  await fallback.waitForNative(blocker, AbortSignal.timeout(1000))
+  const request = await fallback.ensureNativeQueued({
+    parentSessionID: "architect",
+    toolCallID: "second",
+    agent: "research",
+    description: "Second",
+  })
+  const waiting = fallback.waitForNative(request, new AbortController().signal)
+  await sleeping.promise
+  f.repository.atomic((db) => {
+    db.query("INSERT INTO lazers_projects(key,created_at) VALUES(?,?)").run(
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+    db.query("INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)").run(
+      f.projectDirectory,
+      "github.com/example/project",
+      new Date().toISOString(),
+    )
+  })
+  const canonical = new DelegatedAgentCapacity(f.repository, "github.com/example/project")
+  await canonical.ready()
+  await canonical.releaseNativeRequest(blocker)
+  wake()
+  await waiting
+  expect(await fallback.settings()).toMatchObject({ limit: 3, active: 1, queued: 0 })
+  expect(
+    f.repository.read((db) =>
+      db.query("SELECT project_key,state FROM delegated_agent_admissions WHERE id=?").get(request),
+    ),
+  ).toEqual({ project_key: "github.com/example/project", state: "admitted" })
+})
