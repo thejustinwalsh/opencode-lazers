@@ -3,7 +3,7 @@ import { Command, MenuItem, Panel, Style } from "@opencode/plugin/gui"
 import type { PanelProps } from "@opencode/plugin/gui"
 import type { Component } from "solid-js"
 import { registerRadarPanel } from "../../src/radar/registration.ts"
-import { radarProjectIdentity } from "../../src/radar/project.ts"
+import { panelProjectIdentity as radarProjectIdentity } from "../../src/panel-project.ts"
 
 test("native registration exposes its closable tab and radar command without acquiring observations", () => {
   const nativeProjectID = "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"

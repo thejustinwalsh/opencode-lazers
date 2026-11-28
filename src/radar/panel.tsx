@@ -14,7 +14,7 @@ import { createLifecycle, type Lifecycle } from "./radar-streams.ts"
 import { statechartLayout } from "./statechart.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
-import { radarLocationGuard, resolveRadarProject } from "./project.ts"
+import { resolvePanelProject } from "../panel-project.ts"
 import { openMonitorStreams, type RadarMonitorData } from "./monitor-streams.ts"
 import { RadarMonitorView } from "./monitor-view.tsx"
 import type { MonitorScopeChoice } from "./monitor-view.tsx"
@@ -184,7 +184,10 @@ function createRadarLocation(props: PanelProps) {
     },
     async (source, signal) => {
       // Path identity from the global project list: location.get boots an unloaded location.
-      return { ...source, ...(await resolveRadarProject(source.client, source.directory, signal)) }
+      return {
+        ...source,
+        ...(await resolvePanelProject(source.client, source.directory, signal, source.session)),
+      }
     },
   )
   const current = () => {
@@ -249,15 +252,10 @@ function RadarDiagnosticsPanel(
             () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
             streams.signal,
             {
-              location: { directory: value.directory },
-              ready: radarLocationGuard(
-                value.client,
-                value.directory,
-                () => props.session.directory,
-              ),
+              location: { directory: value.project },
             },
           ),
-          projectDirectory: value.directory,
+          projectDirectory: value.project,
           scope: { kind: view.scope, sessionID: value.session },
         },
         () => ({
@@ -891,17 +889,16 @@ function RadarLiveMonitorPanel(
         () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
         streams.signal,
         {
-          location: { directory: value.directory },
-          ready: radarLocationGuard(value.client, value.directory, () => props.session.directory),
+          location: { directory: value.project },
         },
       )
-      setHistorySource({ transport, projectDirectory: value.directory, scope: observationScope })
+      setHistorySource({ transport, projectDirectory: value.project, scope: observationScope })
       setChosen(view.monitorSessionID ?? null)
       // Their own owner: every stream closes when this key changes or the panel closes.
       const opened = openMonitorStreams({
         key,
         transport,
-        projectDirectory: value.directory,
+        projectDirectory: value.project,
         scope: {
           kind: observationScope.kind === "session" ? "session" : "project",
           sessionID: value.session,

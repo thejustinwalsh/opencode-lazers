@@ -1,3 +1,4 @@
+import { resolvePanelProject } from "../panel-project.ts"
 import {
   Command,
   LinkHandler,
@@ -387,11 +388,10 @@ function TaskPanel(
     },
   )
   const scope = createLatest(scopeSource, async (source, signal) => {
-    const location = await source.client.location.get(
-      { location: { directory: source.directory } },
-      { signal },
-    )
-    return { ...source, project: location.project.canonical }
+    return {
+      ...source,
+      ...(await resolvePanelProject(source.client, source.directory, signal, source.session)),
+    }
   })
   const current = () => {
     if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
@@ -482,7 +482,7 @@ function TaskPanel(
     ({ value, key }) => {
       const view = prefs()
       const rpc = () => props.session.server.client.rpc(Tasks)
-      const location = { directory: value.directory }
+      const location = { directory: value.project }
       const streams = new AbortController()
       const transport = rpcStreamsTransport(
         () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
@@ -644,7 +644,7 @@ function TaskPanel(
           rpcStreamsTransport(
             () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
             AbortSignal.timeout(10_000),
-            { location: { directory: value.directory } },
+            { location: { directory: value.project } },
           ),
           taskScheduleRef,
           () => ({
@@ -2484,16 +2484,24 @@ export function setupTaskPanel(
       async project(session, signal) {
         const server = ctx.servers.get(session.server.id)
         if (!server?.connected || !session.location) throw new Error("Task link session is offline")
-        const location = await server.client.location.get(
-          { location: session.location },
-          { signal },
+        const project = await resolvePanelProject(
+          server.client,
+          session.location.directory,
+          signal,
+          session.id,
         )
-        return location.project
+        return { canonical: project.project, id: project.projectID }
       },
       async get(session, reference, signal) {
         const server = ctx.servers.get(session.server.id)
         if (!server?.connected || !session.location) throw new Error("Task link session is offline")
-        const location = session.location
+        const project = await resolvePanelProject(
+          server.client,
+          session.location.directory,
+          signal,
+          session.id,
+        )
+        const location = { directory: project.project }
         // `tasks.detail` at window 1; the service sets the project and checks the session.
         const [row] = await readWindow(
           rpcStreamsTransport(() => server.client.rpc(Streams) as unknown as StreamsRpc, signal, {

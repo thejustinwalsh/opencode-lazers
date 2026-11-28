@@ -236,6 +236,7 @@ export async function run(mode: "pinned" | "target" | "windowed") {
       location: {
         get: async () => ({ project: { canonical: directory, id: projectID } }),
       },
+      project: { list: async () => [{ canonical: directory, id: projectID }] },
       rpc: () => ({
         open: async (input: {
           stream: string

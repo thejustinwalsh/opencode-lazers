@@ -1,3 +1,4 @@
+import { resolvePanelProject } from "../panel-project.ts"
 import { Store, bindPlugin, createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
@@ -249,14 +250,9 @@ function PanelView(
       }
     },
     async (value, signal) => {
-      const location = await value.client.location.get(
-        { location: { directory: value.directory } },
-        { signal },
-      )
       return {
         ...value,
-        project: location.project.canonical,
-        projectID: location.project.id,
+        ...(await resolvePanelProject(value.client, value.directory, signal, value.session)),
       }
     },
   )
@@ -337,7 +333,7 @@ function PanelView(
       const transport = rpcStreamsTransport(
         () => value.client.rpc(Streams) as unknown as StreamsRpc,
         streams.signal,
-        { location: { directory: value.directory } },
+        { location: { directory: value.project } },
       )
       setModel(
         createTrajectoryModel({

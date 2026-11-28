@@ -282,6 +282,7 @@ type Options = {
   view?: Record<string, unknown>
   defaults?: Record<string, string[]>
   sessionID?: string
+  sessionDirectory?: string
 }
 
 /**
@@ -374,13 +375,18 @@ async function mountPanel(dom: Window, options: Options) {
   const opens: { source: string; filter: Record<string, unknown>; window: number }[] = []
   /** Live streams by id; the detail and activity reads open and close one-shot windows. */
   const live = new Map<string, string>()
+  const rpcDirectories: Array<string | undefined> = []
   const streamsRpc = {
-    open: (input: {
-      stream: string
-      source: string
-      filter: Record<string, unknown>
-      window: number
-    }) => {
+    open: (
+      input: {
+        stream: string
+        source: string
+        filter: Record<string, unknown>
+        window: number
+      },
+      options?: { location?: { directory?: string } },
+    ) => {
+      rpcDirectories.push(options?.location?.directory)
       opens.push(input)
       live.set(input.stream, input.source)
       return service.open(input as never)
@@ -409,7 +415,12 @@ async function mountPanel(dom: Window, options: Options) {
   }
   const events = changeBus<{ type: string; data?: unknown }>()
   const client = {
-    location: { get: async () => ({ project: { canonical: PROJECT, id: "global" } }) },
+    project: { list: async () => [{ canonical: PROJECT, id: "global" }] },
+    location: {
+      get: async () => {
+        throw new Error("Retired worker location must not be loaded")
+      },
+    },
     rpc: (contract: { id?: string }) => (contract.id === Streams.id ? streamsRpc : tasksRpc),
     event: {
       subscribe: ({ signal }: { signal: AbortSignal }) =>
@@ -425,8 +436,8 @@ async function mountPanel(dom: Window, options: Options) {
   const registrations: Array<{ token: unknown; value: unknown }> = []
   const session = {
     id: options.sessionID ?? SESSION,
-    location: { directory: PROJECT },
-    directory: PROJECT,
+    location: { directory: options.sessionDirectory ?? PROJECT },
+    directory: options.sessionDirectory ?? PROJECT,
     server: { id: "tasks-server", connected: true, client },
   }
   const context = {
@@ -531,6 +542,7 @@ async function mountPanel(dom: Window, options: Options) {
     treeHeight,
     streamsOpen,
     opens,
+    rpcDirectories,
     detailReads,
     taskStore,
     defaultsStore,
@@ -557,6 +569,18 @@ async function mountPanel(dom: Window, options: Options) {
 }
 
 // ---- tests --------------------------------------------------------------------------------------
+
+test("a completed worker with a removed worktree reads Tasks from its canonical project", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.topLevel().length > 0)
+      expect(h.text()).not.toContain("Couldn't load tasks")
+      expect(h.rpcDirectories.length).toBeGreaterThan(0)
+      expect(h.rpcDirectories.every((directory) => directory === PROJECT)).toBe(true)
+    },
+    { sessionDirectory: `${PROJECT}.worktrees/removed-worker` },
+  )
+})
 
 test("the first window renders in the stored order, with one start-of-list state and an end loader", async () => {
   await withPanel(async (h) => {

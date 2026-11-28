@@ -1,3 +1,4 @@
+import { resolvePanelProject } from "../panel-project.ts"
 import { Streams } from "../streams/contract.ts"
 import { pricesLabel } from "./prices-label.ts"
 import {
@@ -200,14 +201,9 @@ export function createModelsController(props: ModelsProps) {
     },
   )
   const source = createLatest(locationRequest, async (value, signal) => {
-    const location = await value.client.location.get(
-      { location: { directory: value.directory } },
-      { signal },
-    )
     return {
       ...value,
-      project: location.project.canonical,
-      projectID: location.project.id,
+      ...(await resolvePanelProject(value.client, value.directory, signal, value.session)),
     }
   })
   const current = () => {
@@ -321,13 +317,13 @@ export function createModelsController(props: ModelsProps) {
         period: { from: null, to: null },
       }
       const models = value.client.rpc(Models)
-      const location = { location: { directory: value.directory } }
+      const location = { location: { directory: value.project } }
       const abort = new AbortController()
       onCleanup(() => abort.abort())
       const streams = rpcStreamsTransport(
         () => value.client.rpc(Streams) as unknown as StreamsRpc,
         abort.signal,
-        { location: { directory: value.directory } },
+        { location: { directory: value.project } },
       )
       const scope = { projectDirectory: value.project, sessionID: value.session }
       const policyStream = createStream(streams, modelPricePolicyRef, () => {
@@ -375,7 +371,7 @@ export function createModelsController(props: ModelsProps) {
               rpcStreamsTransport(
                 () => value.client.rpc(Streams) as unknown as StreamsRpc,
                 signal,
-                { location: { directory: value.directory } },
+                { location: { directory: value.project } },
               ),
               taskScheduleRef,
               {
@@ -399,7 +395,7 @@ export function createModelsController(props: ModelsProps) {
                 rpcStreamsTransport(
                   () => value.client.rpc(Streams) as unknown as StreamsRpc,
                   signal,
-                  { location: { directory: value.directory } },
+                  { location: { directory: value.project } },
                 ),
                 source,
                 options,
@@ -415,7 +411,7 @@ export function createModelsController(props: ModelsProps) {
         trajectoryStatus: async (taskID, signal) => {
           const [row] = await readWindow(
             rpcStreamsTransport(() => value.client.rpc(Streams) as unknown as StreamsRpc, signal, {
-              location: { directory: value.directory },
+              location: { directory: value.project },
             }),
             trajectoryEffortRef,
             {
@@ -898,7 +894,7 @@ export function createModelsController(props: ModelsProps) {
       return value.client.rpc(Models).configurePriceSources(
         { sessionID: value.session, expectedRevision, sources },
         {
-          location: { directory: value.directory },
+          location: { directory: value.project },
           signal: AbortSignal.timeout(READ_DEADLINE_MS),
         },
       )
