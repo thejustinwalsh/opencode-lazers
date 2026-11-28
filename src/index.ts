@@ -65,19 +65,14 @@ import {
 } from "./models/server.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
-import {
-  section,
-  sectionAsync,
-  sectionEffect,
-  stallProbe,
-  timedHooks,
-} from "./diagnostics/stall-probe.ts"
+import { sectionAsync, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
 import { loadLazersCore } from "./core/load.ts"
 import { nativeEventSubscriptions } from "./core/event-hub.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
 import { registerProjects } from "./projects/rpc.ts"
 import { projectsDefaultsOf } from "./projects/overview-store.ts"
 import { taskDatabasePath } from "./storage.ts"
+import { registerCodeReview } from "./code-review/comparisons/rpc.ts"
 
 /**
  * Per-location adapter. OpenCode boots this once per location, so it only registers
@@ -269,6 +264,9 @@ export default Plugin.define({
             },
           },
         }).pipe(Effect.orDie),
+      )
+      yield* sectionEffect("setup:CodeReview", () =>
+        registerCodeReview(ctx, repository, runtime.store, projectID).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Worker", () =>
         registerWorker(ctx, runtime.store, agentRoutes, runtime.delegatedAgentCapacity, () =>
