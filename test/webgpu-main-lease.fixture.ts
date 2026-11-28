@@ -923,13 +923,14 @@ try {
   }
 
   // Multiple main reloads can finish before the renderer acquires from any replacement.
-  {
+  for (const released of [false, true]) {
     const original = makeMain()
     let successor: MainHost | undefined
     try {
       const a = makeRuntime(original)
       await until(() => a.runtime.state() === "ready", "skipped-provider original model")
       const originalOwner = original.workerOwner
+      if (released) await a.runtime.unload()
       a.controller.abort()
       await a.runtime.dispose()
       await cleanupHost(original)
@@ -937,15 +938,17 @@ try {
       await cleanupHost(skipped)
       successor = makeMain(original.persistent)
       successor.memory = original.memory
-      successor.workerOwner = originalOwner
+      successor.workerOwner = original.workerOwner
       const b = makeRuntime(successor)
       await until(() => b.runtime.state() === "ready", "skipped-provider exact retained handoff")
-      assert.equal(successor.workerOwner, originalOwner)
+      if (released) assert.notEqual(successor.workerOwner, originalOwner)
+      else assert.equal(successor.workerOwner, originalOwner)
       assert.equal(allocations, 1)
-      assert.equal(
-        entryFor(successor, 2).grant?.retired?.generationID,
-        entryFor(successor, 1).generationID,
-      )
+      if (!released)
+        assert.equal(
+          entryFor(successor, 2).grant?.retired?.generationID,
+          entryFor(successor, 1).generationID,
+        )
       await assertOtherWindowBlocked(
         successor,
         (await b.files.identity()).providerEpoch,

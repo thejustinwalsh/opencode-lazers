@@ -519,10 +519,13 @@ export function createInferenceRuntime(
       handoff.providerEpoch && handoff.providerEpoch !== provider.providerEpoch,
     )
     if (providerChanged) {
+      // An idle provider owns no inherited lease. Intermediate idle generations
+      // need no lease-epoch match; disposal and predecessor checks below still apply.
       if (
-        provider.previousProviderEpoch !== handoff.providerEpoch ||
-        !provider.previousProviderState ||
-        provider.previousProviderState === "unproven"
+        provider.previousProviderState !== "idle" &&
+        (provider.previousProviderEpoch !== handoff.providerEpoch ||
+          !provider.previousProviderState ||
+          provider.previousProviderState === "unproven")
       )
         throw new Error("The main-process provider changed without exact retirement evidence")
       if (provider.previousProviderState === "host-lost" && previous.length)
