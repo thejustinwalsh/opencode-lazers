@@ -95,7 +95,7 @@ export class QueueReview {
     if (!anchor) return
     const review = { waiting }
     const event = "QUEUE_REVIEW_REQUESTED"
-    const prior = this.store.atomic((db) =>
+    const prior = this.store.read((db) =>
       db
         .query<OutboxRow & { requestedAt: number }, [string, string]>(
           `SELECT o.*, o.rowid AS sequence, CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
