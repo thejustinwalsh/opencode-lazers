@@ -1,6 +1,6 @@
 # Task code review inside OpenCode
 
-Status: proposal based on source review, 2026-11-28. This document does not dispatch implementation work.
+Status: foundations and portable producer packaging are integrated at `ef4f2854`. The Review consumer UI and shared branch/PR integration below remain implementation work. The native Architect owns tasking and integration; an external Opus lane implements the UI.
 
 LAZERS baseline: `fb60d25b`. Oaink is available at `/Users/tjw/Developer/oaink`, remote `git@github.com:thejustinwalsh/oaink`, HEAD `020c70b`. Its working tree contains substantial uncommitted changes. This review includes those current files, including the newer semantic providers and viewer refinements. No Oaink files were changed.
 
@@ -32,6 +32,16 @@ The inspected reference image is `apps/site/public/shots/review-signature.dark-m
 ## Use the task data already stored
 
 [AttemptRow](../src/runner/store.ts) records `plan_id`, `task_id`, `session_id`, `workspace`, `base_commit`, `artifact`, attempt number and Unix start time. [TaskSpecSchema](../src/task.ts) supplies intent, acceptance, source findings and scope. These are the input to review; another independently maintained task registry is unnecessary.
+
+### Shared integration branch and PR
+
+The required work workflow collects a selected set of tasks into one feature branch and one associated PR. Architect integrates successive task results into that target; completing a task does not merge its PR into the repository default branch. Accept an existing target or create a new branch/PR through the configured repository workflow. Keep the product's target separate from this repository's contributor instruction to push `main`.
+
+`recordIntegration()` already accepts `targetBranch` and records `{artifact, branch, head}` for task and plan integration. `reviewedBranchHead()` currently requires that target to be checked out in the canonical project directory. Extend this existing authority to support the selected integration target without forcing the user's main checkout to switch branches. The pinned V2 VCS API exposes branch inventory, status, base and diff; its public surface has no PR creation/update operation. Use the repository's configured PR tooling rather than a second agent runner or bundled native executable.
+
+Persist the target/base/PR association with the task group and retain each attempt's authoritative native workspace path after cleanup. Record the observed target range before/after integration and the landed commits associated with each task. Preserve source artifact/base identity separately: merge, squash and cherry-pick can change commit identity. A batch integration may share a range across tasks; record that relationship instead of claiming exclusive authorship from file attribution. Existing history stays readable; missing legacy metadata does not invalidate accepted work.
+
+Review must show source-attempt changes and the actual integrated changes, including conflict resolutions, with navigation to the shared PR. Preserve the source needed to reopen historical comparisons after worker worktree/branch cleanup and PR history changes. Name the panel **Review**, or **Semantic review** only when the native navigation conflicts; source provenance is not product branding.
 
 [VerificationReview.taskChainBase()](../src/runner/verification-review.ts) already follows repair/resume ancestry. A repair's immediate base includes earlier task work, so that base alone would omit part of the feature. A retry from a different baseline starts a new chain. Reuse this rule in review queries rather than introducing another definition.
 
