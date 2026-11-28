@@ -5,7 +5,8 @@ import type {
   GitleaksSkippedInput,
 } from "./contract.ts"
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const COMPARISON_ID =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{64})$/i
 const REVISION = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i
 const CORRELATION_KEY = randomBytes(32)
 
@@ -23,21 +24,11 @@ function aliasIdentity(kind: string, value: string): string {
   return createHmac("sha256", CORRELATION_KEY).update(`${kind}\0${value}`).digest("hex")
 }
 
-/** Keyed per-process aliases correlate failures without echoing unscanned metadata. */
-export function opaqueGitleaksIdentity(reader: unknown): GitleaksResultIdentity {
-  const identity = identityParts(reader)
-  return {
-    comparisonID: aliasIdentity("comparison", identity.comparisonID),
-    baseRevision: aliasIdentity("base", identity.baseRevision),
-    headRevision: aliasIdentity("head", identity.headRevision),
-  }
-}
-
-/** Preserve only opaque host identity formats; replace descriptive or malformed values. */
+/** Preserve recognized immutable host IDs; replace descriptive or malformed values. */
 export function safeGitleaksIdentity(reader: GitleaksComparisonReader): GitleaksResultIdentity {
   const identity = identityParts(reader)
   return {
-    comparisonID: UUID.test(identity.comparisonID)
+    comparisonID: COMPARISON_ID.test(identity.comparisonID)
       ? identity.comparisonID
       : aliasIdentity("comparison", identity.comparisonID),
     baseRevision: REVISION.test(identity.baseRevision)

@@ -15,7 +15,7 @@ import { isValidGitleaksInput, prepareGitleaksInput } from "./provider-input.ts"
 import { isValidGitleaksWasmResult, projectGitleaksResult } from "./projection.ts"
 import { WorkerFailure, runGitleaksWorker, type GitleaksWorkerRun } from "./worker-client.ts"
 import type { GitleaksWasmRequest, GitleaksWasmResponse } from "./wasm-contract.ts"
-import { opaqueGitleaksIdentity, privacySafeSkipped } from "./privacy.ts"
+import { privacySafeSkipped, safeGitleaksIdentity } from "./privacy.ts"
 
 export interface GitleaksProviderSeams {
   run?: GitleaksWorkerRun
@@ -155,39 +155,34 @@ export async function scanGitleaksComparison(
   seams: GitleaksProviderSeams = {},
   signal: AbortSignal = new AbortController().signal,
 ): Promise<GitleaksResult> {
-  const failureIdentity = opaqueGitleaksIdentity(reader)
+  const identity = safeGitleaksIdentity(reader)
   if (!isValidGitleaksInput(reader, settings))
-    return failedResult(failureIdentity, reader, "input-invalid")
-  if (signal.aborted) return failedResult(failureIdentity, reader, "cancelled")
-  if (!(await comparisonIsCurrent(reader))) return staleResult(failureIdentity, reader)
+    return failedResult(identity, reader, "input-invalid")
+  if (signal.aborted) return failedResult(identity, reader, "cancelled")
+  if (!(await comparisonIsCurrent(reader))) return staleResult(identity, reader)
   const prepared = await prepareGitleaksInput(reader, settings, signal)
-  if (!prepared.ok) return failedResult(failureIdentity, reader, prepared.code, prepared.skipped)
+  if (!prepared.ok) return failedResult(identity, reader, prepared.code, prepared.skipped)
   const { input } = prepared
   const execution = await runDetector(input.request, seams, signal, settings.timeoutMs)
-  if (!execution.ok) return failedResult(failureIdentity, reader, execution.code, input.skipped)
-  if (signal.aborted) return failedResult(failureIdentity, reader, "cancelled", input.skipped)
-  if (!(await comparisonIsCurrent(reader))) return staleResult(failureIdentity, reader)
+  if (!execution.ok) return failedResult(identity, reader, execution.code, input.skipped)
+  if (signal.aborted) return failedResult(identity, reader, "cancelled", input.skipped)
+  if (!(await comparisonIsCurrent(reader))) return staleResult(identity, reader)
   const { response } = execution
-  if (!response.ok)
-    return failedResult(failureIdentity, reader, failureCode(response.code), input.skipped)
+  if (!response.ok) return failedResult(identity, reader, failureCode(response.code), input.skipped)
   if (
     !isValidGitleaksWasmResult(response.result, input.identity, {
       base: input.request.base,
       head: input.request.head,
     })
   )
-    return failedResult(failureIdentity, reader, "invalid-output", input.skipped)
+    return failedResult(identity, reader, "invalid-output", input.skipped)
 
   const projection = projectGitleaksResult(response.result, input.changes, input.head)
   const status = coverageStatus(input.skipped, input.request.changesComplete)
   return {
     provider: GITLEAKS_PROVIDER_ID,
     tool: { id: GITLEAKS_TOOL, version: GITLEAKS_VERSION },
-    identity: {
-      comparisonID: response.result.comparisonID,
-      baseRevision: response.result.baseRevision,
-      headRevision: response.result.headRevision,
-    },
+    identity,
     status,
     coverage: {
       status,
