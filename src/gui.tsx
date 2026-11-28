@@ -42,6 +42,8 @@ import {
 } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
+import { setupReviewPanel } from "./code-review/ui/registration.tsx"
+import { reviewStores } from "./code-review/ui/state.ts"
 
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
@@ -66,6 +68,7 @@ export default Plugin.define({
     ...modelsStores,
     ...trajectoryStores,
     ...radarStores,
+    ...reviewStores,
     runtime: Store.global(
       Schema.Struct({
         keepAliveMs: Schema.Number.check(
@@ -158,7 +161,11 @@ export default Plugin.define({
       })
       ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
     }
-    setupTaskPanel(ctx, openTaskTrajectory)
+    const openReview = setupReviewPanel(ctx, {
+      openTask,
+      openTasks: (session) => ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" }),
+    })
+    setupTaskPanel(ctx, openTaskTrajectory, undefined, openReview)
     setupPlanningPanel(ctx)
     setupModelsPanel(ctx, openTaskTrajectory)
     setupTrajectoryPanel(ctx, { openTask })

@@ -1,0 +1,287 @@
+/*
+ * Semantic review panel. Code first: a two-line header, a collapsible file list, then the code in
+ * one virtualized scroller over the shared details pane. Colors are host tokens only.
+ */
+.lz-review {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--background-base);
+  color: var(--text-base);
+  font-size: 13px;
+}
+.lz-review-mono {
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.lz-review-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border-weak-base);
+  flex: none;
+}
+.lz-review-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 26px;
+}
+.lz-review-reference {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-weak);
+  font-size: 12px;
+  cursor: pointer;
+}
+.lz-review-reference:hover {
+  color: var(--text-strong);
+}
+.lz-review-reference:focus-visible,
+.lz-review-files-toggle:focus-visible,
+.lz-review-file-row:focus-visible,
+.lz-review-link:focus-visible {
+  outline: 1px solid var(--border-interactive-focus);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+.lz-review-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.lz-review-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.lz-review-arrow {
+  color: var(--text-weak);
+}
+.lz-review-spacer {
+  flex: 1;
+}
+.lz-review-target {
+  color: var(--text-weak);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lz-review-split {
+  flex: 1;
+  min-height: 0;
+}
+.lz-review-top {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.lz-review-top[data-panel-dimmed] .lz-review-code {
+  opacity: 0.6;
+}
+
+/* File list: one 28px toggle row; expanded, a compact list that scrolls on its own. */
+.lz-review-files {
+  flex: none;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lz-review-files[data-open] {
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+}
+.lz-review-files-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  background: none;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.lz-review-files-toggle:hover {
+  color: var(--text-strong);
+}
+.lz-review-file-list {
+  margin: 0;
+  padding: 0 0 4px;
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+.lz-review-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 12px 0 14px;
+  border: 0;
+  background: none;
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.lz-review-file-row:hover {
+  background: var(--surface-base-hover);
+}
+
+/* A file header inside the code: status glyph, name, folder, counts. 32px, sticky in Pierre. */
+.lz-review-file-header-slot {
+  height: 100%;
+}
+.lz-review-file-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-weak-base);
+  border-bottom: 1px solid var(--border-weak-base);
+  background: var(--background-base);
+  color: var(--text-base);
+  font-size: 12px;
+  min-width: 0;
+}
+.lz-review-status {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  color: var(--icon-diff-modified-base, var(--text-weak));
+}
+.lz-review-status[data-status="added"] {
+  color: var(--icon-diff-add-base);
+}
+.lz-review-status[data-status="deleted"] {
+  color: var(--icon-diff-delete-base);
+}
+.lz-review-status[data-status="conflicted"] {
+  color: var(--icon-warning-base, var(--text-strong));
+}
+.lz-review-file-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+}
+.lz-review-file-folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  color: var(--text-weaker);
+}
+.lz-review-file-note {
+  flex: none;
+  color: var(--text-weak);
+}
+.lz-review-engine {
+  flex: none;
+  color: var(--text-weaker);
+  cursor: help;
+}
+.lz-review-counts {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.lz-review-added {
+  color: var(--text-diff-add-base, var(--icon-diff-add-base));
+}
+.lz-review-removed {
+  color: var(--text-diff-delete-base, var(--icon-diff-delete-base));
+}
+.lz-review-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-interactive-base);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lz-review-code {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.lz-review-scroller {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  outline: none;
+}
+.lz-review-scroller:focus-visible {
+  outline: 1px solid var(--border-interactive-focus);
+  outline-offset: -1px;
+}
+
+.lz-review-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 12px;
+  color: var(--text-weak);
+}
+.lz-review-empty p {
+  margin: 0;
+}
+
+.lz-review-selection-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.lz-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.lz-review-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 12px;
+}
+.lz-review-notice {
+  margin: 0;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.lz-review-excerpt {
+  max-height: 240px;
+  overflow: auto;
+}
