@@ -1,0 +1,10 @@
+{
+  "name": "cccc",
+  "version": "1.7.0",
+  "repository": "https://github.com/moznion/cccc",
+  "tag": "v1.7.0",
+  "commit": "2bbed87685f5d9ad8c6eb6d3173904785236b199",
+  "license": "MIT",
+  "patches": [],
+  "scope": "Pinned language adapters and core only; the shipped WASM entry dispatches to the upstream analyze_source APIs."
+}

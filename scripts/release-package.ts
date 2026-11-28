@@ -14,6 +14,9 @@ const version = tag.slice(1)
 const runtimeScripts = [
   ...serverEntries.map(([, file]) => `dist/${file}`),
   ...serverAssets.map((file) => `dist/${file}`),
+  "dist/code-review-cccc.js",
+  "dist/code-review-cccc-worker.js",
+  "dist/cccc.wasm",
 ]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
@@ -23,6 +26,7 @@ const run = async (cwd: string, ...command: string[]) => {
 
 try {
   await run(root, "bun", "run", "build")
+  await run(root, "bun", "run", "build:cccc-wasm")
   await mkdir(output, { recursive: true })
   const pkg = join(staging, "package")
   const consumer = join(staging, "consumer")
@@ -57,14 +61,18 @@ try {
     "bun",
     "-e",
     `const manifest = await Bun.file("node_modules/opencode-lazers/package.json").json()
-     if (manifest.version !== ${JSON.stringify(version)}) throw Error("Installed version mismatch")
-     for (const entry of [...Object.values(manifest.exports), ...${JSON.stringify(runtimeScripts)}]) {
-       if (!(await Bun.file("node_modules/opencode-lazers/" + entry).exists()))
-         throw Error("Missing installed plugin entry: " + entry)
-     }
-     const { default: plugin } = await import("opencode-lazers")
-     if (!plugin) throw Error("Missing server plugin")
-     console.log("Installed ${filename}: exports and runtime scripts present; server import passed")`,
+      if (manifest.version !== ${JSON.stringify(version)}) throw Error("Installed version mismatch")
+      const exports = Object.values(manifest.exports).flatMap((entry) =>
+        typeof entry === "string" ? [entry] : Object.values(entry))
+      for (const entry of [...exports, ...${JSON.stringify(runtimeScripts)}]) {
+        if (!(await Bun.file("node_modules/opencode-lazers/" + entry).exists()))
+          throw Error("Missing installed plugin entry: " + entry)
+      }
+      const { default: plugin } = await import("opencode-lazers")
+      if (!plugin) throw Error("Missing server plugin")
+      const cccc = await import("opencode-lazers/code-review/cccc")
+      if (typeof cccc.analyzeCcccComparison !== "function") throw Error("Missing packaged cccc API")
+      console.log("Installed ${filename}: exports and runtime scripts present; server import passed")`,
   )
   await cp(join(staging, filename), join(output, filename), { force: false, errorOnExist: true })
 } finally {

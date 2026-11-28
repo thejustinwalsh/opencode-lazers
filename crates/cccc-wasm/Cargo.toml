@@ -1,0 +1,40 @@
+[package]
+name = "lazers-cccc-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.0"
+publish = false
+
+[[bin]]
+name = "lazers-cccc-wasm"
+path = "src/main.rs"
+
+[dependencies]
+cccc-core = { path = "../../vendor/cccc/crates/cccc-core" }
+cccc-es = { path = "../../vendor/cccc/crates/cccc-es" }
+cccc-rs = { path = "../../vendor/cccc/crates/cccc-rs" }
+cccc-go = { path = "../../vendor/cccc/crates/cccc-go" }
+cccc-php = { path = "../../vendor/cccc/crates/cccc-php" }
+cccc-rb = { path = "../../vendor/cccc/crates/cccc-rb" }
+cccc-scheme = { path = "../../vendor/cccc/crates/cccc-scheme" }
+cccc-clojure = { path = "../../vendor/cccc/crates/cccc-clojure" }
+cccc-lisp = { path = "../../vendor/cccc/crates/cccc-lisp" }
+cccc-kt = { path = "../../vendor/cccc/crates/cccc-kt" }
+cccc-py = { path = "../../vendor/cccc/crates/cccc-py" }
+cccc-zig = { path = "../../vendor/cccc/crates/cccc-zig" }
+cccc-c = { path = "../../vendor/cccc/crates/cccc-c" }
+cccc-cpp = { path = "../../vendor/cccc/crates/cccc-cpp" }
+cccc-pl = { path = "../../vendor/cccc/crates/cccc-pl" }
+cccc-swift = { path = "../../vendor/cccc/crates/cccc-swift" }
+cccc-java = { path = "../../vendor/cccc/crates/cccc-java" }
+cccc-dart = { path = "../../vendor/cccc/crates/cccc-dart" }
+cccc-scala = { path = "../../vendor/cccc/crates/cccc-scala" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = "s"
