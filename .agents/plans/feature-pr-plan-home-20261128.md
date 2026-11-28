@@ -83,6 +83,17 @@ not establish an implemented PR service either. These are evidence limits, not
 proof that no host integration exists. Read-only actual-host/connected-integration
 research must supply that distinction.
 
+Actual-host read-only research observed OpenCode 2.4.1: its live OpenAPI has
+178 operations and no GitHub/PR operation. The connected GitHub Copilot plugin
+provides models/OAuth, not PR lookup; this location has no MCP integration.
+Current-session metadata contained only LAZERS keys, not PR linkage. Read-only
+`gh pr view` on main found no PR, which does not establish anything about other
+feature branches. No credentials were resolved or configuration changed.
+Use supported read-only discovery on the relevant plan-base checkout, such as
+`gh pr view`, when no native association is present; keep the selected target
+authoritative and preserve any native metadata that does exist. Recheck the
+actual capability at use time rather than claiming all host versions lack it.
+
 Extend the existing comparison and integration-target flows:
 
 - A task can resolve its associated PR/branch through its selected plan and base
@@ -104,12 +115,12 @@ Extend the existing comparison and integration-target flows:
 - Reconcile changed native PR identity/base/head through the existing guarded
   target controls, preserving native metadata and historical evidence.
 
-The queued final Changes consumer (LZ-290) consumes this producer: compact
+The progressing Plan/PR follow-up consumes this producer after LZ-290: compact
 branch/PR identity with a working PR link, explicit task versus full plan/PR
-scope, and separate worker-only sources. It retains its existing stored reopen,
-discussion, symbol and navigation obligations. It must wait for this producer's
-integrated contract; do not add another active UI writer or expand LZ-291 into
-this new functional work.
+scope, and separate worker-only sources. LZ-290 retains existing landed-target,
+stored-reopen, discussion, symbol and navigation obligations without waiting for
+this backend. The follow-up waits for this producer's integrated contract and
+LZ-290; serialize UI writers and preserve LZ-291's current repair.
 
 ### Current source findings
 
@@ -170,10 +181,11 @@ One coherent systems task owns binding producers, routing/recovery consumers
 and regressions. The native Settings backend plan is its prerequisite: reuse
 that plan's canonical settings/inheritance/custom-agent adapters rather than
 racing the same runner/core interfaces. The external Settings UI need not
-finish first. The queued final Changes consumer follows this producer as well
-as its existing discussion/symbol prerequisites. Preserve normal scheduling and
-all active workers; this is not a global pause.
+finish first. Only the progressing Plan/PR follow-up requires this producer;
+the independent reading presentation and existing semantic/discussion consumers
+can deliver first. Preserve normal scheduling and all active workers.
 
-Existing Changes structural/discussion/symbol/consumer work continues. The
-separate theme/semantic-population/importance-order/dim-unchanged finish feedback
-still awaits the user's word; this feature authorizes no duplicate UI writer.
+Existing Changes structural/discussion/symbol/consumer work continues alongside
+the authorized [reading pass](changes-reading-pass-20261128.md): host themes,
+real semantic content, importance order and unchanged-code dimming. Its delivery
+graph preserves one active UI writer and avoids unrelated backend prerequisites.

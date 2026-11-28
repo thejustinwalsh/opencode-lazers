@@ -21,12 +21,18 @@ plan/PR scope reads the actual selected branch range while work progresses,
 including Architect resolutions; task scope stays task-specific and unmerged
 worker work remains distinct. Preserve pinned comparisons and reconcile
 evidenced native PR/base/head changes through existing controls. LZ-296 owns
-the producer; queued LZ-290 consumes it and shows compact PR/branch navigation.
+the producer; a progressing Plan/PR follow-up after LZ-290 consumes that contract.
 
 **LZ-296** is one coherent systems feature, reusing target/native-worktree/state-machine
 flows after the native Settings producers. Current Settings and Changes work
 continues; the external Opus Settings UI reservation remains separate. Additional
-Changes visual-finish agents still await the user's word.
+The [authorized Changes reading pass](../.agents/plans/changes-reading-pass-20261128.md)
+delivers host themes, populated real semantics, importance-ordered rendered
+files/navigation and readable unchanged-code dimming. Presentation follows
+LZ-291; LZ-289 and LZ-290 retain real symbol/discussion/landed-target production
+and consumption. Only the later progressing Plan/PR consumer waits for LZ-296,
+not the independent presentation work. Serialize UI writers; preserve native
+Review and the external Settings Opus reservation.
 
 ## Current delivery front — 2026-11-09
 

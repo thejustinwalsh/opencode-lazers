@@ -157,13 +157,11 @@ rewrite existing stored commands or change release configuration as incidental
 UI work. Architect owns branch composition; driver coordinates regular Desktop
 activation. No additional Desktop profile or human-evidence gate is required.
 
-## Pending Review finish feedback — not dispatched
+## Authorized Changes reading pass
 
-Separately requested: reactive OpenCode theme support; actual populated semantic
-information; review-importance file ordering inside the panel; Oaink-style
-slightly dimmed unchanged code so structural changes dominate. The driver is
-auditing current/queued/missing behavior and Oaink prior art.
-
-Wait for the user's word before adding Review finish agents or changing active
-worker scope for this feedback. Preserve existing structural wiring,
-discussion, symbol and final-consumer tasks and their dependencies.
+The [Changes reading pass](changes-reading-pass-20261128.md) delivers reactive
+host themes, populated real semantics, actual importance-ordered files/navigation
+and readable unchanged-code dimming. Presentation follows the existing UI repair;
+symbol/discussion consumers follow their real producers. Settings and feature-PR
+homes are prerequisites only for their actual consumers, not all presentation
+work. Preserve current workers and the external Opus Settings reservation.
