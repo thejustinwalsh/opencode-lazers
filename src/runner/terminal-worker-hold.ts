@@ -88,7 +88,7 @@ export function terminalWorkerHoldForContinuation(
            AND t.id < ?
            AND EXISTS (
              SELECT 1 FROM runner_attempts AS a
-             WHERE a.plan_id=t.plan_id AND a.id=? AND a.task_id=?
+             WHERE ${planIs(db, "runner_transitions", "t", "a.plan_id")} AND a.id=? AND a.task_id=?
            )
          ORDER BY t.id DESC LIMIT 1`,
       )
