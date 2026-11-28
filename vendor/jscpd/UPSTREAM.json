@@ -1,0 +1,12 @@
+{
+  "name": "jscpd",
+  "version": "5.4.0",
+  "commit": "b6f832c62cf02b574ea9cf24e013cfeb17366a35",
+  "source": "https://github.com/kucherenko/jscpd/tree/b6f832c62cf02b574ea9cf24e013cfeb17366a35/rust",
+  "license": "MIT",
+  "crates": {
+    "cpd-core": "0.1.20",
+    "cpd-tokenizer": "0.1.19"
+  },
+  "patches": []
+}

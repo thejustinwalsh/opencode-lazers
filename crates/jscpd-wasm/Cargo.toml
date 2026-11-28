@@ -1,0 +1,29 @@
+[package]
+name = "jscpd-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "jscpd-wasm"
+path = "src/main.rs"
+
+[dependencies]
+cpd-core = { path = "../../vendor/jscpd/rust/crates/cpd-core" }
+cpd-tokenizer = { path = "../../vendor/jscpd/rust/crates/cpd-tokenizer" }
+globset = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = "debuginfo"

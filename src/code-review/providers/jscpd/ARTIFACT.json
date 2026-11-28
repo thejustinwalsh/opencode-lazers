@@ -1,0 +1,36 @@
+{
+  "upstream": {
+    "name": "jscpd",
+    "version": "5.4.0",
+    "commit": "b6f832c62cf02b574ea9cf24e013cfeb17366a35",
+    "license": "MIT",
+    "crates": {
+      "cpd-core": "0.1.20",
+      "cpd-tokenizer": "0.1.19"
+    }
+  },
+  "target": "wasm32-wasip1",
+  "wasmSha256": "21b4897edaee862bd1cf609a166e6e40d9cdf097bba0a51a0c4d92d80c172b46",
+  "bytes": 2262878,
+  "crateSourceSha256": "51185df48ac1cbf662e96c2442ee47c98533d2ceeb4837b46f12ec2a2b1cfd5c",
+  "cargoLockSha256": "cc94a27fd677b7706766294b1e1f6fde372948c252c6c88cdfcc7293452cd898",
+  "vendoredSourceSha256": "990b4af628deefd048d33126161ba5ab13cee9f04b9d599404a9fbbd8baa79e7",
+  "imports": [
+    "wasi_snapshot_preview1.environ_get",
+    "wasi_snapshot_preview1.environ_sizes_get",
+    "wasi_snapshot_preview1.fd_read",
+    "wasi_snapshot_preview1.fd_write",
+    "wasi_snapshot_preview1.proc_exit",
+    "wasi_snapshot_preview1.random_get",
+    "wasi_snapshot_preview1.sched_yield"
+  ],
+  "optimization": {
+    "rustOptLevel": 3,
+    "wasmOpt": "-O3"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)",
+    "wasmOpt": "wasm-opt version 129 (version_129)"
+  }
+}
