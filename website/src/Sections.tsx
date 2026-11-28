@@ -1074,7 +1074,7 @@ export function Local() {
 /* ================================================================== */
 /* Install: the back cover                                             */
 /* ================================================================== */
-const INSTALL_SH = "opencode plugin add opencode-lazers@0.2.0"
+const INSTALL_SH = "opencode plugin add opencode-lazers@0.2.1"
 
 const in_ = stylex.create({
   top: {
@@ -1250,7 +1250,7 @@ export function Install() {
       <BeamCanvas kit={kit} />
       <div {...stylex.props(s.inner)}>
         <div {...stylex.props(in_.top)}>
-          <Heading id="install-title">Install v0.2.0</Heading>
+          <Heading id="install-title">Install v0.2.1</Heading>
           <ul aria-label="Requirements" {...stylex.props(in_.facts)}>
             <li {...stylex.props(in_.fact)}>OpenCode Desktop</li>
             <li {...stylex.props(in_.fact)}>No build step</li>
@@ -1380,7 +1380,7 @@ export function Footer() {
           </a>
         </nav>
         <p {...stylex.props(ft.note)}>
-          v0.2.0 &middot; Built for OpenCode Desktop &middot; Runs inside OpenCode with no separate
+          v0.2.1 &middot; Built for OpenCode Desktop &middot; Runs inside OpenCode with no separate
           service.
         </p>
       </div>

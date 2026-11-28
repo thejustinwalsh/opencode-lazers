@@ -567,7 +567,7 @@ export function Cover() {
       </nav>
 
       <p {...stylex.props(c.band)}>
-        <span {...stylex.props(c.bandVersion)}>v0.2.0</span>
+        <span {...stylex.props(c.bandVersion)}>v0.2.1</span>
         <Stripes sx={c.bandStripes} />
         <span {...stylex.props(c.bandText)}>Built for OpenCode Desktop</span>
         <span {...stylex.props(c.bandText)}>Runs inside OpenCode. No separate service.</span>

@@ -1,6 +1,6 @@
 {
   "name": "opencode-lazers",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Architect-led task orchestration and live agent panels for OpenCode.",
   "repository": {
     "type": "git",

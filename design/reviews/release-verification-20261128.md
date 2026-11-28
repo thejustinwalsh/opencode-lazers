@@ -68,3 +68,15 @@ Candidate: `.cache/releases/v0.2.1-9c7cc22e/opencode-lazers-0.2.1.tgz` (about 34
 This is a verified local release candidate, not an npm or GitHub publication. The regular Desktop uses the matching built checkout; the archive's clean install was checked separately. Existing published 0.2.0 was not replaced.
 
 Operator logs remain at `/private/tmp/lz-release-final-suite-20261128.log`, `/private/tmp/lz-release-final-quality-20261128.log`, and `/private/tmp/lz-release-package-9c7cc22e.log`. The compact native cleanup observation is `/private/tmp/lz-release-closeout-20261128.json`.
+
+## Final patch branch
+
+`feat/release-0.2.1` starts at `fb60d25b` and carries only the subsequent scheduler repairs: shared capacity across project identities (`f7c15e0e`, original `b817a810`), unresolved Architect follow-through (`945ae68c`, original `4900c88a`), idle task-slot release/resumption (`59613a3d`, original `915fcb80`), and the read-only queue lookup correction (`9ba16d0e`). Review providers and UI remain on main for 0.3.0; this patch does not ship them.
+
+The first patch regression run found that `QueueReview.requestQueueReview()` opened a write transaction for its read-only prior-notice lookup. Existing `idle-churn.test.ts` observed five atomics across five idle ticks instead of zero. `9ba16d0e` changes only that lookup to `store.read()`; actual notice creation stays fenced. The unchanged assertion then passed.
+
+The final patch scheduler run passed **80 tests, zero failures, 903 assertions, eight files in 21.77 seconds**. It covers capacity, native helper/runner sharing, resumed primary requests, dispatch pause, Architect follow-through/renewal and idle churn. The earlier 3,686-test full-suite result above remains the baseline result; it is not a new full-suite run on this patch branch.
+
+Final `bun run verify` passed: 115 warnings, zero errors, 1,293 typed files; both read guards passed. `bun run package:release v0.2.1 /private/tmp/lazers-release-021-candidate` built the exact patch, checked for native executables/addons in the staged package, installed 421 dependencies into a fresh consumer, checked all exports/worker files and imported the plugin successfully. Logs: `/private/tmp/lazers-021-final-quality.log`, `/private/tmp/lazers-021-scheduler-tests-fixed.log`, `/private/tmp/lazers-021-final-package.log`.
+
+Release metadata and install commands use 0.2.1. Package creation is complete; publication and final regular-Desktop activation are separate operations and are not claimed by these results.
