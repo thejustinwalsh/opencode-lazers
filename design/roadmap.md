@@ -14,6 +14,15 @@ scheduling. Persist that binding through dispatch, checks, integration and
 Architect restart/recovery; preserve user-owned bases during child cleanup.
 Branch-ref lineage tests alone do not prove this workflow.
 
+Research/reuse an actual native or connected-integration PR association before
+selecting a fallback. Changes and review tools resolve task → plan/base session
+→ existing target without independent PR fields on every task/session. Full
+plan/PR scope reads the actual selected branch range while work progresses,
+including Architect resolutions; task scope stays task-specific and unmerged
+worker work remains distinct. Preserve pinned comparisons and reconcile
+evidenced native PR/base/head changes through existing controls. LZ-296 owns
+the producer; queued LZ-290 consumes it and shows compact PR/branch navigation.
+
 **LZ-296** is one coherent systems feature, reusing target/native-worktree/state-machine
 flows after the native Settings producers. Current Settings and Changes work
 continues; the external Opus Settings UI reservation remains separate. Additional
