@@ -147,6 +147,22 @@ export class CheckActivities {
       fingerprint(identity),
     )
   }
+  /** Find the in-memory run for this exact durable effect, without matching a replaced payload. */
+  checkEffectActivity(
+    effect: Pick<EffectRow, "id" | "payload">,
+  ): VerificationActivity<RunnerCheckReceipt> | undefined {
+    return this.checkActivity(effect.id, { effectID: effect.id, payload: effect.payload })
+  }
+  /** Read an activity with an already-fingerprinted effect identity from cleanup facts. */
+  checkEffectActivityIdentity(
+    effectID: string,
+    identity: string,
+  ): VerificationActivity<RunnerCheckReceipt> | undefined {
+    return verificationActivity(
+      verificationActivityKey(this.store.repository.path, effectID),
+      identity,
+    )
+  }
   verificationDeadline(target: VerificationTimeoutTarget): VerificationDeadline {
     return resolveVerificationDeadline(
       this.store.verificationTimeoutAmendments(target.planID),

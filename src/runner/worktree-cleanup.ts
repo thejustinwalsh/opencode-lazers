@@ -17,10 +17,15 @@ import {
 } from "./store.ts"
 
 import type { TaskRuntime } from "./runtime.ts"
-import { errorText } from "./runtime-helpers.ts"
-import { isRecord } from "./runtime-helpers.ts"
-import { WORKTREE_CLEANUP_FALLBACK_MS, WORKTREE_CLEANUP_LIVE_RETRY_MS } from "./runtime-helpers.ts"
+import {
+  checkSettlementProblem,
+  errorText,
+  isRecord,
+  WORKTREE_CLEANUP_FALLBACK_MS,
+  WORKTREE_CLEANUP_LIVE_RETRY_MS,
+} from "./runtime-helpers.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
+import type { CheckActivities } from "./check-activities.ts"
 import {
   cleanupAttemptWorkerOwnership,
   cleanupWorkerActivityBlockers,
@@ -29,6 +34,7 @@ import { assertGraphWorkspaceQuiescent } from "./cleanup/graph-workspace.ts"
 import {
   CleanupFactsCache,
   currentWorktreeCleanupRetryFacts,
+  type CleanupGraphCheckActivityRef,
   type CleanupFacts,
   WORKTREE_CREATION_KINDS,
 } from "./cleanup/facts.ts"
@@ -59,6 +65,8 @@ export class WorktreeCleanup {
       adoptionCheckReceiptMatches: AdoptionExecution["adoptionCheckReceiptMatches"]
       adoptionCheckInputMatches: AdoptionExecution["adoptionCheckInputMatches"]
       backgroundBlockReason: TaskRuntime["backgroundBlockReason"]
+      checkEffectActivity: CheckActivities["checkEffectActivity"]
+      checkEffectActivityIdentity: CheckActivities["checkEffectActivityIdentity"]
       directory: TaskRuntime["directory"]
       effect: RuntimeJournal["effect"]
       host: TaskRuntime["host"]
@@ -75,7 +83,21 @@ export class WorktreeCleanup {
   }
 
   cleanupFacts(planID: string): CleanupFacts {
-    return this.runtime.store.read((db) => this.cleanupFactsCache.read(db, planID))
+    const facts = this.runtime.store.read((db) => this.cleanupFactsCache.read(db, planID))
+    return {
+      ...facts,
+      retries: facts.retries.map((retry) => ({
+        ...retry,
+        ...(retry.retryFacts !== undefined
+          ? {
+              retryFacts: this.activityAwareRetryFacts(
+                retry.retryFacts,
+                retry.graphCheckActivityRefs,
+              ),
+            }
+          : {}),
+      })),
+    }
   }
 
   dispose() {
@@ -133,6 +155,23 @@ export class WorktreeCleanup {
     }
   }
 
+  private assertGraphWorktreeQuiescent(plan: PlanRow, workspace: string): void {
+    if (this.runtime.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
+      throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
+    assertGraphWorkspaceQuiescent(this.runtime.store.effects(plan.id), workspace, (effect) =>
+      this.assertGraphCheckActivitySettled(effect),
+    )
+  }
+
+  private assertGraphCheckActivitySettled(effect: EffectRow): void {
+    const activity = this.runtime.checkEffectActivity(effect)
+    const problem = activity ? checkSettlementProblem(activity) : undefined
+    if (problem)
+      throw new LiveActivityBlockedError(
+        `Combined worktree check process is not settled; preserve it: ${problem}`,
+      )
+  }
+
   private async assertWorktreeQuiescent(
     plan: PlanRow,
     effect: EffectRow,
@@ -153,9 +192,7 @@ export class WorktreeCleanup {
       return
     }
     if (effect.kind === "graph-worktree") {
-      if (this.runtime.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
-        throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
-      assertGraphWorkspaceQuiescent(this.runtime.store.effects(plan.id), workspace)
+      this.assertGraphWorktreeQuiescent(plan, workspace)
       return
     }
     const attempts = this.runtime.store
@@ -368,8 +405,13 @@ export class WorktreeCleanup {
     return facts.pending
   }
 
-  worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, workspace: string): string {
-    return this.runtime.store.read((db) =>
+  worktreeCleanupRetryFacts(
+    plan: PlanRow,
+    source: EffectRow,
+    workspace: string,
+    graphCheckActivityRefs?: CleanupGraphCheckActivityRef[],
+  ): string {
+    const rowFacts = this.runtime.store.read((db) =>
       currentWorktreeCleanupRetryFacts(
         db,
         this.runtime.directory,
@@ -379,6 +421,49 @@ export class WorktreeCleanup {
         workspace,
       ),
     )
+    return this.activityAwareRetryFacts(
+      rowFacts,
+      graphCheckActivityRefs ?? this.graphCheckActivityRefs(plan.id, workspace),
+    )
+  }
+
+  private graphCheckActivityRefs(
+    planID: string,
+    workspace: string,
+  ): CleanupGraphCheckActivityRef[] {
+    return this.runtime.store.effects(planID).flatMap((effect) => {
+      if (!effect.kind.startsWith("graph-verify:")) return []
+      try {
+        if (JSON.parse(effect.payload).workspace !== workspace) return []
+      } catch {
+        return []
+      }
+      return [
+        {
+          effectID: effect.id,
+          identity: fingerprint({ effectID: effect.id, payload: effect.payload }),
+        },
+      ]
+    })
+  }
+
+  private activityAwareRetryFacts(
+    rowFacts: string,
+    graphCheckActivityRefs: CleanupGraphCheckActivityRef[],
+  ): string {
+    const activities = graphCheckActivityRefs.flatMap(({ effectID, identity }) => {
+      const activity = this.runtime.checkEffectActivityIdentity(effectID, identity)
+      return activity
+        ? [
+            {
+              effectID,
+              state: activity.state,
+              settled: checkSettlementProblem(activity) === undefined,
+            },
+          ]
+        : []
+    })
+    return fingerprint({ rowFacts, activities })
   }
 
   async worktreeCleanupFactsChanged(facts: CleanupFacts): Promise<boolean> {
@@ -495,9 +580,14 @@ export class WorktreeCleanup {
   }
 
   /** The retry facts for a blocked cleanup; when they cannot be read, a fingerprint says so. */
-  private retryFactsOrUnavailable(plan: PlanRow, source: EffectRow, workspace: string) {
+  private retryFactsOrUnavailable(
+    plan: PlanRow,
+    source: EffectRow,
+    workspace: string,
+    graphCheckActivityRefs?: CleanupGraphCheckActivityRef[],
+  ) {
     try {
-      return this.worktreeCleanupRetryFacts(plan, source, workspace)
+      return this.worktreeCleanupRetryFacts(plan, source, workspace, graphCheckActivityRefs)
     } catch {
       return fingerprint({
         planID: plan.id,
@@ -509,28 +599,36 @@ export class WorktreeCleanup {
     }
   }
 
-  /** Removes one owned worktree after proving it clean and merged. "stop" ends the whole cleanup. */
-  private async removeOwnedWorktree(run: WorktreeCleanupRun): Promise<"stop" | "done"> {
-    const { plan, mode, workspace } = run
-    const sourceEffect = this.runtime.store.effects(plan.id).find((entry) => {
-      if (!WORKTREE_CREATION_KINDS.includes(entry.kind) || entry.state !== "completed") return false
+  private worktreeCreationEffect(planID: string, workspace: string): EffectRow | undefined {
+    return this.runtime.store.effects(planID).find((effect) => {
+      if (!WORKTREE_CREATION_KINDS.includes(effect.kind) || effect.state !== "completed")
+        return false
       try {
-        return JSON.parse(entry.receipt ?? "{}").workspace === workspace
+        return JSON.parse(effect.receipt ?? "{}").workspace === workspace
       } catch {
         return false
       }
     })
+  }
+
+  private cleanupRetryFacts(run: WorktreeCleanupRun, source: EffectRow): string {
+    const { plan, workspace } = run
+    const memoized = run.facts.retries.find(
+      (retry) => retry.sourceID === source.id && retry.workspace === workspace,
+    )
+    if (memoized?.retryFacts !== undefined && memoized.workspaceExists === existsSync(workspace))
+      return memoized.retryFacts
+    return this.retryFactsOrUnavailable(plan, source, workspace, memoized?.graphCheckActivityRefs)
+  }
+
+  /** Removes one owned worktree after proving it clean and merged. "stop" ends the whole cleanup. */
+  private async removeOwnedWorktree(run: WorktreeCleanupRun): Promise<"stop" | "done"> {
+    const { plan, mode, workspace } = run
+    const sourceEffect = this.worktreeCreationEffect(plan.id, workspace)
     run.source = sourceEffect
     if (!sourceEffect)
       throw new Error("Owned worktree has no completed creation receipt; preserve it")
-    const memoizedFacts = run.facts.retries.find(
-      (retry) => retry.sourceID === sourceEffect.id && retry.workspace === workspace,
-    )
-    run.retryFacts =
-      memoizedFacts?.retryFacts !== undefined &&
-      memoizedFacts.workspaceExists === existsSync(workspace)
-        ? memoizedFacts.retryFacts
-        : this.retryFactsOrUnavailable(plan, sourceEffect, workspace)
+    run.retryFacts = this.cleanupRetryFacts(run, sourceEffect)
     const listed = await this.runtime.timed("cleanup:host.worktrees", () =>
       this.runtime.host.worktrees(),
     )
@@ -648,7 +746,14 @@ export class WorktreeCleanup {
     const { plan, fence, mode, workspace, effect } = run
     const reason = errorText(error)
     if (!run.retryFacts && run.source)
-      run.retryFacts = this.retryFactsOrUnavailable(plan, run.source, workspace)
+      run.retryFacts = this.retryFactsOrUnavailable(
+        plan,
+        run.source,
+        workspace,
+        run.facts.retries.find(
+          (retry) => retry.sourceID === run.source!.id && retry.workspace === workspace,
+        )?.graphCheckActivityRefs,
+      )
     if (!run.cleanupCurrent() && !run.removalStarted) {
       this.abandonCleanupEffect(effect, fence)
       return

@@ -1,6 +1,10 @@
 import { checkResourcesSettled } from "../artifacts.ts"
 import type { RunnerCheckReceipt } from "../artifacts.ts"
 import type { EffectRow } from "../store.ts"
+import {
+  isReceiptlessSupersededGraphCheck,
+  laterMatchingGraphCheck,
+} from "./superseded-graph-check.ts"
 
 type JsonRecord = Record<string, unknown>
 
@@ -223,11 +227,17 @@ function isReceiptForGraphCheck(
   )
 }
 
-function assertSettledWorkspaceCheck(effect: EffectRow, workspace: string, artifact: string) {
+function assertSettledWorkspaceCheck(
+  effect: EffectRow,
+  workspace: string,
+  artifact: string,
+  assertActivitySettled?: (effect: EffectRow) => void,
+) {
   const payload = parseRecord(effect.payload)
   if (!payload || !isGraphCheckEffect(effect, payload, workspace, artifact))
     throw new Error("Combined worktree check activity is not conclusively complete; preserve it")
 
+  assertActivitySettled?.(effect)
   const recorded = parseRecord(effect.receipt)
   const receipt = receiptCheck(recorded)
   if (!isReceiptForGraphCheck(receipt, payload.check, workspace, artifact))
@@ -241,9 +251,13 @@ function assertOtherWorkspaceCheckIsNotForWorkspace(effect: EffectRow, workspace
 }
 
 /** Check the durable activity owned by one graph workspace, independent of the plan's newest candidate. */
-export function assertGraphWorkspaceQuiescent(effects: EffectRow[], workspace: string): void {
+export function assertGraphWorkspaceQuiescent(
+  effects: EffectRow[],
+  workspace: string,
+  assertActivitySettled?: (effect: EffectRow) => void,
+): void {
   const artifact = graphCreationArtifact(effects, workspace)
-  for (const effect of effects) {
+  for (const [index, effect] of effects.entries()) {
     if (!effect.kind.startsWith("graph-verify:")) continue
     const payload = parseRecord(effect.payload)
     if (!payload || typeof payload.workspace !== "string" || payload.workspace.length === 0)
@@ -252,6 +266,16 @@ export function assertGraphWorkspaceQuiescent(effects: EffectRow[], workspace: s
       assertOtherWorkspaceCheckIsNotForWorkspace(effect, workspace)
       continue
     }
-    assertSettledWorkspaceCheck(effect, workspace, artifact)
+    if (isReceiptlessSupersededGraphCheck(effect)) {
+      assertActivitySettled?.(effect)
+      const replacement = laterMatchingGraphCheck(effects, index, workspace, artifact)
+      if (!replacement)
+        throw new Error(
+          "Superseded combined worktree check has no matching settled replacement; preserve it",
+        )
+      assertSettledWorkspaceCheck(replacement, workspace, artifact, assertActivitySettled)
+      continue
+    }
+    assertSettledWorkspaceCheck(effect, workspace, artifact, assertActivitySettled)
   }
 }
