@@ -1,1 +1,23 @@
-{"rustc":17356518491003051113,"features":"[]","declared_features":"[]","target":10655497571263481144,"profile":8979240926782815398,"path":11350648102378399928,"deps":[[988653050756814951,"build_script_build",false,7642242194075785929],[1611130274254986484,"tree_sitter_language",false,3912557735039729257]],"local":[{"CheckDepInfo":{"dep_info":"wasm32-wasip1/debug/.fingerprint/tree-sitter-ruby-04ba5862f851b2f5/dep-lib-tree_sitter_ruby","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":4516028974012260856}
+{
+  "rustc": 17356518491003051113,
+  "features": "[]",
+  "declared_features": "[]",
+  "target": 10655497571263481144,
+  "profile": 8979240926782815398,
+  "path": 11350648102378399928,
+  "deps": [
+    [988653050756814951, "build_script_build", false, 7642242194075785929],
+    [1611130274254986484, "tree_sitter_language", false, 3912557735039729257]
+  ],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/tree-sitter-ruby-04ba5862f851b2f5/dep-lib-tree_sitter_ruby",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

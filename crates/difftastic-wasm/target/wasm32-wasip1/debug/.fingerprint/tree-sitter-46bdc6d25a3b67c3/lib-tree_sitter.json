@@ -1,1 +1,26 @@
-{"rustc":17356518491003051113,"features":"[\"default\", \"std\"]","declared_features":"[\"bindgen\", \"default\", \"std\", \"wasm\", \"wasmtime-c-api\"]","target":625726317299402132,"profile":11124681677009272581,"path":12480995063714441060,"deps":[[1611130274254986484,"tree_sitter_language",false,3912557735039729257],[3056178850035811329,"regex",false,10988475213679277881],[9235208004366183979,"streaming_iterator",false,11238881159303497937],[14659614821474690979,"regex_syntax",false,6237664176766917854],[18040843703906784389,"build_script_build",false,4620981035657668289]],"local":[{"CheckDepInfo":{"dep_info":"wasm32-wasip1/debug/.fingerprint/tree-sitter-46bdc6d25a3b67c3/dep-lib-tree_sitter","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":4516028974012260856}
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"default\", \"std\"]",
+  "declared_features": "[\"bindgen\", \"default\", \"std\", \"wasm\", \"wasmtime-c-api\"]",
+  "target": 625726317299402132,
+  "profile": 11124681677009272581,
+  "path": 12480995063714441060,
+  "deps": [
+    [1611130274254986484, "tree_sitter_language", false, 3912557735039729257],
+    [3056178850035811329, "regex", false, 10988475213679277881],
+    [9235208004366183979, "streaming_iterator", false, 11238881159303497937],
+    [14659614821474690979, "regex_syntax", false, 6237664176766917854],
+    [18040843703906784389, "build_script_build", false, 4620981035657668289]
+  ],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/tree-sitter-46bdc6d25a3b67c3/dep-lib-tree_sitter",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}
