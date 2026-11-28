@@ -14,7 +14,7 @@ scheduling. Persist that binding through dispatch, checks, integration and
 Architect restart/recovery; preserve user-owned bases during child cleanup.
 Branch-ref lineage tests alone do not prove this workflow.
 
-This is one coherent systems feature, reusing target/native-worktree/state-machine
+**LZ-296** is one coherent systems feature, reusing target/native-worktree/state-machine
 flows after the native Settings producers. Current Settings and Changes work
 continues; the external Opus Settings UI reservation remains separate. Additional
 Changes visual-finish agents still await the user's word.

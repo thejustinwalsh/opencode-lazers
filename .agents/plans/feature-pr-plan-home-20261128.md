@@ -2,6 +2,8 @@
 
 Authorized clarification, 2026-11-28. This extends the existing integration-target
 feature; it does not replace its target store, proofs, state machines or scheduler.
+Tracked feature: **LZ-296**, native OpenAI Luna Max, after the native Settings
+producer plan. Runtime task/plan records remain authoritative for execution state.
 
 ## Durable feature-PR plan home
 
