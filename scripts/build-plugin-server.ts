@@ -1,10 +1,8 @@
 import { watch } from "node:fs"
 import { buildServer } from "./build-server.ts"
-import { buildJscpdProvider } from "./build-jscpd-provider.ts"
 
 async function buildAll() {
   await buildServer()
-  await buildJscpdProvider()
 }
 
 await buildAll()
@@ -14,7 +12,7 @@ if (process.argv.includes("--watch")) {
     clearTimeout(timer)
     timer = setTimeout(() => {
       buildAll().then(
-        () => console.log("server and jscpd worker rebuilt"),
+        () => console.log("server and Review producers rebuilt"),
         (error) => console.error(error),
       )
     }, 150)

@@ -4,6 +4,10 @@
 validated Oaink-shaped alignment, changed-token and head-comment ranges. The producer owns source
 reads; runtime comparison performs no filesystem or Git access.
 
+Import the public API from `opencode-lazers/code-review/structural`. `bun run build:server` bundles
+that entry with its worker and copies the checked-in WASM asset beside it; the package export keeps
+its TypeScript source as the type entry.
+
 ```ts
 const service = createStructuralDiffService()
 const result = await service.compare(
