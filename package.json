@@ -15,6 +15,10 @@
   "packageManager": "bun@1.4.4-canary.20261030.1",
   "exports": {
     ".": "./dist/server.js",
+    "./code-review/cccc": {
+      "types": "./src/code-review/providers/cccc/index.ts",
+      "default": "./dist/code-review-cccc.js"
+    },
     "./gui-experimental": "./dist/gui-experimental.cjs",
     "./webgpu/rpc": "./src/webgpu/rpc.ts",
     "./webgpu/contract": "./src/webgpu/contract.ts",
@@ -31,6 +35,7 @@
     "verify": "bun fmt && bun lint --fix && bun fmt && bun scripts/check-unbounded-reads.ts && bun scripts/check-show-reads.ts && bun check",
     "build:gui": "vite build && bun scripts/verify-gui-bundle.ts",
     "build:server": "bun scripts/build-server.ts",
+    "build:cccc-wasm": "bun scripts/build-cccc-wasm.ts",
     "build": "bun run build:gui && bun run build:server",
     "build:fallow-wasm": "bun scripts/build-fallow-wasm.ts"
   },

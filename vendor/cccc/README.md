@@ -1,0 +1,712 @@
+# cccc - A tool/library for measurement of **C**ognitive **C**omplexity and **C**yclomatic **C**omplexity
+
+- A fast CLI — a **single `cccc` binary** — that measures **Cognitive Complexity**
+  (SonarSource / G. Ann Campbell) and **Cyclomatic Complexity** (McCabe). Written
+  in Rust. It routes each file to the right front-end by its extension, so one run
+  can analyze a mixed-language tree. Various languages ship today, all sharing the
+  same engine, flags, and output format:
+  - **TypeScript / JavaScript** (`--lang es`), via the [oxc](https://oxc.rs)
+    parser. Analyzes `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`.
+  - **Rust** (`--lang rust`), via the [syn](https://docs.rs/syn) parser. `.rs`.
+  - **Go** (`--lang go`), via the [gosyn](https://docs.rs/gosyn) parser. `.go`.
+  - **PHP** (`--lang php`), via the [php-rs-parser](https://docs.rs/php-rs-parser)
+    parser. `.php`.
+  - **Ruby** (`--lang ruby`), via the [ruby-prism](https://docs.rs/ruby-prism)
+    parser (Ruby's official Prism parser). `.rb`.
+  - **Scheme** (`--lang scheme`), R7RS-small, via the
+    [lispexp](https://docs.rs/lispexp) S-expression reader. `.scm`, `.ss`, `.sld`.
+    Its child dialect **Racket** (`--lang racket`, `.rkt`/`.rktl`/`.rktd`) rides
+    the same tolerant reader, with `match` and the `for` comprehension family
+    scored on top of R7RS.
+  - **Common Lisp** (`--lang commonlisp`), via the
+    [lispexp](https://docs.rs/lispexp) S-expression reader. `.lisp`, `.lsp`, `.cl`.
+  - **Emacs Lisp** (`--lang emacslisp`), via the
+    [lispexp](https://docs.rs/lispexp) S-expression reader. `.el`.
+  - **Clojure** (`--lang clojure`), via the
+    [lispexp](https://docs.rs/lispexp) S-expression reader. `.clj`, `.cljs`, `.cljc`.
+  - **Kotlin** (`--lang kotlin`), via the
+    [exoego/tree-sitter-kotlin](https://github.com/exoego/tree-sitter-kotlin)
+    grammar (a fork of the fwcd tree-sitter Kotlin grammar with fixes for
+    modern-Kotlin constructs). Analyzes `.kt`, `.kts`.
+  - **Python** (`--lang python`), via the official
+    [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
+    grammar. Analyzes `.py`, `.pyi`.
+  - **Zig** (`--lang zig`), via the pure-Rust
+    [zigsyn](https://docs.rs/zigsyn) parser. Analyzes `.zig`.
+  - **C** (`--lang c`), via the official
+    [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) grammar.
+    Analyzes `.c`, `.h`.
+  - **C++** (`--lang cpp`, aliases `c++`/`cxx`), via the official
+    [tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp) grammar.
+    Analyzes `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx`, `.h++`, `.tpp`,
+    `.ipp` (`.h` is claimed by C, since extension routing needs disjoint
+    claims — see [C++](#c---lang-cpp) for routing `.h` to C++). Shares its
+    lowering for everything C and C++ have in common with `cccc-c`, via
+    `cccc-clike`.
+  - **Perl** (`--lang perl`), via the community-maintained
+    [tree-sitter-perl](https://github.com/tree-sitter-perl/tree-sitter-perl)
+    grammar. Analyzes `.pl`, `.pm`, `.t`.
+  - **Swift** (`--lang swift`), via the
+    [alex-pinkus/tree-sitter-swift](https://github.com/alex-pinkus/tree-sitter-swift)
+    grammar. Analyzes `.swift`.
+  - **Java** (`--lang java`), via the official
+    [tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java)
+    grammar. Analyzes `.java`.
+  - **Dart** (`--lang dart`), via the
+    [nielsenko/tree-sitter-dart](https://github.com/nielsenko/tree-sitter-dart)
+    grammar. Analyzes `.dart`.
+  - **Scala** (`--lang scala`), via the official
+    [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala)
+    grammar. Analyzes `.scala`, `.sc`.
+- A Rust library for calculating cognitive and cyclomatic complexity in a language-agnostic way
+
+## Workspace layout
+
+The complexity engine is split from the language parser so it can be reused as a
+library and extended to other languages:
+
+| Crate | Role |
+|-------|------|
+| [`cccc-core`](crates/cccc-core) | Language-agnostic engine: a normalized IR (`ir::Node`), the scoring rules (`engine::analyze`), and the result/aggregation types. Depends only on `serde`. |
+| [`cccc-cli`](crates/cccc-cli) | The unified **`cccc` binary**. Owns argument parsing, config-file handling, file walking, parallelism, and output rendering, and holds the registry of bundled languages (`lang::LANGUAGES`) that routes each file to its adapter. |
+| [`cccc-es`](crates/cccc-es) | ECMAScript/TypeScript adapter **library**: lowers the oxc AST into `cccc-core`'s IR. Depends only on `cccc-core` + oxc — **no CLI dependencies**, so embedding it stays lightweight. |
+| [`cccc-rs`](crates/cccc-rs) | Rust adapter **library**: lowers the [syn](https://docs.rs/syn) AST into `cccc-core`'s IR. Depends only on `cccc-core` + syn — **no CLI dependencies**. |
+| [`cccc-go`](crates/cccc-go) | Go adapter **library**: lowers the [gosyn](https://docs.rs/gosyn) AST into `cccc-core`'s IR. Depends only on `cccc-core` + gosyn — **no CLI dependencies**. |
+| [`cccc-php`](crates/cccc-php) | PHP adapter **library**: lowers the [php-rs-parser](https://docs.rs/php-rs-parser) AST into `cccc-core`'s IR. Depends only on `cccc-core` + php-rs-parser / php-ast — **no CLI dependencies**. |
+| [`cccc-rb`](crates/cccc-rb) | Ruby adapter **library**: lowers the [ruby-prism](https://docs.rs/ruby-prism) AST into `cccc-core`'s IR. Depends only on `cccc-core` + ruby-prism — **no CLI dependencies**. Note: ruby-prism is an FFI binding to the vendored Prism C source, so building this crate (unlike the others) needs a C99 compiler and libclang. |
+| [`cccc-scheme`](crates/cccc-scheme) | Scheme (R7RS-small) + Racket adapter **library**: lowers the [lispexp](https://docs.rs/lispexp) S-expression tree into `cccc-core`'s IR. Depends only on `cccc-core` + lispexp (pure Rust) — **no CLI dependencies**. |
+| [`cccc-lisp-kit`](crates/cccc-lisp-kit) | Shared **lowering kit** for the Lisp-family adapters: the collector stack, the `walk_regions` code-vs-data traversal, and logical folding. A dialect adapter supplies just a reader preset + a head-symbol dispatch table. Re-exports `cccc-core`'s IR and the pure-Rust lispexp reader. |
+| [`cccc-lisp`](crates/cccc-lisp) | Lisp-family adapter **library** (Common Lisp, Emacs Lisp, …) built on `cccc-lisp-kit`. Its `Dialect` API also analyzes Scheme/Clojure by delegating to `cccc-scheme`/`cccc-clojure` (no duplicated lowering). **No CLI dependencies.** |
+| [`cccc-clojure`](crates/cccc-clojure) | Clojure adapter **library**: lowers the [lispexp](https://docs.rs/lispexp) S-expression tree into `cccc-core`'s IR. Depends only on `cccc-core` + lispexp (pure Rust) — **no CLI dependencies**. |
+| [`cccc-scheme`](crates/cccc-scheme) | Scheme (R7RS-small) adapter **library**: lowers the [lispexp](https://docs.rs/lispexp) S-expression tree into `cccc-core`'s IR. Depends only on `cccc-core` + lispexp (pure Rust) — **no CLI dependencies**. |
+| [`cccc-kt`](crates/cccc-kt) | Kotlin adapter **library**: lowers the [exoego/tree-sitter-kotlin](https://github.com/exoego/tree-sitter-kotlin) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Kotlin grammar — **no CLI dependencies**. Note: the grammar ships C source compiled by `cc`, so building this crate needs a C compiler (but not libclang, unlike `cccc-rb`). Not published to crates.io (the grammar is a git dependency); `cccc-cli` includes it via its default `kotlin` feature. |
+| [`cccc-py`](crates/cccc-py) | Python adapter **library**: lowers the official [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Python grammar — **no CLI dependencies**. Like `cccc-kt`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+| [`cccc-zig`](crates/cccc-zig) | Zig adapter **library**: lowers the pure-Rust [zigsyn](https://docs.rs/zigsyn) AST into `cccc-core`'s IR. Depends only on `cccc-core` + zigsyn — **no CLI dependencies or C toolchain**. |
+| [`cccc-c`](crates/cccc-c) | C adapter **library**: lowers the official [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the C grammar — **no CLI dependencies**. Like `cccc-kt`/`cccc-py`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+| [`cccc-clike`](crates/cccc-clike) | Shared **lowering** for the C-family adapters: `tree-sitter-cpp`'s grammar is a superset of `tree-sitter-c`'s, so `cccc-c` and `cccc-cpp` both construct a `cccc_clike::SharedBuilder` (tagged `Language::C`/`Language::Cpp`) instead of duplicating the lowering for what they share (functions, `if`, loops, `switch`, jumps, logical folding, preprocessor conditionals, calls). C++-only constructs (lambdas, `catch`, range-`for`) are gated on the language tag in the same `visit`. Depends only on `cccc-core` + tree-sitter — no grammar crate, no CLI dependencies. |
+| [`cccc-cpp`](crates/cccc-cpp) | C++ adapter **library**: lowers the official [tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp) CST into `cccc-core`'s IR via `cccc-clike`. Depends only on `cccc-core` + `cccc-clike` + tree-sitter + the C++ grammar — **no CLI dependencies**. |
+| [`cccc-pl`](crates/cccc-pl) | Perl adapter **library**: lowers the [tree-sitter-perl](https://github.com/tree-sitter-perl/tree-sitter-perl) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Perl grammar — **no CLI dependencies**. Like `cccc-kt`/`cccc-py`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+| [`cccc-swift`](crates/cccc-swift) | Swift adapter **library**: lowers the [alex-pinkus/tree-sitter-swift](https://github.com/alex-pinkus/tree-sitter-swift) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Swift grammar — **no CLI dependencies**. Like `cccc-kt`/`cccc-py`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+| [`cccc-java`](crates/cccc-java) | Java adapter **library**: lowers the official [tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Java grammar — **no CLI dependencies**. Like `cccc-kt`/`cccc-py`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+| [`cccc-dart`](crates/cccc-dart) | Dart adapter **library**: lowers the [nielsenko/tree-sitter-dart](https://github.com/nielsenko/tree-sitter-dart) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Dart grammar — **no CLI dependencies**. The grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+| [`cccc-scala`](crates/cccc-scala) | Scala adapter **library**: lowers the official [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Scala grammar — **no CLI dependencies**. Like `cccc-kt`/`cccc-py`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
+
+Each adapter is a standalone library so that a consumer who only wants the
+metrics pulls in just that adapter (+ `cccc-core` + its parser), never clap /
+ignore / rayon. The `cccc` binary depends on all of them and dispatches by
+extension.
+
+To support another language: (1) add an adapter crate that lowers its AST into
+`cccc_core::ir::Node` and calls `cccc_core::engine::analyze`, then (2) register
+it with one entry in `cccc-cli`'s `lang::LANGUAGES` (and add the dependency) —
+no new binary, and no reimplementing the metrics or the CLI. `cccc-es` (oxc),
+`cccc-rs` (syn), `cccc-go` (gosyn), `cccc-php` (php-rs-parser), `cccc-rb`
+(ruby-prism), `cccc-kt` / `cccc-py` / `cccc-pl` (tree-sitter), `cccc-swift` (tree-sitter), `cccc-c` / `cccc-cpp` (tree-sitter),
+`cccc-java` (tree-sitter), `cccc-dart` (tree-sitter), `cccc-scala` (tree-sitter), `cccc-scheme` (lispexp), `cccc-clojure` (lispexp), `cccc-lisp` (lispexp, Common Lisp / Emacs Lisp / …),
+and `cccc-zig` (zigsyn) are the reference adapters: same shape, different parser.
+The Lisp-family adapters share their lowering skeleton via `cccc-lisp-kit`;
+`cccc-c` and `cccc-cpp` share theirs via `cccc-clike`.
+
+**See [docs/ADDING_A_LANGUAGE.md](docs/ADDING_A_LANGUAGE.md) for the full
+step-by-step guide**, including the IR-node reference table, the
+logical-operator folding rule, and how to test the adapter.
+
+```rust
+use cccc_core::{engine::analyze, ir::Node};
+
+let f = Node::Function {
+    name: "f".into(), kind: "function".into(), line: 1,
+    body: vec![Node::Branch { test: vec![], then: vec![], alternate: None }],
+};
+let report = analyze("example", &[f], vec![]);
+assert_eq!(report.functions[0].cognitive, 1);  // one `if`
+```
+
+## Install / build
+
+Prebuilt binaries for Linux, macOS, and Windows are attached to each
+[GitHub Release](https://github.com/moznion/cccc/releases). To build from source:
+
+```sh
+cargo build --release
+# single binary at ./target/release/cccc
+```
+
+Or install from crates.io:
+
+```sh
+cargo install cccc-cli
+```
+
+> [!NOTE]
+> The crates.io build does **not** support Kotlin. `cccc-kt` depends on a Kotlin
+> grammar that is only available from git, and crates.io rejects git
+> dependencies, so `cccc-kt` is not published and `cccc-cli` is published without
+> its (default) `kotlin` feature. Use a GitHub Release binary or build from this
+> repository to analyze Kotlin.
+
+## Usage
+
+```sh
+cccc <paths...> [options]
+```
+
+One binary handles every language. Pass one or more files or directories;
+directories are walked recursively (respecting `.gitignore`, always skipping
+`node_modules`). Each file is dispatched to the right front-end by its
+extension, so a directory mixing `.ts`, `.rs`, `.go`, and `.php` is analyzed in
+a single run. Restrict the languages with `--lang` (e.g. `--lang go,rust`).
+
+Output is **JSON by default** — compact, on one line, ready to pipe into `jq`
+or an artifact store; `--pretty` prints the same document indented.
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--lang LIST` | Restrict analysis to these languages (comma-separated; canonical names or aliases, e.g. `es`,`rust`/`rs`,`go`,`php`). Default: all |
+| `--exclude-lang LIST` | Exclude these languages (comma-separated). The inverse of `--lang`; applied to all languages, or to `--lang`'s set when both are given |
+| `--config PATH` | Use this config file instead of discovering one (must exist) |
+| `--no-config` | Do not look for or load a `cccc.toml` config file |
+| `--table` | Human-readable table instead of JSON |
+| `--ext EXTS \| LANG=EXTS` | Extensions to analyze. Global form `--ext ts,tsx` filters across all languages; per-language form `--ext es=ts,tsx` overrides that language's extensions and routes them to it. Repeatable |
+| `--exclude GLOB` | Exclude files matching a glob (repeatable) |
+| `--max-cognitive N` | Exit non-zero if any function's cognitive complexity exceeds N |
+| `--max-cyclomatic N` | Exit non-zero if any function's cyclomatic complexity exceeds N |
+| `--min N` | Only report functions with complexity >= N |
+| `--top-cognitive N` | Show only the N most cognitively-complex functions, as a flat cross-file ranking |
+| `--top-cyclomatic N` | Show only the N most cyclomatically-complex functions, as a flat cross-file ranking |
+| `--no-ignore` | Do not respect `.gitignore` when walking directories |
+| `--cache` | Cache results and reuse them for files unchanged since the last run |
+| `--cache-file PATH` | Where to keep the results cache (implies `--cache`). Default: `.cccc.cache` next to the config file, or in the current directory |
+| `--no-cache` | Do not use the results cache, even if the config file enables it |
+| `--print-cache-file` | Print the resolved cache path (nothing when disabled) and exit; for tooling |
+| `--pretty` | Pretty-print the JSON output (default is compact, one line) |
+| `-j, --jobs N` | Number of files to analyze in parallel (default: logical CPU count) |
+
+### Configuration file
+
+Recurring options can be stored in a `cccc.toml` file so they don't have to be
+repeated on every run. By default `cccc` discovers one by walking up from the
+current directory, looking for `cccc.toml` (then `.cccc.toml`) in each ancestor;
+`--config PATH` selects an explicit file and `--no-config` disables discovery.
+
+Resolution precedence is **CLI flag > config file > built-in default**: anything
+passed on the command line always wins. Supported keys (all optional):
+
+```toml
+# cccc.toml
+languages         = ["es", "go"]        # same as --lang
+exclude-languages = ["php"]             # same as --exclude-lang
+exclude           = ["dist/**", "**/*.test.ts"]
+table         = false
+max-cognitive = 15
+max-cyclomatic = 10
+min           = 1
+no-ignore     = false
+jobs          = 8
+pretty        = false               # indented JSON instead of the compact default
+cache         = false               # reuse results for unchanged files
+cache-file    = ".cccc.cache"       # cache location (does not enable by itself)
+
+# Per-language extension overrides. Each entry replaces that language's default
+# extensions (and routes those extensions to it). Keyed by a language's name or
+# alias; languages without an entry keep their defaults.
+[ext]
+es = ["ts", "tsx"]      # analyze only .ts/.tsx as ECMAScript (not .js, .mjs, …)
+go = ["go", "tmpl"]     # also route a custom .tmpl extension to the Go front-end
+```
+
+The config-file `ext` is a **per-language table**: it both narrows/extends which
+extensions a language claims and determines how a custom extension is routed.
+The same per-language form is available on the command line as
+`--ext LANG=ext,ext` (which overrides the config's entry for that language),
+alongside the global filter form `--ext ext,ext`.
+
+(`--top-cognitive`/`--top-cyclomatic` and the input paths are command-line only.)
+
+`--top-cognitive` and `--top-cyclomatic` are mutually exclusive. In top mode the
+output is a ranking (`{ "metric", "top": [...], "summary" }`) instead of the
+per-file `files` array; each entry carries its own `path` and `line`. The
+`summary` still reflects the full population.
+
+`--exclude` takes a glob pattern and may be given multiple times. Each pattern is
+matched both against a file's path relative to the directory you passed (so
+`dist/**` is anchored at that root) and against its file name alone (so
+`*.test.ts` matches at any depth without a `**/` prefix). `*` does not cross `/`;
+use `**` to span directories. Brace alternation is supported, e.g.
+`**/*.{test,spec}.ts`. Excluded files are dropped whether found by walking a
+directory or named explicitly on the command line. An invalid pattern is an error
+(exit code 2). This is independent of `--no-ignore` and `.gitignore` handling.
+
+### Results cache
+
+`--cache` (or `cache = true` in `cccc.toml`) makes repeat runs reuse the
+previous results for files that haven't changed, re-analyzing only what did.
+The output is byte-for-byte identical to an uncached run: the cache is an
+accelerator, never a source of errors — anything unexpected (a missing,
+corrupt, or version-mismatched cache file) just degrades to a full run. It
+pays off wherever cccc runs repeatedly over a mostly-unchanged tree: watch
+loops, pre-commit hooks, editor integrations, and CI. On large monorepos,
+warm runs measure ~3× (TS/JS via oxc) to ~17× (tree-sitter languages such as
+C) faster than cold ones — numbers and method in
+[BENCHMARK.md](BENCHMARK.md).
+
+An entry is reused only when it provably still describes the file's current
+content, checked cheapest-first:
+
+1. **stat** — size and mtime unchanged: trusted without reading the file.
+   The steady local path; a fully warm run does nothing but stat.
+2. **git's index** — the mtime moved, but git calls the file clean and the
+   index's blob SHA matches the one recorded at analysis time: still no
+   read. One `git ls-files`/`git status` pair answers for the whole tree,
+   which is what keeps fresh CI checkouts (every mtime reset) warm. git is
+   consulted only after a stat check has failed, and never trusted beyond
+   content: dirty or untracked files, non-git trees, and any git failure at
+   all fall through to step 3.
+3. **content re-hash** — the file is read and its blob SHA re-derived from
+   the bytes; the final authority, and the same value step 2 compares
+   without reading. A mismatch means the content really changed, and only
+   then is the file re-analyzed. (The blob SHA is SHA-1 — the same
+   non-adversarial, per-path content comparison git itself rests on, not a
+   cryptographic boundary.)
+
+A hit that needed step 2 or 3 gets its refreshed mtime written back, so the
+next run takes the stat path again. Entries are also keyed to the analyzing
+language (`--ext` re-routing must not resurface another language's scores),
+and the whole cache to the cccc version that wrote it.
+
+The cache lives in `.cccc.cache` next to the config file (so runs from any
+subdirectory share it), or where `--cache-file` points; add it to
+`.gitignore`. It needs no maintenance beyond that: every run rewrites it to
+match exactly the current tree — deleted files' entries are pruned, and its
+size stays proportional to the project, not its history — and deleting the
+file at any time is always safe (the next run is simply cold).
+
+#### In CI
+
+The git-index check is what makes the cache effective in CI, where every
+checkout resets every mtime: persist the cache file across runs and each run
+validates unchanged files off git's index instead of re-parsing them —
+measured 1.6–9.6× faster than a cold run (see BENCHMARK.md). Correctness
+never depends on which commit (or how stale a run) the restored cache came
+from: every entry is checked content-to-content. Under `CI=…` (GitHub
+Actions sets it) the git subprocesses start early so their latency hides
+behind file discovery.
+
+On GitHub Actions, [cccc-action](https://github.com/moznion/cccc-action)
+wires the persistence up for you when the config sets `cache = true`. Wiring
+it by hand looks like:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: .cccc.cache
+    key: cccc-${{ github.sha }}
+    restore-keys: cccc-
+- run: cccc --cache --max-cognitive 15 src/
+```
+
+Tooling that needs the resolved cache location up front (the way
+cccc-action does) can ask `cccc --print-cache-file`, which prints the path
+the current config resolves to — or nothing when caching is disabled — and
+exits.
+
+### Examples
+
+```sh
+# JSON for one file
+cccc src/app.ts
+
+# Pretty table for a directory (any mix of supported languages)
+cccc --table src/
+
+# Only Go and Rust files under a mixed tree
+cccc --lang go,rust .
+
+# Everything except PHP
+cccc --exclude-lang php .
+
+# Analyze only .ts/.tsx as ECMAScript (not .js, .mjs, …)
+cccc --ext es=ts,tsx src/
+
+# CI gate: fail if any function exceeds cognitive complexity 15
+cccc --max-cognitive 15 src/
+
+# The 10 most cognitively-complex functions across the project
+cccc --top-cognitive 10 src/
+
+# Skip build output and test files
+cccc --exclude 'dist/**' --exclude '**/*.{test,spec}.ts' src/
+
+# Limit parallelism to 4 workers (default is the logical CPU count)
+cccc -j 4 src/
+
+# Recurring runs: reuse results for files unchanged since the last run
+cccc --cache src/
+```
+
+Files are analyzed in parallel. The worker count defaults to the number of
+logical CPUs and can be capped with `-j/--jobs`; the output is identical
+regardless of the worker count.
+
+## GitHub Action
+
+A composite action to install and run `cccc`  in CI lives in its own repository:
+[moznion/cccc-action](https://github.com/moznion/cccc-action).
+
+```yaml
+- uses: moznion/cccc-action@v1
+  with:
+    path: src/           # analyze this; thresholds come from cccc.toml
+```
+
+Like thresholds, caching is driven by the config: when `cccc.toml` sets
+`cache = true`, the action persists the [results cache](#results-cache)
+across runs on its own (via `actions/cache` — no workflow wiring needed).
+
+An example GitHub Actions workflow for continuously measuring complexity with [k1LoW/octocov](https://github.com/k1LoW/octocov) is available at [.github/workflows/complexity.yml](./.github/workflows/complexity.yml).
+
+## Output shape (JSON)
+
+An object with `files` (per-file reports) and `summary` (a whole-project
+rollup). Each function is measured independently and nested functions appear
+under `children`. A file's totals sum every function at every depth plus
+module-level code.
+
+The `summary` is computed over every function in every file (all nesting
+depths). Because complexity is right-skewed, it reports the distribution
+(`sum`/`max`/`median`/`p90`/`p95`) rather than a mean — the percentiles describe
+the tail where refactoring candidates live. It is unaffected by `--min`.
+
+```json
+{
+  "files": [
+    {
+      "path": "src/app.ts",
+      "cognitive": 10,
+      "cyclomatic": 10,
+      "functions": [
+        {
+          "name": "handleRequest",
+          "kind": "function",
+          "line": 10,
+          "cognitive": 7,
+          "cyclomatic": 4,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "file_count": 1,
+    "function_count": 3,
+    "parse_error_count": 0,
+    "parse_error_file_count": 0,
+    "cognitive":  { "sum": 10, "max": 7, "median": 2, "p90": 7, "p95": 7 },
+    "cyclomatic": { "sum": 10, "max": 4, "median": 3, "p90": 4, "p95": 4 }
+  }
+}
+```
+
+### Parse errors
+
+A file that fails to parse cleanly is still measured from whatever the parser
+recovered, and its `parse_errors` (an array of messages, omitted when empty)
+appears on that file's entry. The `summary` aggregates them — `parse_error_count`
+(total errors), `parse_error_file_count` (affected files), and
+`parse_error_files` (the affected paths, omitted when empty) — so a partial
+parse can't go unnoticed without inspecting every file entry, even in `--top-*`
+mode where per-file entries aren't emitted at all:
+
+```json
+{
+  "files": [
+    {
+      "path": "src/broken.py",
+      "parse_errors": ["syntax error at line 6"],
+      ...
+    }
+  ],
+  "summary": {
+    "parse_error_count": 1,
+    "parse_error_file_count": 1,
+    "parse_error_files": ["src/broken.py"],
+    ...
+  }
+}
+```
+
+In `--table` mode the aggregate count is printed in the summary block, and a
+warning listing each affected file (with its error count) goes to stderr so it
+isn't lost in a long table:
+
+```console
+$ cccc --table src/ >/dev/null
+cccc: warning: 1 parse error(s) in 1 file(s); results for those files may be incomplete:
+cccc:   src/broken.py (1)
+```
+
+> Note: the top level is an object (`{ files, summary }`), so to post-process
+> the per-file array with `jq`, start from `.files` — e.g.
+> `cccc src/ | jq '.files | sort_by(-.cognitive)'`.
+
+## Benchmark
+
+On [zod](https://github.com/colinhacks/zod)'s `packages/zod/src` (286 `.ts`
+files, 68,357 LOC), median wall-clock and peak memory over 5 runs on an Apple
+M4 Pro:
+
+| Tool | Metrics | Time | Peak RSS |
+|------|---------|-----:|---------:|
+| **cccc** (ECMAScript) | cognitive + cyclomatic, per-function, full AST | **15.5 ms** | **12.5 MB** |
+| ESLint + SonarJS | cognitive + cyclomatic, per-function, full AST | 1,807 ms (**117× slower**) | 604 MB (48× more) |
+| lizard | cyclomatic only, heuristic parser | 1,413 ms (91× slower) | 45.7 MB |
+| scc | coarse per-file keyword count, no AST | 8.3 ms (1.9× faster) | 13.9 MB |
+
+Among tools that do the same job — both metrics, per-function, over a real AST —
+cccc is **~117× faster than ESLint+SonarJS** (the only other tool that computes
+cognitive complexity) and uses ~48× less memory. `scc` is faster only because it
+never parses: it counts keywords per file, with no AST, no per-function data, and
+no cognitive complexity.
+
+See **[BENCHMARK.md](BENCHMARK.md)** for the full methodology, the verify-then-time
+harness, per-run numbers, function-count sanity checks, and caveats.
+
+## Metric rules
+
+**Cyclomatic (McCabe):** base 1 per function; +1 for each `if`/`else if`,
+ternary, `for`/`for-in`/`for-of`/`while`/`do-while`, `case` (excluding
+`default`), `catch`, each `&&`/`||`/`??`, and each explicit null guard such as
+an optional-chain segment. Null guards do not add cognitive complexity or
+nesting.
+
+**Cognitive (SonarSource):**
+- +1 plus a nesting bonus for `if`, ternary, `switch`, loops, `catch`.
+- +1 flat (no bonus) for `else`/`else if`, labelled `break`/`continue`, each
+  run of like logical operators, and recursion (call to the enclosing
+  function's own name).
+- Nesting increases inside control-flow bodies and nested function bodies.
+
+Each function-like unit is scored independently (nesting resets to 0 at the
+function boundary); nested functions are reported as children rather than
+inflating the parent's own score.
+
+The rules above are stated in TypeScript/JavaScript terms; each adapter maps
+its language onto the same IR, with the per-language differences below.
+
+### Rust (`--lang rust`)
+- **Function-like units:** `fn` / `impl` methods / trait default methods /
+  closures.
+- **Maps to the shared nodes:** `if`/`else if`/`else`, `match` (a `_` or
+  bare-binding arm is the non-decision `default`), `for`/`while`/`loop`,
+  labelled `break`/`continue`, and `&&`/`||`.
+- No ternary (`if` is an expression) and no `try`/`catch` (errors flow through
+  `?`) — those constructs simply don't occur.
+
+### Go (`--lang go`)
+- **Function-like units:** top-level functions / methods / function literals
+  (closures).
+- **Maps to the shared nodes:** `if`/`else if`/`else`, `for` (including
+  `for`-`range`), `switch`/type-`switch`/`select` (a `default` clause is the
+  non-decision arm), labelled `break`/`continue`/`goto`, and `&&`/`||`.
+- No ternary and no `try`/`catch` (errors are returned values) — those
+  constructs simply don't occur.
+
+### PHP (`--lang php`)
+- **Function-like units:** functions / methods / closures / `fn` arrow
+  functions / property hooks.
+- **Maps to the shared nodes:** `if`/`elseif`/`else`, `while`/`do`-`while`/
+  `for`/`foreach`, `switch` and the `match` expression (a `default` arm is the
+  non-decision case), `catch` clauses, multi-level `break N`/`continue N` and
+  `goto`, the ternary `?:`, and `&&`/`and`/`||`/`or`/`??`.
+- `&&`/`and` (likewise `||`/`or`) are the same normalized operator. `??` folds
+  as a coalescing run.
+- Each null-safe property or method access (`?->`) adds one cyclomatic path.
+
+### Ruby (`--lang ruby`)
+- **Function-like units:** methods, blocks, and lambdas.
+- **Maps to the shared nodes:** branches, loops, `case`/`when` and
+  `case`/`in`, rescue clauses, ternary expressions, logical operators.
+- Each safe navigation operator (`&.`) adds one cyclomatic path.
+
+### Kotlin (`--lang kotlin`)
+- **Function-like units:** `fun` declarations / methods / local functions /
+  `fun` anonymous functions / lambdas / property `get`/`set` accessors.
+- **Maps to the shared nodes:** the `if` expression (`else if` — an `if`
+  nested in the `else` body — chains flat), the `when` expression with or
+  without a subject (its `else` entry is the non-decision `default` arm),
+  `for`/`while`/`do`-`while`, `catch` clauses, labelled `break@`/`continue@`,
+  and `&&`/`||`.
+- The elvis operator `?:` folds as a coalescing run (like PHP's `??`). Kotlin
+  has no C-style ternary — `if` is already an expression.
+- Each safe-navigation operator (`?.`) adds one cyclomatic path.
+
+### Python (`--lang python`)
+- **Function-like units:** `def` (incl. `async def` and decorated
+  definitions) / methods / `lambda`.
+- **Maps to the shared nodes:** `if`/`elif`/`else` (`elif` chains flat), the
+  conditional expression `a if b else c` (a ternary — its `else` arm is not a
+  second increment), `for`/`while` (incl. `async for`; a loop's `else` clause
+  runs at the surrounding level), `match` (a bare `case _:` is the
+  non-decision `default` arm), `except`/`except*` clauses, and `and`/`or`.
+- Comprehensions and generator expressions score like the written-out loop:
+  each `for` clause is a loop and each `if` clause a branch, nested
+  left-to-right.
+- No labelled `break`/`continue` and no `??`. `not` adds nothing.
+
+### Zig (`--lang zig`)
+- **Function-like units:** named `fn` declarations and `test` blocks.
+- **Maps to the shared nodes:** `if`/`else if`/`else`, `while`/`for` (a
+  loop's `else` branch runs at the surrounding level), `switch` (an `else`
+  prong is the non-decision `default` arm), `catch` handlers, labelled
+  `break`/`continue`, and `and`/`or`.
+- `orelse` folds as a coalescing run. Zig has no ternary expression — `if` is
+  already an expression.
+
+### C (`--lang c`)
+- **Function-like units:** function definitions, including K&R-style
+  definitions and GNU nested functions.
+- **Maps to the shared nodes:** `if`/`else if`/`else`, the ternary `?:`
+  (GNU's elided-middle `a ?: b` included), `for`/`while`/`do`-`while`,
+  `switch` (the `default:` label is the non-decision arm; each fall-through
+  `case` label is its own cyclomatic point), `goto` (one flat cognitive
+  point — like a labelled jump), and `&&`/`||`.
+- Preprocessor conditionals (`#if`/`#ifdef`/`#ifndef`, chained via
+  `#elif`/`#else`) score as branches, mirroring the SonarSource C/C++
+  analyzers.
+- No exceptions and no `??`. `#define` bodies are opaque to the grammar, so
+  code inside a macro body is not scored.
+- Known wart of preprocessor-unaware parsing: the standard `extern "C" {`
+  guard splits its braces across two `#ifdef __cplusplus` blocks, which
+  surfaces as a parse warning — the rest of the header still parses and
+  scores.
+- Another wart: the `<cinttypes>` printf-width macros (`"..." PRIu32 "..."`
+  and friends) only become adjacent string literals after macro expansion,
+  which the grammar never performs, so they also surface as a parse warning
+  local to that expression.
+
+### C++ (`--lang cpp`)
+- Everything above for C applies unchanged (`tree-sitter-cpp`'s grammar is a
+  superset of `tree-sitter-c`'s, sharing the same node kinds/fields for what
+  the two languages have in common).
+- **Function-like units:** additionally, a `[...](...){...}` lambda is its own
+  unit (like a closure elsewhere).
+- **Maps to the shared nodes:** additionally, `catch` clauses (the `try` body
+  runs at the surrounding level, same as Kotlin/Python's `catch`/`except`)
+  and range-`for` (`for (auto &x : xs)`), which is a loop like any other.
+- Constructor/destructor/operator-overload names, including out-of-line
+  qualified definitions (`Foo::bar`), are dug out of the declarator chain, as
+  are functions returning a reference (`int &get()`), conversion operators
+  (named e.g. `operator bool`), and explicit specializations (`spec<int>` is
+  named `spec`). A qualified definition and a qualified or unqualified
+  self-call both resolve to the same trailing simple name, and template
+  arguments are dropped on both sides (`fact<N - 1>()` inside `fact`), so
+  recursion is still detected.
+- C++20 module units (`.cppm`/`.ixx`) aren't claimed: the grammar can't parse
+  `export module`/`import` declarations.
+- **C++ headers in `.h` files.** `.h` is routed to C by default, and when two
+  languages claim the same extension the one registered first (C) wins — so
+  to analyze `.h` as C++, add `h` to `cpp` *and* drop it from `c`:
+
+  ```toml
+  [ext]
+  c = ["c"]
+  cpp = ["cpp", "cc", "cxx", "hpp", "hh", "hxx", "h++", "tpp", "ipp", "h"]
+  ```
+
+  or on the command line, `--ext c=c --ext cpp=cpp,cc,cxx,hpp,hh,hxx,h++,tpp,ipp,h`.
+  In a C++-only project, `--exclude-lang c` plus the `cpp` override works too.
+- Extension matching is case-insensitive, so `.C` (a traditional C++
+  extension on case-sensitive filesystems) is analyzed as C.
+
+### Perl (`--lang perl`)
+- **Function-like units:** named `sub`s / `method` declarations (feature
+  `class`, Perl 5.38+) / anonymous `sub`s. A block callback passed to
+  `grep`/`map`/`sort` is its own anonymous unit (like a Ruby block).
+- **Maps to the shared nodes:** `if`/`elsif`/`else` (`elsif` chains flat) and
+  `unless`, the statement modifiers `EXPR if/unless COND` (a branch) and
+  `EXPR while/until/for COND` (a loop — incl. `do { } while`), the ternary
+  `?:`, `while`/`until`/C-style `for`/`foreach`, `try`/`catch` (Perl 5.34+'s
+  `try` feature — `finally` runs at the surrounding level), labelled
+  `next`/`last`/`redo`, and `&&`/`and`/`||`/`or`/`//`.
+- `&&`/`and` (likewise `||`/`or`) are the same normalized operator. `//`
+  folds as a coalescing run.
+- A classic `eval { }` is transparent (the `if ($@)` after it is the decision
+  point). `xor`/`not`/`!` add nothing. `given`/`when` (long deprecated) is
+  not scored.
+
+### Swift (`--lang swift`)
+- **Function-like units:** `func` declarations / methods / local functions /
+  closures / `init` / `deinit` / `subscript` / computed-property `get`/`set`
+  accessors (including the implicit getter-only form) / `willSet`/`didSet`
+  observers.
+- **Maps to the shared nodes:** `if`/`else if`/`else` (with `if let` /
+  `if case` variants), `guard` … `else` (scored exactly like an `if`),
+  `switch` (its `default` entry is the non-decision arm; `case a, b:` is one
+  arm), `for`-`in` (its `where` clause adds nothing by itself), `while`/
+  `repeat`-`while`, `catch` blocks, labelled `break`/`continue`, the ternary
+  `a ? b : c`, and `&&`/`||`.
+- Nil-coalescing `??` folds as a coalescing run (like PHP's `??`).
+- `#if` compilation directives are transparent — every branch's code scores
+  where it stands. `try`/`try?`/`await` add nothing.
+- Each optional-chaining guard on a member access, subscript, or call adds
+  one cyclomatic path.
+
+### Java (`--lang java`)
+- **Function-like units:** methods (incl. ones in anonymous classes and
+  interface `default` methods) / constructors / record compact constructors /
+  lambdas. Static and instance initializer blocks run at the surrounding
+  level.
+- **Maps to the shared nodes:** `if`/`else if`/`else` (`else if` chains
+  flat), the ternary `?:`, `switch` statements and expressions alike — both
+  colon-style `case:` groups and arrow-style `case ->` rules with pattern
+  matching and guards supported (a `default` or `case null, default` arm is
+  the non-decision case), `for`/enhanced `for`/`while`/`do`-`while`, `catch`
+  clauses (a multi-catch `catch (A | B e)` is one clause; `try`-with-resources
+  bodies are transparent), labelled `break L`/`continue L`, and `&&`/`||`.
+- No `??`-style coalescing operator.
+
+### Dart (`--lang dart`)
+- **Function-like units:** top-level and local functions, methods, getters,
+  setters, constructors, factory constructors, operators, and anonymous
+  function expressions.
+- **Maps to the shared nodes:** `if`/`else if`/`else`, the ternary `?:`,
+  `for` (including `await for`)/`while`/`do`-`while`, switch statements and
+  switch expressions (a `default` or wildcard arm is the non-decision case),
+  `catch` and `on` handlers, labelled `break`/`continue`, and `&&`/`||`.
+- Pattern `&&`/`||` use the same logical-sequence rules. Collection
+  `if`/`for` lower to nested branches/loops. `??`/`??=` map to coalescing
+  logical nodes.
+- Null-aware access (`?.`, `?[]`, `?..`), null-aware spread (`...?`),
+  collection elements (`?value`), and map keys/values each add one
+  cyclomatic path without adding cognitive complexity.
+- External, native, and otherwise bodyless declarations are not reported as
+  functions.
+
+### Scala (`--lang scala`)
+- **Function-like units:** `def` definitions (and bodyless abstract `def`
+  declarations), anonymous functions (`x => …`), and partial-function
+  literals (`xs.collect { case … }`, `def receive = { case … }` — an
+  anonymous unit whose body is the pattern match). A secondary constructor
+  (`def this(…)`) is reported as a `constructor` unit (like the Kotlin/Swift
+  adapters), and its mandatory `this(…)` self-delegation is not counted as
+  recursion.
+- **Maps to the shared nodes:** `if`/`else if`/`else`, `match` (a bare
+  `case _ =>`, or a lowercase variable pattern like `case other =>`, is the
+  non-decision `default` arm; an uppercase stable-id like `case None =>` stays
+  a decision), `for`/`while`/`do`-`while`, each `catch` clause (the `try` body
+  and `finally` run at the surrounding level; the `case` handlers inside a
+  `catch` score within that one node), and `&&`/`||`.
+- A pattern guard (`case x if a && b =>`) is transparent: its operators still
+  contribute, but the guard itself is not a separate decision.
+- A lone unguarded arm that only destructures — `{ case (k, v) => … }` or
+  `t match { case (a, b) => … }` (tuples of variables / `_`, nested or bound
+  with `@`) — is not a decision: it is Scala's idiom for unpacking a tuple, so
+  it adds no `match` increment and its body scores directly. With more than
+  one arm, a tuple pattern is an ordinary refutable case.
+- No `break`/`continue` statements (nor labelled loops) and no `??`-style
+  coalescing operator. The library-based escapes —
+  `scala.util.control.Breaks` (`breakable {}` / `break()`) and Scala 3's
+  `scala.util.boundary` — are ordinary method calls, so they are not treated
+  as jumps and add nothing to the score.

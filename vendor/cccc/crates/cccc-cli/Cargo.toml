@@ -1,0 +1,60 @@
+[package]
+name = "cccc-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The unified cccc binary: one CLI that measures cognitive/cyclomatic complexity across every bundled language (ECMAScript/TypeScript, Rust, Go, PHP, Ruby, Kotlin, Python, Perl, Zig, C, C++, Swift, Java, Dart, Scala)"
+
+[[bin]]
+name = "cccc"
+path = "src/main.rs"
+
+[features]
+# Kotlin support. On by default, but the crates.io release is published without
+# it: cccc-kt depends on a git-only grammar, so .github/scripts/publish-crates.sh
+# drops every line marked `crates.io: strip` before `cargo publish`. Kotlin is
+# available in the GitHub Releases binaries and in builds from this repository.
+default = ["kotlin"] # crates.io: strip
+kotlin = ["dep:cccc-kt"] # crates.io: strip
+
+[lints.rust]
+# Keep `cfg(feature = "kotlin")` known after the feature is stripped for crates.io.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("kotlin"))'] }
+
+[dependencies]
+cccc-core = { workspace = true }
+cccc-es = { workspace = true }
+cccc-rs = { workspace = true }
+cccc-go = { workspace = true }
+cccc-php = { workspace = true }
+cccc-rb = { workspace = true }
+cccc-scheme = { workspace = true }
+cccc-lisp = { workspace = true }
+cccc-clojure = { workspace = true }
+cccc-kt = { workspace = true, optional = true } # crates.io: strip
+cccc-py = { workspace = true }
+cccc-zig = { workspace = true }
+cccc-c = { workspace = true }
+cccc-cpp = { workspace = true }
+cccc-pl = { workspace = true }
+cccc-swift = { workspace = true }
+cccc-java = { workspace = true }
+cccc-dart = { workspace = true }
+cccc-scala = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+globset = "0.4"
+ignore = "0.4"
+serde = { workspace = true }
+serde_json = "1"
+bincode = "1"
+toml = "1.1"
+rayon = "1"
+sha1_smol = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+serde_json = "1"

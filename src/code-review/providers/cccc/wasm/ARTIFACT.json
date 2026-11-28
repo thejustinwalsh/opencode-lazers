@@ -1,0 +1,47 @@
+{
+  "upstreamTag": "v1.7.0",
+  "upstreamCommit": "2bbed87685f5d9ad8c6eb6d3173904785236b199",
+  "cargoLockSha256": "c26e4da8e5ec2f8453cb094fe314b3a9ef0fd5b254818d7a93c66416d90988a5",
+  "bindingSha256": "0ef76186baf2f3cb33bc1ac4b8661d33e0ae4c561a267824f3c1de014dc9d676",
+  "optimization": {
+    "rustOptLevel": "s",
+    "lto": true,
+    "wasmOpt": "129",
+    "wasmOptFlags": "-O3"
+  },
+  "module": {
+    "target": "wasm32-wasip1",
+    "wasiSdk": "34.0",
+    "sha256": "1118766cb2edfcf96b5f90c7481ff0bc1e500dc8550874ca7cac4af3c2fcfd18",
+    "bytes": 21922617,
+    "imports": [
+      "wasi_snapshot_preview1.environ_get",
+      "wasi_snapshot_preview1.environ_sizes_get",
+      "wasi_snapshot_preview1.fd_close",
+      "wasi_snapshot_preview1.fd_prestat_dir_name",
+      "wasi_snapshot_preview1.fd_prestat_get",
+      "wasi_snapshot_preview1.fd_read",
+      "wasi_snapshot_preview1.fd_seek",
+      "wasi_snapshot_preview1.fd_write",
+      "wasi_snapshot_preview1.proc_exit",
+      "wasi_snapshot_preview1.random_get"
+    ],
+    "path": "src/code-review/providers/cccc/wasm/cccc.wasm"
+  },
+  "api": {
+    "sha256": "e4c160f9f41056c5dbdfdb80fc77b16688092c6b185fd8e1d1ed06a5a5bcb57b",
+    "bytes": 17522,
+    "path": "dist/code-review-cccc.js"
+  },
+  "worker": {
+    "sha256": "55e66772829e9c67d7656ef01757f66c49d56a916fe786a904598d66ff5787e2",
+    "bytes": 12529,
+    "path": "dist/code-review-cccc-worker.js"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)",
+    "wasmOpt": "wasm-opt version 129 (version_129)",
+    "bun": "1.4.4"
+  }
+}
