@@ -1,0 +1,29 @@
+{
+  "analyzer": {
+    "name": "Gitleaks",
+    "version": "8.30.1",
+    "repository": "https://github.com/gitleaks/gitleaks",
+    "commit": "83d9cd684c87d95d656c1458ef04895a7f1cbd8e",
+    "license": "MIT",
+    "regex": "Go standard-library regexp"
+  },
+  "buildPatches": [
+    {
+      "path": "vendor/termenv/termenv_other.go",
+      "reason": "Select the existing non-terminal implementation for wasm32-wasip1."
+    },
+    {
+      "path": "vendor/gitleaks/config/lazers_memory.go",
+      "reason": "Reset upstream package-global Viper/extend state between captured-side scans."
+    },
+    {
+      "path": "vendor/gitleaks/detect/lazers_memory.go",
+      "reason": "Load upstream ignore fingerprints from immutable captured content instead of a filesystem path."
+    }
+  ],
+  "build": {
+    "target": "wasm32-wasip1",
+    "entry": "crates/gitleaks-wasm",
+    "host": "src/audit/fallow-wasi.ts#runFallowModule"
+  }
+}

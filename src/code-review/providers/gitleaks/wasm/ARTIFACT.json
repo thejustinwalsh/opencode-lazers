@@ -1,0 +1,305 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "version": "8.30.1",
+    "commit": "83d9cd684c87d95d656c1458ef04895a7f1cbd8e",
+    "license": "MIT",
+    "regex": "Go standard-library regexp"
+  },
+  "target": "wasm32-wasip1",
+  "sourceSha256": "fb9f22b4ad43b3f33caf60d753011905836ffcf1be4ed6e5a7af83feb656c6da",
+  "serverContribution": {
+    "entries": [["src/code-review/providers/gitleaks/gitleaks-worker.ts", "gitleaks-worker.js"]],
+    "assets": [["src/code-review/providers/gitleaks/wasm/gitleaks.wasm", "gitleaks.wasm"]]
+  },
+  "wasm": {
+    "file": "gitleaks.wasm",
+    "bytes": 14924334,
+    "sha256": "39004ece53476e3407d3a2c4794b36ce9ea808dbd43736ea3d1a9bac8798b87f",
+    "imports": [
+      "wasi_snapshot_preview1.args_get",
+      "wasi_snapshot_preview1.args_sizes_get",
+      "wasi_snapshot_preview1.clock_time_get",
+      "wasi_snapshot_preview1.environ_get",
+      "wasi_snapshot_preview1.environ_sizes_get",
+      "wasi_snapshot_preview1.fd_close",
+      "wasi_snapshot_preview1.fd_fdstat_get",
+      "wasi_snapshot_preview1.fd_fdstat_set_flags",
+      "wasi_snapshot_preview1.fd_filestat_get",
+      "wasi_snapshot_preview1.fd_filestat_set_size",
+      "wasi_snapshot_preview1.fd_prestat_dir_name",
+      "wasi_snapshot_preview1.fd_prestat_get",
+      "wasi_snapshot_preview1.fd_read",
+      "wasi_snapshot_preview1.fd_seek",
+      "wasi_snapshot_preview1.fd_write",
+      "wasi_snapshot_preview1.path_filestat_get",
+      "wasi_snapshot_preview1.path_open",
+      "wasi_snapshot_preview1.poll_oneoff",
+      "wasi_snapshot_preview1.proc_exit",
+      "wasi_snapshot_preview1.random_get",
+      "wasi_snapshot_preview1.sched_yield"
+    ]
+  },
+  "optimization": {
+    "go": "-s -w",
+    "wasmOpt": "-O3"
+  },
+  "toolchain": {
+    "go": "go version go1.26.1 darwin/arm64",
+    "wasmOpt": "wasm-opt version 129 (version_129)"
+  },
+  "licenses": [
+    {
+      "module": "golang.org/x/sys",
+      "files": ["golang.org_x_sys__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mattn/go-isatty",
+      "files": ["github.com_mattn_go-isatty__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mattn/go-colorable",
+      "files": ["github.com_mattn_go-colorable__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/rs/zerolog",
+      "files": ["github.com_rs_zerolog__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/spf13/afero",
+      "files": ["github.com_spf13_afero__LICENSE.txt"]
+    },
+    {
+      "module": "golang.org/x/text",
+      "files": ["golang.org_x_text__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/fsnotify/fsnotify",
+      "files": ["github.com_fsnotify_fsnotify__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mitchellh/mapstructure",
+      "files": ["github.com_mitchellh_mapstructure__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/sagikazarmark/slog-shim",
+      "files": ["github.com_sagikazarmark_slog-shim__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/spf13/cast",
+      "files": ["github.com_spf13_cast__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/spf13/pflag",
+      "files": ["github.com_spf13_pflag__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/spf13/viper",
+      "files": ["github.com_spf13_viper__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/subosito/gotenv",
+      "files": ["github.com_subosito_gotenv__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/hashicorp/hcl",
+      "files": ["github.com_hashicorp_hcl__LICENSE.txt"]
+    },
+    {
+      "module": "gopkg.in/ini.v1",
+      "files": ["gopkg.in_ini.v1__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/magiconair/properties",
+      "files": ["github.com_magiconair_properties__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/pelletier/go-toml/v2",
+      "files": ["github.com_pelletier_go-toml_v2__LICENSE.txt"]
+    },
+    {
+      "module": "gopkg.in/yaml.v3",
+      "files": ["gopkg.in_yaml.v3__LICENSE.txt", "gopkg.in_yaml.v3__NOTICE.txt"]
+    },
+    {
+      "module": "github.com/BobuSumisu/aho-corasick",
+      "files": ["github.com_BobuSumisu_aho-corasick__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/hashicorp/go-version",
+      "files": ["github.com_hashicorp_go-version__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/zricethezav/gitleaks/v8",
+      "files": ["github.com_zricethezav_gitleaks_v8__LICENSE.txt"]
+    },
+    {
+      "module": "golang.org/x/exp",
+      "files": ["golang.org_x_exp__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/lucasb-eyer/go-colorful",
+      "files": ["github.com_lucasb-eyer_go-colorful__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/rivo/uniseg",
+      "files": ["github.com_rivo_uniseg__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mattn/go-runewidth",
+      "files": ["github.com_mattn_go-runewidth__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/muesli/reflow",
+      "files": ["github.com_muesli_reflow__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/aymanbagabas/go-osc52/v2",
+      "files": ["github.com_aymanbagabas_go-osc52_v2__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/muesli/termenv",
+      "files": ["github.com_muesli_termenv__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/charmbracelet/lipgloss",
+      "files": ["github.com_charmbracelet_lipgloss__LICENSE.txt"]
+    },
+    {
+      "module": "golang.org/x/sync",
+      "files": ["golang.org_x_sync__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/fatih/semgroup",
+      "files": ["github.com_fatih_semgroup__LICENSE.txt"]
+    },
+    {
+      "module": "dario.cat/mergo",
+      "files": ["dario.cat_mergo__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/Masterminds/goutils",
+      "files": ["github.com_Masterminds_goutils__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/Masterminds/semver/v3",
+      "files": ["github.com_Masterminds_semver_v3__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/google/uuid",
+      "files": ["github.com_google_uuid__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/huandu/xstrings",
+      "files": ["github.com_huandu_xstrings__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mitchellh/reflectwalk",
+      "files": ["github.com_mitchellh_reflectwalk__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mitchellh/copystructure",
+      "files": ["github.com_mitchellh_copystructure__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/shopspring/decimal",
+      "files": ["github.com_shopspring_decimal__LICENSE.txt"]
+    },
+    {
+      "module": "golang.org/x/crypto",
+      "files": ["golang.org_x_crypto__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/Masterminds/sprig/v3",
+      "files": ["github.com_Masterminds_sprig_v3__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/gitleaks/go-gitdiff",
+      "files": ["github.com_gitleaks_go-gitdiff__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/h2non/filetype",
+      "files": ["github.com_h2non_filetype__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/STARRY-S/zip",
+      "files": ["github.com_STARRY-S_zip__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/andybalholm/brotli",
+      "files": ["github.com_andybalholm_brotli__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/bodgit/plumbing",
+      "files": ["github.com_bodgit_plumbing__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/hashicorp/golang-lru/v2",
+      "files": ["github.com_hashicorp_golang-lru_v2__LICENSE.txt"]
+    },
+    {
+      "module": "go4.org",
+      "files": ["go4.org__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/bodgit/sevenzip",
+      "files": ["github.com_bodgit_sevenzip__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/hashicorp/errwrap",
+      "files": ["github.com_hashicorp_errwrap__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/hashicorp/go-multierror",
+      "files": ["github.com_hashicorp_go-multierror__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/klauspost/compress",
+      "files": ["github.com_klauspost_compress__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/pierrec/lz4/v4",
+      "files": ["github.com_pierrec_lz4_v4__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/ulikunitz/xz",
+      "files": ["github.com_ulikunitz_xz__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/bodgit/windows",
+      "files": ["github.com_bodgit_windows__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/dsnet/compress",
+      "files": ["github.com_dsnet_compress__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/klauspost/pgzip",
+      "files": ["github.com_klauspost_pgzip__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/minio/minlz",
+      "files": ["github.com_minio_minlz__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/nwaples/rardecode/v2",
+      "files": ["github.com_nwaples_rardecode_v2__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/sorairolake/lzip-go",
+      "files": ["github.com_sorairolake_lzip-go__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/therootcompany/xz",
+      "files": ["github.com_therootcompany_xz__LICENSE.txt"]
+    },
+    {
+      "module": "github.com/mholt/archives",
+      "files": ["github.com_mholt_archives__LICENSE.txt"]
+    },
+    {
+      "module": "Go toolchain runtime",
+      "files": ["golang-BSD.txt"]
+    }
+  ]
+}
