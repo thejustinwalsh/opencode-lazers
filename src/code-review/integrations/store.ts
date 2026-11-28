@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../../storage.ts"
-import { CodeReviewStore } from "../comparisons/store.ts"
+import { CodeReviewIntegrationTargetStore } from "./target-store.ts"
 import { CodeReviewIntegrationSchema, type CodeReviewIntegration } from "./contract.ts"
 
 export type IntegrationCursor = { createdAt: number; integrationID: string }
@@ -61,8 +61,16 @@ function legacyIntegration(row: LegacyIntegrationRow): CodeReviewIntegration {
 }
 
 export class CodeReviewIntegrationStore {
+  private readonly targets: CodeReviewIntegrationTargetStore
+
   constructor(readonly repository: TaskRepository) {
-    new CodeReviewStore(repository)
+    this.targets = new CodeReviewIntegrationTargetStore(repository)
+  }
+
+  private withCurrentTarget(db: Database, integration: CodeReviewIntegration) {
+    if (!integration.target) return integration
+    const current = this.targets.targetIn(db, integration.target.id)?.target
+    return current ? { ...integration, target: current } : integration
   }
 
   recordIntegrationIn(
@@ -125,7 +133,12 @@ export class CodeReviewIntegrationStore {
           integrationID,
           limit + 1,
         )
-        .map((row) => CodeReviewIntegrationSchema.parse(JSON.parse(row.integration_json)))
+        .map((row) =>
+          this.withCurrentTarget(
+            db,
+            CodeReviewIntegrationSchema.parse(JSON.parse(row.integration_json)),
+          ),
+        )
       const legacy = db
         .query<LegacyIntegrationRow, [string, string, number, number, string, number]>(
           `SELECT t.id,t.plan_id,t.task_id,t.payload,t.created_at
@@ -168,7 +181,11 @@ export class CodeReviewIntegrationStore {
            WHERE project_directory=? AND task_id=? AND integration_id=?`,
         )
         .get(this.repository.projectDirectory, taskID, integrationID)
-      if (row) return CodeReviewIntegrationSchema.parse(JSON.parse(row.integration_json))
+      if (row)
+        return this.withCurrentTarget(
+          db,
+          CodeReviewIntegrationSchema.parse(JSON.parse(row.integration_json)),
+        )
       const eventID = legacyEventNumber(integrationID)
       if (eventID === undefined) return undefined
       const event = db

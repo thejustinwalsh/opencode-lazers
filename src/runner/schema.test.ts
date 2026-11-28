@@ -93,6 +93,50 @@ test("integration target setup binds an exact head, selected task group, base, a
       targetTaskIDs: [target.targetTaskIDs[0], target.targetTaskIDs[0]],
     }).success,
   ).toBe(false)
+  expect(
+    CommandInput.parse({
+      ...target,
+      reconcileTargetHead: true,
+      targetPullRequest: undefined,
+    }),
+  ).toMatchObject({ reconcileTargetHead: true })
+  expect(
+    CommandInput.safeParse({
+      ...target,
+      reconcileTargetHead: true,
+      targetPullRequest: undefined,
+    }).success,
+  ).toBe(true)
+  expect(
+    CommandInput.safeParse({
+      ...target,
+      reconcileTargetHead: true,
+      targetPullRequest: null,
+    }).success,
+  ).toBe(false)
+})
+
+test("managed integration attempt selections disambiguate every batch task", () => {
+  const taskID = crypto.randomUUID()
+  const secondTaskID = crypto.randomUUID()
+  const batch = {
+    requestID: "integrate-selected-attempts",
+    planID: crypto.randomUUID(),
+    action: "integrated" as const,
+    taskID,
+    batchTaskIDs: [taskID, secondTaskID],
+    integrationAttempts: [
+      { taskID, attemptID: crypto.randomUUID() },
+      { taskID: secondTaskID, attemptID: crypto.randomUUID() },
+    ],
+  }
+  expect(CommandInput.parse(batch)).toEqual(batch)
+  expect(
+    CommandInput.safeParse({
+      ...batch,
+      integrationAttempts: batch.integrationAttempts.slice(0, 1),
+    }).success,
+  ).toBe(false)
 })
 
 test("resume exposes only the exact task and attempt bindings for retained-repair recovery", () => {

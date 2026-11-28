@@ -76,12 +76,6 @@ test("integrated target ranges are paged, authorized, pinned, and readable after
       baseRevision: fixture.base,
       expectedHead: fixture.second,
       currentHead: fixture.second,
-      pullRequest: {
-        id: "pr-42",
-        number: 42,
-        url: "https://example.invalid/pull/42",
-        title: "Reviewed task",
-      },
       now: 2,
     }),
   )
@@ -131,6 +125,29 @@ test("integrated target ranges are paged, authorized, pinned, and readable after
       reason: "Legacy receipt without an exact range",
     })
   })
+  const pullRequest = {
+    id: "pr-42",
+    number: 42,
+    url: "https://example.invalid/pull/42",
+    title: "Reviewed task",
+  }
+  const published = fixture.repository.atomic((db) =>
+    targetStore.createOrExtendIn(db, {
+      projectID: "project",
+      taskIDs: [fixture.taskID],
+      branch: "feature/review",
+      baseBranch: "main",
+      baseRevision: fixture.base,
+      expectedHead: fixture.second,
+      currentHead: fixture.second,
+      pullRequest,
+      now: 4,
+    }),
+  )
+  const currentIntegration = {
+    ...integration,
+    target: published.target,
+  }
 
   const call = register(fixture)
   const firstPage = (await call("lazers.codeReviewIntegrations", "list", {
@@ -141,7 +158,7 @@ test("integrated target ranges are paged, authorized, pinned, and readable after
     integrations: (typeof integration)[]
     nextCursor: { createdAt: number; integrationID: string }
   }
-  expect(firstPage.integrations).toEqual([integration])
+  expect(firstPage.integrations).toEqual([currentIntegration])
   expect(firstPage.nextCursor).toEqual({ createdAt, integrationID })
   const secondPage = (await call("lazers.codeReviewIntegrations", "list", {
     sessionID: "ses-review",
@@ -157,7 +174,7 @@ test("integrated target ranges are paged, authorized, pinned, and readable after
     taskID: fixture.taskID,
     integrationID,
   })) as { comparison: { identity: { comparisonID: string } }; integration: typeof integration }
-  expect(resolved.integration).toEqual(integration)
+  expect(resolved.integration).toEqual(currentIntegration)
   expect(resolved.comparison.identity.comparisonID).toBe(
     comparison.comparison.identity.comparisonID,
   )

@@ -215,6 +215,51 @@ test("task prerequisites require a current recorded landing and fresh artifact c
     ["rev-parse", `${baseline}^{commit}`],
     ["merge-base", "--is-ancestor", artifact, baseline],
   ])
+  gitCalls.length = 0
+  expect(
+    await evaluateTaskPrerequisiteIntegration(
+      directory,
+      currentBranch,
+      [taskID, "task-b"],
+      [taskRow(), { ...taskRow(), plan_id: "second-plan" }],
+      successfulGit,
+      baseline,
+    ),
+  ).toMatchObject({ status: "waiting" })
+  expect(gitCalls).toEqual([])
+  const managedRow = {
+    ...taskRow(),
+    integration_payload: JSON.stringify({
+      artifact,
+      branch: currentBranch,
+      head: integratedHead,
+      targetID: "target-a",
+    }),
+  }
+  expect(
+    await evaluateTaskPrerequisiteIntegration(
+      directory,
+      currentBranch,
+      [taskID],
+      [managedRow],
+      successfulGit,
+      baseline,
+      undefined,
+      "target-a",
+    ),
+  ).toMatchObject({ status: "ready", baseline })
+  expect(
+    await evaluateTaskPrerequisiteIntegration(
+      directory,
+      currentBranch,
+      [taskID],
+      [managedRow],
+      successfulGit,
+      baseline,
+      undefined,
+      "target-b",
+    ),
+  ).toMatchObject({ status: "waiting" })
   for (const modified of [
     { ...taskRow(), node_state: "queued" },
     { ...taskRow(), project_directory: "/foreign" },

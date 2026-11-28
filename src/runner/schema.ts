@@ -188,41 +188,78 @@ type IntegrationCommandFields = {
   targetBaseRevision?: string
   targetTaskIDs?: string[]
   targetPullRequest?: unknown
+  reconcileTargetHead?: boolean
   batchTaskIDs?: string[]
+  integrationAttempts?: { taskID: string; attemptID: string }[]
   taskID?: string
   reason?: string
 }
 
 type CommandValidationIssue = { path: string[]; message: string }
 
-function integrationTargetIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
-  const issues: CommandValidationIssue[] = []
-  const required = [
-    "targetBranch",
-    "expectedTargetHead",
-    "targetBaseBranch",
-    "targetBaseRevision",
-    "targetTaskIDs",
-    "reason",
-  ] as const
-  if (input.action === "integration-target") {
-    for (const field of required)
-      if (!input[field])
-        issues.push({
-          path: [field],
-          message: `Integration target setup requires ${field}`,
-        })
-  } else if (
-    input.targetBaseBranch !== undefined ||
-    input.targetBaseRevision !== undefined ||
-    input.targetTaskIDs !== undefined ||
-    input.targetPullRequest !== undefined
+const INTEGRATION_TARGET_REQUIRED_FIELDS = [
+  "targetBranch",
+  "expectedTargetHead",
+  "targetBaseBranch",
+  "targetBaseRevision",
+  "targetTaskIDs",
+  "reason",
+] as const
+
+function requiredIntegrationTargetIssues(
+  input: IntegrationCommandFields,
+): CommandValidationIssue[] {
+  return INTEGRATION_TARGET_REQUIRED_FIELDS.flatMap((field) =>
+    input[field] ? [] : [{ path: [field], message: `Integration target setup requires ${field}` }],
   )
-    issues.push({
-      path: ["action"],
-      message: "Target metadata fields require integration-target",
-    })
-  return issues
+}
+
+function targetReconciliationIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
+  return input.reconcileTargetHead && input.targetPullRequest !== undefined
+    ? [
+        {
+          path: ["targetPullRequest"],
+          message: "Target reconciliation preserves the existing PR association",
+        },
+      ]
+    : []
+}
+
+function hasTargetMetadata(input: IntegrationCommandFields): boolean {
+  return [
+    input.targetBaseBranch,
+    input.targetBaseRevision,
+    input.targetTaskIDs,
+    input.targetPullRequest,
+    input.reconcileTargetHead,
+  ].some((value) => value !== undefined)
+}
+
+function integrationTargetIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
+  if (input.action === "integration-target")
+    return [...requiredIntegrationTargetIssues(input), ...targetReconciliationIssues(input)]
+  return hasTargetMetadata(input)
+    ? [
+        {
+          path: ["action"],
+          message: "Target metadata fields require integration-target",
+        },
+      ]
+    : []
+}
+
+function hasExactIntegrationAttemptSelections(
+  selections: { taskID: string; attemptID: string }[],
+  taskIDs: string[],
+): boolean {
+  if (selections.length !== taskIDs.length) return false
+  const selectedTasks = new Set(selections.map((selection) => selection.taskID))
+  const selectedAttempts = new Set(selections.map((selection) => selection.attemptID))
+  return (
+    selectedTasks.size === selections.length &&
+    selectedAttempts.size === selections.length &&
+    taskIDs.every((taskID) => selectedTasks.has(taskID))
+  )
 }
 
 function batchIntegrationIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
@@ -241,8 +278,35 @@ function batchIntegrationIssues(input: IntegrationCommandFields): CommandValidat
   return issues
 }
 
+function integrationAttemptSelectionIssues(
+  input: IntegrationCommandFields,
+): CommandValidationIssue[] {
+  const selections = input.integrationAttempts
+  if (!selections) return []
+  if (input.action !== "integrated" || !input.taskID)
+    return [
+      {
+        path: ["integrationAttempts"],
+        message: "Integration attempt selections require task-scoped integrated",
+      },
+    ]
+  const taskIDs = input.batchTaskIDs ?? [input.taskID]
+  return hasExactIntegrationAttemptSelections(selections, taskIDs)
+    ? []
+    : [
+        {
+          path: ["integrationAttempts"],
+          message: "Integration attempt selections must identify every selected task exactly once",
+        },
+      ]
+}
+
 function integrationCommandIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
-  return [...integrationTargetIssues(input), ...batchIntegrationIssues(input)]
+  return [
+    ...integrationTargetIssues(input),
+    ...batchIntegrationIssues(input),
+    ...integrationAttemptSelectionIssues(input),
+  ]
 }
 
 export const DispatchPause = z.strictObject({
@@ -279,7 +343,7 @@ export const CommandInput = z
         "takeover-submit",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Use integration-target before landing to bind selected tasks to an existing local branch created or inspected through configured repository tooling, its reviewed base, exact observed head and optional external PR metadata; integrated then records the reviewed target range without switching checkouts or merging into the default branch. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume re-runs the combined check of a blocked, unaccepted plan on its current candidate; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it verifies that commit in a temporary worktree with the task's ordinary checks, without an implementation turn, and records pass or fail. Run it again after a failure; combined acceptance is the ordinary combined check. takeover-submit (taskID, reason) sends a task you took over with lz-request-handoff, as committed in its workspace, to the ordinary verification. See each field description for the narrow retained-repair, descendant-adoption and startup-settlement bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Use integration-target before landing to bind selected tasks to an existing local branch created or inspected through configured repository tooling, its reviewed base, exact observed head and optional external PR metadata; integrated records reviewed target ranges without switching checkouts or merging into the default branch. For a reviewed branch rewrite, integration-target with reconcileTargetHead=true explicitly acknowledges the new head against the prior observation without claiming the intervening range was integrated. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume re-runs the combined check of a blocked, unaccepted plan on its current candidate; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it verifies that commit in a temporary worktree with the task's ordinary checks, without an implementation turn, and records pass or fail. Run it again after a failure; combined acceptance is the ordinary combined check. takeover-submit (taskID, reason) sends a task you took over with lz-request-handoff, as committed in its workspace, to the ordinary verification. See each field description for the narrow retained-repair, descendant-adoption and startup-settlement bindings.",
       ),
     reason: z
       .string()
@@ -368,6 +432,12 @@ export const CommandInput = z
       .refine((taskIDs) => new Set(taskIDs).size === taskIDs.length)
       .optional()
       .describe("Selected same-project tasks bound to one shared integration target."),
+    reconcileTargetHead: z
+      .boolean()
+      .optional()
+      .describe(
+        "For integration-target only: explicitly acknowledge a reviewed rewrite of the selected branch, guarded by its previously observed head.",
+      ),
     targetPullRequest: z
       .strictObject({
         id: z.string().min(1).max(256),
@@ -378,6 +448,14 @@ export const CommandInput = z
       .nullable()
       .optional(),
     batchTaskIDs: z.array(z.uuid()).min(2).max(100).optional(),
+    integrationAttempts: z
+      .array(z.strictObject({ taskID: z.uuid(), attemptID: z.uuid() }))
+      .min(1)
+      .max(100)
+      .optional()
+      .describe(
+        "Exact accepted source attempt for every selected task when an artifact matches multiple attempts.",
+      ),
     projectID: z
       .string()
       .min(1)

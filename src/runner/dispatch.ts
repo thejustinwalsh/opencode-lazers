@@ -17,6 +17,11 @@ import { ModelPolicy, PlanInput } from "./schema.ts"
 import type { PlanRow, NodeRow, AttemptRow } from "./store.ts"
 import { resolveDispatchRoute, type DispatchRouteDecision } from "../models/dispatch-resolution.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
+import {
+  managedTaskPrerequisiteTarget,
+  type ManagedTaskPrerequisiteTarget,
+} from "./integration/task-prerequisites.ts"
+import { projectTaskPrerequisiteIntegrationRows } from "./integration/task-prerequisite-rows.ts"
 
 import type { RuntimeCore } from "./runtime-core.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
@@ -131,6 +136,58 @@ export class Dispatch {
   private artifactEvidence: ArtifactEvidenceLookup = (artifact) =>
     this.store.repository.read((db) => storedEvidence(db, { artifact }))
 
+  private async managedTaskDependencyProof(
+    prerequisites: readonly string[],
+    target: Extract<ManagedTaskPrerequisiteTarget, { status: "ready" }>,
+  ): Promise<IntegrationDecision> {
+    const rows = projectTaskPrerequisiteIntegrationRows(this.store, prerequisites)
+    return evaluateTaskPrerequisiteIntegration(
+      this.directory,
+      target.target.target.branch,
+      prerequisites,
+      rows,
+      gitAsync,
+      target.baseline,
+      this.artifactEvidence,
+      target.target.target.id,
+    )
+  }
+
+  private async legacyTaskDependencyProof(input: {
+    plan: PlanRow
+    prerequisites: readonly string[]
+    candidateBaseline?: string
+    capturedRows?: readonly TaskPrerequisiteIntegrationRow[]
+    capturedBranch?: string
+  }): Promise<IntegrationDecision> {
+    let branch: string
+    try {
+      branch =
+        input.capturedBranch ?? (await gitAsync(this.directory, ["branch", "--show-current"]))
+    } catch {
+      return { status: "unknown", reason: "The integrated source branch could not be read." }
+    }
+    if (!branch)
+      return {
+        status: "waiting",
+        reason: "Task source integration requires the reviewed branch.",
+      }
+    const rows = input.capturedRows
+      ? input.capturedRows.filter(
+          (row) => row.plan_id === input.plan.id && input.prerequisites.includes(row.task_id),
+        )
+      : this.store.taskPrerequisiteIntegrationRows(input.plan.id, [...input.prerequisites])
+    return evaluateTaskPrerequisiteIntegration(
+      this.directory,
+      branch,
+      input.prerequisites,
+      rows,
+      gitAsync,
+      input.candidateBaseline,
+      this.artifactEvidence,
+    )
+  }
+
   async taskDependencyIntegration(
     plan: PlanRow,
     input: PlanInput,
@@ -145,26 +202,26 @@ export class Dispatch {
         status: "ready",
         baseline: candidateBaseline ?? input.baseCommit,
       }
-    let branch: string
-    try {
-      branch = capturedBranch ?? (await gitAsync(this.directory, ["branch", "--show-current"]))
-    } catch {
-      return { status: "unknown", reason: "The integrated source branch could not be read." }
-    }
-    if (!branch)
-      return { status: "waiting", reason: "Task source integration requires the reviewed branch." }
-    const rows = capturedRows
-      ? capturedRows.filter((row) => row.plan_id === plan.id && prerequisites.includes(row.task_id))
-      : this.store.taskPrerequisiteIntegrationRows(plan.id, prerequisites)
-    const decision = await evaluateTaskPrerequisiteIntegration(
-      this.directory,
-      branch,
-      prerequisites,
-      rows,
-      gitAsync,
+    const target = await managedTaskPrerequisiteTarget({
+      repository: this.store.repository,
+      projectID: this.core.projectID,
+      directory: this.directory,
+      prerequisiteTaskIDs: prerequisites,
+      dependentTaskID: node.task_id,
       candidateBaseline,
-      this.artifactEvidence,
-    )
+    })
+    const decision =
+      target.status === "ready"
+        ? await this.managedTaskDependencyProof(prerequisites, target)
+        : target.status === "legacy"
+          ? await this.legacyTaskDependencyProof({
+              plan,
+              prerequisites,
+              candidateBaseline,
+              capturedRows,
+              capturedBranch,
+            })
+          : target
     this.observePrerequisites(plan.id, node.task_id, decision)
     return decision
   }

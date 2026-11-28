@@ -38,6 +38,59 @@ type IntegrationTargetWrite = {
   now?: number
 }
 
+type IntegrationTargetReconciliation = {
+  targetID: string
+  projectID: string
+  branch: string
+  baseBranch: string
+  baseRevision: string
+  taskIDs: string[]
+  expectedHead: string
+  nextHead: string
+  now?: number
+}
+
+function assertReconciliationIdentity(
+  existing: StoredIntegrationTarget | undefined,
+  input: IntegrationTargetReconciliation,
+): asserts existing is StoredIntegrationTarget {
+  if (!existing)
+    throw new Error("Integration target identity changed; re-inspect before reconciliation")
+  const identity = existing.target
+  const expected = [
+    [identity.projectID, input.projectID],
+    [identity.branch, input.branch],
+    [identity.baseBranch, input.baseBranch],
+    [identity.baseRevision, input.baseRevision],
+  ] as const
+  if (expected.some(([actual, wanted]) => actual !== wanted))
+    throw new Error("Integration target identity changed; re-inspect before reconciliation")
+}
+
+function assertReconciliationMembership(
+  existing: StoredIntegrationTarget,
+  taskIDs: string[],
+): void {
+  const selected = new Set(taskIDs)
+  if (
+    existing.target.taskIDs.length !== taskIDs.length ||
+    existing.target.taskIDs.some((taskID) => !selected.has(taskID))
+  )
+    throw new Error("Target reconciliation cannot change selected task membership")
+}
+
+function assertReconciliationHeads(
+  existing: StoredIntegrationTarget,
+  input: IntegrationTargetReconciliation,
+): void {
+  if (existing.observedHead !== input.expectedHead)
+    throw new Error("Integration target observed head changed; re-inspect before reconciliation")
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.nextHead))
+    throw new Error("Reconciled integration target head must be a full commit ID")
+  if (input.expectedHead === input.nextHead)
+    throw new Error("Integration target head is already observed; there is no rewrite to reconcile")
+}
+
 function taskIDsFor(db: Database, projectDirectory: string, targetID: string): string[] {
   const rows = db
     .query<{ task_id: string }, [string, string]>(
@@ -287,6 +340,31 @@ export class CodeReviewIntegrationTargetStore {
     if (result.changes !== 1)
       throw new Error("Integration target observed head changed; re-inspect before recording")
     return targetByIDIn(db, this.repository, targetID)!.target
+  }
+
+  reconcileObservedHeadIn(
+    db: Database,
+    input: IntegrationTargetReconciliation,
+  ): CodeReviewIntegrationTarget {
+    const existing = targetByIDIn(db, this.repository, input.targetID)
+    assertReconciliationIdentity(existing, input)
+    assertReconciliationMembership(existing, input.taskIDs)
+    assertReconciliationHeads(existing, input)
+    const updated = db
+      .query(
+        `UPDATE code_review_integration_targets SET observed_head=?,updated_at=?
+         WHERE project_directory=? AND target_id=? AND observed_head=?`,
+      )
+      .run(
+        input.nextHead,
+        input.now ?? Date.now(),
+        this.repository.projectDirectory,
+        input.targetID,
+        input.expectedHead,
+      )
+    if (updated.changes !== 1)
+      throw new Error("Integration target observed head changed; re-inspect before reconciliation")
+    return targetByIDIn(db, this.repository, input.targetID)!.target
   }
 }
 

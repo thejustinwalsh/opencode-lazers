@@ -11,8 +11,10 @@ import {
   requireIntegration,
   type IntegrationProof,
 } from "../integration-proof.ts"
-import type { AttemptRow, PlanRow, RunnerStore } from "../store.ts"
+import type { AttemptRow, NodeRow, PlanRow, RunnerStore } from "../store.ts"
 import type { CommandInput } from "../schema.ts"
+import { integrationTaskSources } from "./task-sources.ts"
+import { retainIntegrationSource } from "./source-retention.ts"
 
 export type ManagedIntegrationRecord = {
   id: string
@@ -44,15 +46,14 @@ type ManagedTargetPreparation = {
   }
   target: StoredIntegrationTarget
   taskIDs: string[]
-  nodes: Map<string, ReturnType<RunnerStore["nodes"]>[number]>
-  attempts: AttemptRow[]
+  sources: Map<string, { node: NodeRow; attempts: AttemptRow[] }>
   before: string
   after: string
 }
 
-function managedTargetPreparation(
+function selectedManagedTarget(
   input: ManagedTargetPreparation["input"],
-): ManagedTargetPreparation | undefined {
+): StoredIntegrationTarget | undefined {
   const { command, store } = input
   if (!command.targetBranch || !command.taskID) return undefined
   const target = new CodeReviewIntegrationTargetStore(store.repository).targetByBranch(
@@ -63,16 +64,32 @@ function managedTargetPreparation(
     throw new Error("Integration target belongs to another OpenCode project")
   if (!command.expectedTargetHead || command.expectedTargetHead !== input.proof.head)
     throw new Error("Expected target head is stale; re-inspect the reviewed branch")
+  return target
+}
 
-  const taskIDs = command.batchTaskIDs ?? [command.taskID]
+function managedTargetTaskIDs(command: CommandInput, target: StoredIntegrationTarget): string[] {
+  const taskIDs = command.batchTaskIDs ?? [command.taskID!]
   if (taskIDs.some((taskID) => !target.target.taskIDs.includes(taskID)))
     throw new Error("Every integration task must belong to the selected target")
+  return taskIDs
+}
+
+function managedTargetPreparation(
+  input: ManagedTargetPreparation["input"],
+): ManagedTargetPreparation | undefined {
+  const target = selectedManagedTarget(input)
+  if (!target) return undefined
+  const { command, store } = input
+  const taskIDs = managedTargetTaskIDs(command, target)
+  const selectedAttemptIDs = new Map(
+    (command.integrationAttempts ?? []).map(({ taskID, attemptID }) => [taskID, attemptID]),
+  )
+  const sources = integrationTaskSources(store, taskIDs, selectedAttemptIDs)
   return {
     input,
     target,
     taskIDs,
-    nodes: new Map(store.nodes(input.plan.id).map((node) => [node.task_id, node])),
-    attempts: store.attempts(input.plan.id),
+    sources,
     before: target.observedHead,
     after: input.proof.head,
   }
@@ -94,39 +111,49 @@ async function landedRange(root: string, before: string, after: string): Promise
   return commits
 }
 
+function acceptedManagedSource(
+  preparation: ManagedTargetPreparation,
+  taskID: string,
+): { node: NodeRow; artifact: string; attempt: AttemptRow } {
+  const source = preparation.sources.get(taskID)
+  const node = source?.node
+  if (!node || node.state !== "accepted" || !node.artifact)
+    throw new Error(`Only accepted task artifacts can be recorded as integrated: ${taskID}`)
+  const matchingAttempts = source.attempts
+  const attempt = matchingAttempts.length === 1 ? matchingAttempts[0] : undefined
+  if (!attempt)
+    throw new Error(
+      matchingAttempts.length > 1
+        ? `Accepted task ${taskID} has multiple matching attempts; specify integrationAttempts`
+        : `Accepted integration task has no retained attempt: ${taskID}`,
+    )
+  return { node, artifact: node.artifact, attempt }
+}
+
 async function managedIntegrationRecord(
   preparation: ManagedTargetPreparation,
   taskID: string,
   createdAt: number,
 ): Promise<ManagedIntegrationRecord> {
-  const { input, target, nodes, attempts, before, after } = preparation
+  const { input, target, before, after } = preparation
   const { command, store } = input
-  const node = nodes.get(taskID)
-  if (!node || node.state !== "accepted" || !node.artifact)
-    throw new Error(`Only accepted task artifacts can be recorded as integrated: ${taskID}`)
-  const attempt = attempts
-    .filter((candidate) => candidate.task_id === taskID && candidate.artifact === node.artifact)
-    .at(-1)
-  if (!attempt) throw new Error(`Accepted integration task has no retained attempt: ${taskID}`)
+  const { artifact, attempt } = acceptedManagedSource(preparation, taskID)
 
-  const proof =
-    taskID === command.taskID
-      ? input.proof
-      : await proofForArtifact(
-          (run) => store.repository.read(run),
-          store.repository.projectDirectory,
-          {
-            artifact: node.artifact,
-            attemptID: attempt.id,
-            base: attempt.base_commit,
-            target: after,
-          },
-        )
+  const proof = await proofForArtifact(
+    (run) => store.repository.read(run),
+    store.repository.projectDirectory,
+    {
+      artifact,
+      attemptID: attempt.id,
+      base: attempt.base_commit,
+      target: after,
+    },
+  )
   if (proof.head !== after)
     throw new Error("Batch artifacts were not checked against the same target head")
   requireIntegration(
     proof,
-    node.artifact,
+    artifact,
     "The accepted task artifact",
     `branch ${command.targetBranch}`,
   )
@@ -138,7 +165,7 @@ async function managedIntegrationRecord(
     targetAfterRevision: after,
     taskID,
     attemptID: attempt.id,
-    artifact: node.artifact,
+    artifact,
     containment: proof.containment,
   })
   const comparison = await prepareIntegrationComparison({
@@ -146,13 +173,19 @@ async function managedIntegrationRecord(
     projectID: input.projectID,
     integrationID: id,
     taskID,
-    planID: input.plan.id,
+    planID: attempt.plan_id,
     attemptID: attempt.id,
     baseRevision: before,
     headRevision: after,
     capturedAt: createdAt,
   })
-  return { id, taskID, artifact: node.artifact, attempt, proof, proofID, comparison }
+  await retainIntegrationSource(
+    store.repository.projectDirectory,
+    id,
+    attempt.base_commit,
+    artifact,
+  )
+  return { id, taskID, artifact, attempt, proof, proofID, comparison }
 }
 
 export async function prepareManagedTargetIntegration(input: {
