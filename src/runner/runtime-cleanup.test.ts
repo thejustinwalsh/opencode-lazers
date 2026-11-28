@@ -133,15 +133,7 @@ test("integrated cleanup removes historical graph candidates from their own sett
 
   writeFileSync(join(f.root, "later.txt"), "newer integrated candidate\n")
   git(f.root, ["add", "later.txt"])
-  git(f.root, [
-    "-c",
-    "user.name=fixture",
-    "-c",
-    "user.email=fixture@example.invalid",
-    "commit",
-    "-m",
-    "Newer combined candidate",
-  ])
+  git(f.root, ["commit", "-m", "Newer combined candidate"])
   const newerArtifact = git(f.root, ["rev-parse", "HEAD"])
   const newerCandidate = await addGraphCandidate(
     f,
