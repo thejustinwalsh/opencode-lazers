@@ -59,6 +59,12 @@ export const ALLOWED: Record<string, string> = {
   "NativeInteraction.poll": "verification adapter transport: the next queued interaction",
   "NativeInteraction.complete": "verification adapter transport: an interaction's result",
   "NativeInteraction.audioObserve": "verification adapter transport: report observed audio",
+  "CodeReview.resolve":
+    "command: pin one task comparison (resolve/capture), answered by its identity; files are streamed",
+  "CodeReview.history": "one keyset page of a task's attempt revisions for the comparison pickers",
+  "CodeReview.shape": "one pinned source's kind and line count, read before its windows",
+  "CodeReview.source":
+    "one bounded window (≤500 lines) of a pinned source near the viewport; not a list read",
   "Models.configure": "write: a model route mapping",
   "Models.refreshSources":
     "command: refresh due price sources; answers their status rows (one per source)",

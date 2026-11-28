@@ -193,6 +193,11 @@ export type TaskRadarRequest = {
   workerSessionID?: string
 }
 export type TaskRadarOpener = (session: PanelProps["session"], target: TaskRadarRequest) => void
+/** Opens the semantic review of a task's code changes. */
+export type TaskReviewOpener = (
+  session: PanelProps["session"],
+  target: { projectDirectory: string; taskID: string; reference?: string },
+) => void
 
 export function verificationTimingSummary(check: TaskProposal["verification"][number]): string {
   const timing = (value: number | undefined) =>
@@ -317,6 +322,7 @@ function TaskPanel(
     ctx: TaskContext
     openTrajectory: TaskTrajectoryOpener
     openRadar: TaskRadarOpener
+    openReview?: TaskReviewOpener | undefined
   },
 ) {
   const ctx = props.ctx
@@ -1342,6 +1348,26 @@ function TaskPanel(
               icon: "window-analytics" as const,
               disabled: !reference,
               onSelect: openSelectedTrajectory,
+            },
+          ]
+        : []),
+      ...(props.openReview && (selectedDetail()?.attempts?.length ?? 0) > 0
+        ? [
+            {
+              label: "Review changes",
+              icon: "review" as const,
+              onSelect: () => {
+                const task = selectedTask()
+                const value = current()
+                if (task && value)
+                  props.openReview?.(props.session, {
+                    projectDirectory: value.project,
+                    taskID: task.id,
+                    ...(selectedDetail()?.reference
+                      ? { reference: selectedDetail()!.reference }
+                      : {}),
+                  })
+              },
             },
           ]
         : []),
@@ -2471,6 +2497,7 @@ export function setupTaskPanel(
   openTrajectory: TaskTrajectoryOpener,
   openRadar: TaskRadarOpener = (session) =>
     ctx.layout.open(`${ctx.id}:radar`, session, { tab: "select" }),
+  openReview?: TaskReviewOpener,
 ) {
   const Ui = ctx.ui
   ctx.add(
@@ -2566,7 +2593,13 @@ export function setupTaskPanel(
     region: "side",
     list: (input) => (input.open.includes(tab.id) ? [tab] : []),
     render: bindPlugin((props: PanelProps) => (
-      <TaskPanel {...props} ctx={ctx} openTrajectory={openTrajectory} openRadar={openRadar} />
+      <TaskPanel
+        {...props}
+        ctx={ctx}
+        openTrajectory={openTrajectory}
+        openRadar={openRadar}
+        openReview={openReview}
+      />
     )),
   })
   ctx.add(Command, {
