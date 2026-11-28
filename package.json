@@ -64,6 +64,7 @@
     "@opencode/client": "2.3.0",
     "@opencode/plugin": "2.3.0",
     "@opencode/schema": "2.3.0",
+    "@pierre/diffs": "./vendor/pierre/pierre-diffs-1.5.2-oaink.6.tgz",
     "@standard-schema/spec": "1.1.0",
     "@types/bun": "1.4.4",
     "effect": "4.1.0",
