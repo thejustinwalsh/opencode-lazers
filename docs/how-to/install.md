@@ -1,9 +1,9 @@
 # Install or upgrade LAZERS
 
-LAZERS 0.2.0 targets OpenCode 2.3.0. Install the npm package with OpenCode's plugin installer:
+LAZERS 0.2.1 targets OpenCode 2.3.0. Install the npm package with OpenCode's plugin installer:
 
 ```sh
-opencode plugin add opencode-lazers@0.2.0
+opencode plugin add opencode-lazers@0.2.1
 ```
 
 Restart Desktop and its service, then select **Architect** and open **Tasks**.
