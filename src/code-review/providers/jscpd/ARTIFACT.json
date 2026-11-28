@@ -10,10 +10,10 @@
     }
   },
   "target": "wasm32-wasip1",
-  "wasmSha256": "21b4897edaee862bd1cf609a166e6e40d9cdf097bba0a51a0c4d92d80c172b46",
-  "bytes": 2262878,
-  "crateSourceSha256": "51185df48ac1cbf662e96c2442ee47c98533d2ceeb4837b46f12ec2a2b1cfd5c",
-  "cargoLockSha256": "cc94a27fd677b7706766294b1e1f6fde372948c252c6c88cdfcc7293452cd898",
+  "wasmSha256": "52d112255f666b4e9cbac68d1079af050e71516cb980ab810ed8163fa543978f",
+  "bytes": 2312253,
+  "crateSourceSha256": "4b5f2168b241db3916c989e059025109d336e77777dac6c847c27001c05f8203",
+  "cargoLockSha256": "e199708913dcb5264bd97024acc00d613a0db877e9bcb31a16809d6b20166eee",
   "vendoredSourceSha256": "990b4af628deefd048d33126161ba5ab13cee9f04b9d599404a9fbbd8baa79e7",
   "imports": [
     "wasi_snapshot_preview1.environ_get",

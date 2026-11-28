@@ -1,16 +1,22 @@
+mod config;
+mod ignore_rules;
+mod reporter;
+
 use cpd_core::detect::{PathFilters, PreparedSource, detect_prepared, merge_gapped_clones};
-use cpd_core::models::{CpdClone, SimilarityMethod};
 use cpd_core::similarity::{FunctionSig, collect_function_sources, find_similar_functions};
 use cpd_tokenizer::functions::{extract_functions, supports_functions};
-use cpd_tokenizer::tokenizer::{
-    Mode, TokenizeOptions, code_ignore_ranges, tokenize_to_detection_maps,
-};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use cpd_tokenizer::tokenizer::{TokenizeOptions, code_ignore_ranges, tokenize_to_detection_maps};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{Read, Write};
+
+use config::{
+    CompiledFileFilters, FormatResolution, ScanConfig, groups_for, mode_for, path_filter_paths,
+    resolve_format, strip_types_formats,
+};
+use ignore_rules::{CapturedIgnoreFiles, IgnoreFile};
+use reporter::{DetectorReport, SourceRecord, pair_report};
 
 const DETECTORS: &[&str] = &[
     "strict",
@@ -21,12 +27,12 @@ const DETECTORS: &[&str] = &[
     "ast",
     "cross-language",
 ];
-const JAVASCRIPT_TYPESCRIPT: &[&str] = &["javascript", "jsx", "typescript", "tsx"];
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Request {
     files: Vec<InputFile>,
+    #[serde(default)]
+    ignore_files: Vec<IgnoreFile>,
     detectors: Vec<String>,
     #[serde(default = "default_min_tokens")]
     min_tokens: usize,
@@ -45,27 +51,6 @@ struct InputFile {
     source: String,
 }
 
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScanConfig {
-    #[serde(default)]
-    mode: String,
-    #[serde(default)]
-    ignore_case: bool,
-    #[serde(default)]
-    ignore_identifiers: bool,
-    #[serde(default)]
-    ignore_literals: bool,
-    #[serde(default)]
-    ignore_annotations: bool,
-    #[serde(default)]
-    ignore: Vec<String>,
-    #[serde(default)]
-    code_ignore_patterns: Vec<String>,
-    #[serde(default)]
-    cross_formats: Vec<Vec<String>>,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Response {
@@ -82,88 +67,12 @@ struct ScanCoverage {
     files_ignored: usize,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DetectorReport {
-    detector: String,
-    clones: Vec<ClonePair>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ClonePair {
-    fingerprint: String,
-    format: String,
-    kind: String,
-    tokens: u32,
-    lines: u32,
-    first: CloneLocation,
-    second: CloneLocation,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    similarity: Option<f64>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CloneLocation {
-    path: String,
-    start_line: u32,
-    end_line: u32,
-}
-
-struct SourceRecord<'a> {
-    path: &'a str,
-    source: &'a str,
-}
-
 fn default_min_tokens() -> usize {
     50
 }
 
 fn default_min_lines() -> usize {
     5
-}
-
-fn mode_for(detector: &str, configured: &str) -> Mode {
-    match detector {
-        "strict" => Mode::Strict,
-        "mild" => Mode::Mild,
-        "weak" => Mode::Weak,
-        _ => match configured {
-            "strict" => Mode::Strict,
-            "weak" => Mode::Weak,
-            _ => Mode::Mild,
-        },
-    }
-}
-
-fn groups_for(detector: &str, configured: &[Vec<String>]) -> Vec<Vec<String>> {
-    if detector == "cross-language" {
-        return vec![
-            JAVASCRIPT_TYPESCRIPT
-                .iter()
-                .map(|format| (*format).to_string())
-                .collect(),
-        ];
-    }
-    configured.to_vec()
-}
-
-fn strip_types_formats(cross_formats: &[Vec<String>]) -> HashSet<String> {
-    cross_formats
-        .iter()
-        .filter(|group| {
-            group
-                .iter()
-                .any(|format| matches!(format.as_str(), "javascript" | "jsx"))
-        })
-        .flat_map(|group| {
-            group
-                .iter()
-                .filter(|format| matches!(format.as_str(), "typescript" | "tsx"))
-                .cloned()
-        })
-        .collect()
 }
 
 fn pool_key(format: &str, groups: &[Vec<String>]) -> String {
@@ -197,10 +106,11 @@ fn build_pools(
 
 fn prepare_sources<'a>(
     files: &'a [InputFile],
+    ignore_files: &CapturedIgnoreFiles,
     detector: &str,
     config: &ScanConfig,
     ignore_regexes: &[Regex],
-    ignore_set: &GlobSet,
+    file_filters: &CompiledFileFilters,
 ) -> (
     Vec<PreparedSource>,
     HashMap<String, SourceRecord<'a>>,
@@ -214,28 +124,23 @@ fn prepare_sources<'a>(
     let mut ignored = 0;
 
     for file in files {
-        if ignore_set.is_match(file.path.replace('\\', "/")) {
+        if file_filters.ignores_source(&file.path, &file.source)
+            || ignore_files.ignores(&file.path, config.no_gitignore)
+        {
             ignored += 1;
             continue;
         }
-        let format = file
-            .format
-            .as_deref()
-            .and_then(cpd_tokenizer::formats::resolve_format)
-            .or_else(|| {
-                let extension = file.path.rsplit_once('.').map(|(_, ext)| ext)?;
-                cpd_tokenizer::formats::get_format_by_extension(&extension.to_ascii_lowercase())
-            })
-            .or_else(|| {
-                file.source
-                    .lines()
-                    .next()
-                    .and_then(cpd_tokenizer::formats::get_format_by_shebang)
-            })
-            .map(str::to_string);
-        let Some(format) = format else {
-            unsupported += 1;
-            continue;
+        let format = match resolve_format(&file.path, file.format.as_deref(), &file.source, config)
+        {
+            FormatResolution::Selected(format) => format,
+            FormatResolution::Filtered => {
+                ignored += 1;
+                continue;
+            }
+            FormatResolution::Unsupported => {
+                unsupported += 1;
+                continue;
+            }
         };
         let mode = mode_for(detector, &config.mode);
         let options = TokenizeOptions {
@@ -286,87 +191,21 @@ fn prepare_sources<'a>(
     (prepared, records, (unsupported, ignored))
 }
 
-fn digest_fragment<'a>(clone: &CpdClone, records: &HashMap<String, SourceRecord<'a>>) -> String {
-    let candidates = [
-        (&clone.fragment_a, clone.fragment_a.range),
-        (&clone.fragment_b, clone.fragment_b.range),
-    ];
-    let fragment = candidates
-        .into_iter()
-        .max_by_key(|(fragment, _)| fragment.end.offset.saturating_sub(fragment.start.offset))
-        .and_then(|(fragment, _)| {
-            let source = records.get(&fragment.source_id)?;
-            source
-                .source
-                .get(fragment.start.offset as usize..fragment.end.offset as usize)
-        })
-        .unwrap_or_default();
-    let normalized = fragment.split_whitespace().collect::<Vec<_>>().join(" ");
-    let digest = Sha256::digest(normalized.as_bytes());
-    let mut hex = String::with_capacity(12);
-    for byte in digest.iter().take(6) {
-        use std::fmt::Write as _;
-        let _ = write!(hex, "{byte:02x}");
-    }
-    format!("jscpd:{hex}")
-}
-
-fn source_path<'a>(id: &str, records: &'a HashMap<String, SourceRecord<'a>>) -> &'a str {
-    records.get(id).map(|source| source.path).unwrap_or("")
-}
-
-fn lines(clone: &CpdClone, index: usize) -> u32 {
-    let fragment = if index == 0 {
-        &clone.fragment_a
-    } else {
-        &clone.fragment_b
-    };
-    fragment
-        .end
-        .line
-        .saturating_sub(fragment.start.line)
-        .saturating_add(1)
-        .saturating_sub(clone.unmatched_lines[index])
-}
-
-fn pair_report<'a>(clone: &CpdClone, records: &HashMap<String, SourceRecord<'a>>) -> ClonePair {
-    let kind = match clone.similarity_method {
-        Some(SimilarityMethod::Gap) => "gap",
-        Some(SimilarityMethod::Ast) => "similar",
-        None => clone.kind.as_str(),
-    };
-    ClonePair {
-        fingerprint: digest_fragment(clone, records),
-        format: clone.format.clone(),
-        kind: kind.to_string(),
-        tokens: clone.token_count,
-        lines: lines(clone, 0).max(lines(clone, 1)),
-        first: CloneLocation {
-            path: source_path(&clone.fragment_a.source_id, records).to_string(),
-            start_line: clone.fragment_a.start.line,
-            end_line: clone.fragment_a.end.line,
-        },
-        second: CloneLocation {
-            path: source_path(&clone.fragment_b.source_id, records).to_string(),
-            start_line: clone.fragment_b.start.line,
-            end_line: clone.fragment_b.end.line,
-        },
-        similarity: clone.similarity_rounded(),
-    }
-}
-
 fn report_detector(
     request: &Request,
     detector: &str,
     ignore_regexes: &[Regex],
-    ignore_set: &GlobSet,
+    file_filters: &CompiledFileFilters,
+    ignore_files: &CapturedIgnoreFiles,
+    path_filters: &PathFilters<'_>,
 ) -> DetectorReport {
     let (prepared, records, _) = prepare_sources(
         &request.files,
+        ignore_files,
         detector,
         &request.config,
         ignore_regexes,
-        ignore_set,
+        file_filters,
     );
     let cross_formats = groups_for(detector, &request.config.cross_formats);
     let function_sources = collect_function_sources(&prepared);
@@ -376,9 +215,17 @@ fn report_detector(
         request.min_lines,
         &PathFilters::default(),
     );
-    let max_gap_lines = if detector == "gap" { 3 } else { 0 };
+    let max_gap_lines = if detector == "gap" {
+        3
+    } else {
+        request.config.max_gap_lines.unwrap_or(0)
+    };
     clones = merge_gapped_clones(clones, max_gap_lines);
-    let similarity = if detector == "ast" { 0.85 } else { 1.0 };
+    let similarity = if detector == "ast" {
+        request.config.similarity.unwrap_or(0.85)
+    } else {
+        request.config.similarity.unwrap_or(1.0)
+    };
     if similarity > 0.0 && similarity < 1.0 {
         clones.extend(find_similar_functions(
             function_sources,
@@ -388,6 +235,17 @@ fn report_detector(
             &clones,
         ));
     }
+    clones.retain(|clone| {
+        let path_a = records
+            .get(&clone.fragment_a.source_id)
+            .map(|source| source.path)
+            .unwrap_or_default();
+        let path_b = records
+            .get(&clone.fragment_b.source_id)
+            .map(|source| source.path)
+            .unwrap_or_default();
+        !path_filters.should_skip(path_a, path_b)
+    });
     clones.sort_by(|left, right| left.position_key().cmp(&right.position_key()));
     DetectorReport {
         detector: detector.to_string(),
@@ -401,6 +259,11 @@ fn report_detector(
 fn scan(request: Request) -> Result<Response, ()> {
     if request.min_tokens == 0
         || request.min_lines == 0
+        || (!request.config.mode.is_empty()
+            && !matches!(request.config.mode.as_str(), "strict" | "mild" | "weak"))
+        || request.config.similarity.is_some_and(|similarity| {
+            !similarity.is_finite() || similarity <= 0.0 || similarity > 1.0
+        })
         || request
             .detectors
             .iter()
@@ -412,22 +275,16 @@ fn scan(request: Request) -> Result<Response, ()> {
         .config
         .code_ignore_patterns
         .iter()
-        .map(|pattern| Regex::new(pattern).map_err(|_| ()))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut ignore_builder = GlobSetBuilder::new();
-    for pattern in &request.config.ignore {
-        let pattern = pattern.trim_start_matches('/');
-        if let Ok(glob) = Glob::new(pattern) {
-            ignore_builder.add(glob);
-        }
-        if !pattern.starts_with('/')
-            && !pattern.contains(':')
-            && let Ok(glob) = Glob::new(&format!("**/{pattern}"))
-        {
-            ignore_builder.add(glob);
-        }
-    }
-    let ignore_set = ignore_builder.build().map_err(|_| ())?;
+        .filter_map(|pattern| Regex::new(pattern).ok())
+        .collect::<Vec<_>>();
+    let file_filters = CompiledFileFilters::new(&request.config, request.min_lines)?;
+    let ignore_files = CapturedIgnoreFiles::new(&request.ignore_files);
+    let (scan_roots, isolated_groups) = path_filter_paths(&request.config);
+    let path_filters = PathFilters {
+        skip_local: request.config.skip_local,
+        scan_roots: &scan_roots,
+        isolated_groups: &isolated_groups,
+    };
     let mut detectors = request.detectors.clone();
     detectors.sort_by_key(|detector| {
         DETECTORS
@@ -438,15 +295,25 @@ fn scan(request: Request) -> Result<Response, ()> {
     detectors.dedup();
     let (_, _, (files_unsupported, files_ignored)) = prepare_sources(
         &request.files,
+        &ignore_files,
         "mild",
         &request.config,
         &ignore_regexes,
-        &ignore_set,
+        &file_filters,
     );
     Ok(Response {
         detectors: detectors
             .iter()
-            .map(|detector| report_detector(&request, detector, &ignore_regexes, &ignore_set))
+            .map(|detector| {
+                report_detector(
+                    &request,
+                    detector,
+                    &ignore_regexes,
+                    &file_filters,
+                    &ignore_files,
+                    &path_filters,
+                )
+            })
             .collect(),
         coverage: ScanCoverage {
             files_received: request.files.len(),

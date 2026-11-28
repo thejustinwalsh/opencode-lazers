@@ -31,8 +31,8 @@ const files = (count: number) =>
 function input(): JscpdComparisonInput {
   return {
     comparisonID: "comparison-opaque-1",
-    base: { files: files(2), complete: true },
-    head: { files: files(3), complete: true },
+    base: { files: files(2), complete: true, ignoreFiles: [], ignoreFilesComplete: true },
+    head: { files: files(3), complete: true, ignoreFiles: [], ignoreFilesComplete: true },
     changedLines: [{ path: "src/new.ts", startLine: 1, endLine: 15 }],
   }
 }
@@ -104,8 +104,8 @@ test("comparison counts complete side inventories and merges detector findings w
 
 test("side-specific configuration is passed through and classified", async () => {
   const value = input()
-  value.base.config = { ignore: ["generated/**"] }
-  value.head.config = { ignore: ["generated/**", "vendor/**"] }
+  value.base.config = { ignoreCase: false, ignore: ["generated/**"] }
+  value.head.config = { ignoreCase: true, ignore: ["generated/**", "vendor/**"] }
   const scans: WasmScanRequest[] = []
   const result = await analyzeDuplicationComparison(value, {
     runSide: async (scan) => {
@@ -114,15 +114,22 @@ test("side-specific configuration is passed through and classified", async () =>
     },
   })
 
-  expect(scans[0]?.config.ignore).toEqual(["**/.git/**", "**/node_modules/**", "generated/**"])
-  expect(scans[1]?.config.ignore).toEqual([
-    "**/.git/**",
-    "**/node_modules/**",
-    "generated/**",
-    "vendor/**",
-  ])
+  expect(scans[0]?.config.ignore).toEqual(["**/node_modules/**", "**/.git/**"])
+  expect(scans[1]?.config.ignore).toEqual(["**/node_modules/**", "**/.git/**"])
   expect(result.coverage.configurationChanged).toBe(true)
   expect(result.findings[0]?.configurationChanged).toBe(true)
+})
+
+test("CLI ignore flags override config-file globs without a false config-change classification", async () => {
+  const value = input()
+  value.base.config = { ignore: ["generated/**"] }
+  value.head.config = { ignore: ["vendor/**"] }
+  const result = await analyzeDuplicationComparison(value, {
+    runSide: async (scan) => scanReport(scan, scan.files.length === 2 ? "base" : "head"),
+  })
+
+  expect(result.coverage.configurationChanged).toBe(false)
+  expect(result.findings[0]?.configurationChanged).toBe(false)
 })
 
 test("unsupported source and incomplete inventories remain partial while retaining known findings", async () => {
@@ -136,6 +143,36 @@ test("unsupported source and incomplete inventories remain partial while retaini
   expect(result.coverage.base.complete).toBe(false)
   expect(result.coverage.base.filesUnsupported).toBe(1)
   expect(result.findings).toHaveLength(1)
+})
+
+test("incomplete captured ignore files degrade coverage without hiding known findings", async () => {
+  const value = input()
+  value.head.ignoreFilesComplete = false
+  const result = await analyzeDuplicationComparison(value, {
+    runSide: async (scan) => scanReport(scan, scan.files.length === 2 ? "base" : "head"),
+  })
+
+  expect(result.status).toBe("partial")
+  expect(result.coverage.head.ignoreFilesComplete).toBe(false)
+  expect(result.coverage.head.complete).toBe(false)
+  expect(result.findings).toHaveLength(1)
+})
+
+test("unsupported config options are reported by safe name and keep coverage partial", async () => {
+  const value = input()
+  value.head.config = {
+    ...(value.head.config ?? {}),
+    baseline: "config-private-canary",
+  } as JscpdComparisonInput["head"]["config"]
+  const result = await analyzeDuplicationComparison(value, {
+    runSide: async (scan) => scanReport(scan, scan.files.length === 2 ? "base" : "head"),
+  })
+
+  expect(result.status).toBe("partial")
+  expect(result.coverage.head.unsupportedConfig).toEqual(["baseline"])
+  expect(result.coverage.head.complete).toBe(false)
+  expect(result.findings).toHaveLength(1)
+  expect(JSON.stringify(result)).not.toContain("config-private-canary")
 })
 
 test("an analyzer failure is unavailable and never returns the failing error text", async () => {
@@ -194,7 +231,10 @@ test("invalid paths and config-shaped aborts do not reveal source content", asyn
   await expect(
     analyzeDuplicationComparison(invalid, {
       runSide: async () =>
-        scanReport({ detectors: [], files: [], minLines: 5, minTokens: 50, config: {} }, "head"),
+        scanReport(
+          { detectors: [], files: [], ignoreFiles: [], minLines: 5, minTokens: 50, config: {} },
+          "head",
+        ),
     }),
   ).rejects.toMatchObject({ code: "invalid-request" })
 

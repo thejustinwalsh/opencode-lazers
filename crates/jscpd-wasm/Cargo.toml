@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 cpd-core = { path = "../../vendor/jscpd/rust/crates/cpd-core" }
 cpd-tokenizer = { path = "../../vendor/jscpd/rust/crates/cpd-tokenizer" }
+ignore = "0.4"
 globset = "0.4"
 regex = "1"
 serde = { version = "1", features = ["derive"] }

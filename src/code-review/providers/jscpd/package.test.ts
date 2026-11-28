@@ -10,8 +10,13 @@ test("the bundled public provider uses its neighboring worker and WASM without l
   const newCopy = { ...scan.files[0]!, path: "src/new-copy.ts" }
   const comparison: JscpdComparisonInput = {
     comparisonID: "package-smoke-comparison",
-    base: { files: exact, complete: true },
-    head: { files: [...exact, newCopy], complete: true },
+    base: { files: exact, complete: true, ignoreFiles: [], ignoreFilesComplete: true },
+    head: {
+      files: [...exact, newCopy],
+      complete: true,
+      ignoreFiles: [],
+      ignoreFilesComplete: true,
+    },
     changedLines: [{ path: newCopy.path, startLine: 1, endLine: 40 }],
   }
   const providerURL = new URL("../../../../dist/jscpd-provider.js", import.meta.url)

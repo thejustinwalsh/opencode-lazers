@@ -156,6 +156,7 @@ export function executeJscpdScan(
       op: "scan",
       root,
       files: scan.files,
+      ignoreFiles: scan.ignoreFiles,
       detectors: scan.detectors,
       minTokens: scan.minTokens,
       minLines: scan.minLines,

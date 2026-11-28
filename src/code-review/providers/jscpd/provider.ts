@@ -13,15 +13,20 @@ import {
   type JscpdConfig,
   type JscpdDetector,
   type JscpdFile,
+  type JscpdIgnoreFile,
   type JscpdSideInventory,
   type JscpdSideReport,
   type WasmScanRequest,
 } from "./contract.ts"
+import {
+  capturedConfigurationChanged,
+  effectiveJscpdConfig,
+  unsupportedJscpdConfigKeys,
+} from "./configuration.ts"
 import { DuplicationAnalysisError, runJscpdSide } from "./worker-client.ts"
 
 const MIN_TOKENS = 50
 const MIN_LINES = 5
-const DEFAULT_IGNORE = ["**/.git/**", "**/node_modules/**"]
 
 type RunSide = (
   scan: WasmScanRequest,
@@ -37,6 +42,8 @@ export interface DuplicationProviderOptions {
 
 interface PreparedInventory {
   files: JscpdFile[]
+  ignoreFiles: JscpdIgnoreFile[]
+  unsupportedConfig: string[]
   preIgnored: number
 }
 
@@ -57,10 +64,22 @@ function ignoredByDefault(path: string): boolean {
   return path.split("/").some((part) => part === ".git" || part === "node_modules")
 }
 
-function prepareInventory(inventory: JscpdSideInventory): PreparedInventory {
+function unsupportedKeys(inventory: JscpdSideInventory): string[] {
+  return [
+    ...new Set([
+      ...(inventory.unsupportedConfig ?? []),
+      ...unsupportedJscpdConfigKeys(inventory.config),
+    ]),
+  ].sort()
+}
+
+function prepareFiles(inputFiles: readonly JscpdFile[]): {
+  files: JscpdFile[]
+  preIgnored: number
+} {
   const files: JscpdFile[] = []
   let preIgnored = 0
-  for (const file of inventory.files) {
+  for (const file of inputFiles) {
     if (!validRelativePath(file.path) || typeof file.source !== "string")
       throw new DuplicationAnalysisError("invalid-request")
     if (file.binary || file.source.includes("\0") || ignoredByDefault(file.path)) {
@@ -76,30 +95,35 @@ function prepareInventory(inventory: JscpdSideInventory): PreparedInventory {
   return { files, preIgnored }
 }
 
-function normalizedConfig(config: JscpdConfig | undefined): JscpdConfig {
-  const defaults: JscpdConfig = {
-    mode: "mild",
-    ignoreCase: false,
-    ignoreIdentifiers: false,
-    ignoreLiterals: false,
-    ignoreAnnotations: false,
+function prepareIgnoreFiles(ignoreFiles: readonly JscpdIgnoreFile[]): JscpdIgnoreFile[] {
+  const prepared: JscpdIgnoreFile[] = []
+  const ignorePaths = new Set<string>()
+  for (const file of ignoreFiles) {
+    const name = file.path.split("/").at(-1)
+    if (
+      !validRelativePath(file.path) ||
+      typeof file.contents !== "string" ||
+      (name !== ".ignore" && name !== ".gitignore" && file.path !== ".git/info/exclude") ||
+      ignorePaths.has(file.path)
+    )
+      throw new DuplicationAnalysisError("invalid-request")
+    ignorePaths.add(file.path)
+    prepared.push({ path: file.path, contents: file.contents })
   }
-  return {
-    ...defaults,
-    ...config,
-    ignore: [...DEFAULT_IGNORE, ...(config?.ignore ?? [])],
-    codeIgnorePatterns: [...(config?.codeIgnorePatterns ?? [])],
-    crossFormats: (config?.crossFormats ?? []).map((group) => [...group]),
-  }
+  return prepared
 }
 
-function stableValue(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableValue).join(",")}]`
-  if (!value || typeof value !== "object") return JSON.stringify(value) ?? "null"
-  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
-    left.localeCompare(right),
-  )
-  return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${stableValue(child)}`).join(",")}}`
+function prepareInventory(inventory: JscpdSideInventory): PreparedInventory {
+  const unsupportedConfig = unsupportedKeys(inventory)
+  if (unsupportedConfig.some((key) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(key)))
+    throw new DuplicationAnalysisError("invalid-request")
+  const { files, preIgnored } = prepareFiles(inventory.files)
+  return {
+    files,
+    preIgnored,
+    ignoreFiles: prepareIgnoreFiles(inventory.ignoreFiles),
+    unsupportedConfig,
+  }
 }
 
 function detectorsFor(settings: DuplicationSettings): JscpdDetector[] {
@@ -118,18 +142,24 @@ function inventoryCoverage(
   const filesUnsupported = report?.coverage.filesUnsupported ?? 0
   const filesIgnored = prepared.preIgnored + (report?.coverage.filesIgnored ?? 0)
   const filesScanned = report?.coverage.filesScanned ?? 0
+  const complete = [
+    inventory.complete,
+    omittedFiles === 0,
+    inventory.ignoreFilesComplete,
+    prepared.unsupportedConfig.length === 0,
+    report !== undefined,
+    filesUnsupported === 0,
+    report?.coverage.filesReceived === prepared.files.length,
+  ].every(Boolean)
   return {
     filesReceived,
     filesScanned,
     filesUnsupported,
     filesIgnored,
     omittedFiles,
-    complete:
-      inventory.complete &&
-      omittedFiles === 0 &&
-      report !== undefined &&
-      filesUnsupported === 0 &&
-      report.coverage.filesReceived === prepared.files.length,
+    unsupportedConfig: prepared.unsupportedConfig,
+    complete,
+    ignoreFilesComplete: inventory.ignoreFilesComplete,
   }
 }
 
@@ -144,9 +174,7 @@ function coverage(
     base: inventoryCoverage(input.base, prepared.base, baseReport),
     head: inventoryCoverage(input.head, prepared.head, headReport),
     requestedDetectors,
-    configurationChanged:
-      stableValue(normalizedConfig(input.base.config)) !==
-      stableValue(normalizedConfig(input.head.config)),
+    configurationChanged: capturedConfigurationChanged(input.base, input.head),
   }
 }
 
@@ -239,7 +267,14 @@ function sideRequest(
   detectors: readonly JscpdDetector[],
   config: JscpdConfig,
 ): WasmScanRequest {
-  return { files: prepared.files, detectors, minTokens: MIN_TOKENS, minLines: MIN_LINES, config }
+  return {
+    files: prepared.files,
+    ignoreFiles: prepared.ignoreFiles,
+    detectors,
+    minTokens: MIN_TOKENS,
+    minLines: MIN_LINES,
+    config,
+  }
 }
 
 /**
@@ -278,8 +313,8 @@ export async function analyzeDuplicationComparison(
 
   const runSide = options.runSide ?? runJscpdSide
   const config = {
-    base: normalizedConfig(input.base.config),
-    head: normalizedConfig(input.head.config),
+    base: effectiveJscpdConfig(input.base.config),
+    head: effectiveJscpdConfig(input.head.config),
   }
   const runOptions = { signal: options.signal, timeoutMs: settings.timeoutMs }
   const base = await scanSide(

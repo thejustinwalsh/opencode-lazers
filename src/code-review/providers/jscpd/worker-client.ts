@@ -36,41 +36,48 @@ function isWorkerReply(value: unknown): value is WorkerReply {
 /** Each side gets a fresh worker: terminating it releases its WASI instance and source buffers. */
 export function runJscpdSide(
   scan: WasmScanRequest,
-  options: { signal?: AbortSignal; timeoutMs: number },
+  options: { signal?: AbortSignal; timeoutMs: number; workerFactory?: () => Worker },
 ): Promise<JscpdSideReport> {
   const { signal, timeoutMs } = options
   if (signal?.aborted)
     return Promise.reject(new DOMException("Duplication analysis was cancelled.", "AbortError"))
 
-  const worker = new Worker(workerURL("./jscpd-worker", import.meta.url))
+  const worker =
+    options.workerFactory?.() ?? new Worker(workerURL("./jscpd-worker", import.meta.url))
   return new Promise<JscpdSideReport>((resolve, reject) => {
     let settled = false
-    const finish = (action: () => void) => {
+    const finish = (error?: Error, report?: JscpdSideReport) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       signal?.removeEventListener("abort", abort)
-      void worker.terminate().catch(() => undefined)
-      action()
+      void Promise.resolve()
+        .then(() => worker.terminate())
+        .then(() => {
+          if (error) reject(error)
+          else if (report) resolve(report)
+          else reject(new DuplicationAnalysisError("worker-failed"))
+        })
+        .catch(() => reject(new DuplicationAnalysisError("worker-failed")))
     }
     const abort = () =>
-      finish(() => reject(new DOMException("Duplication analysis was cancelled.", "AbortError")))
+      finish(new DOMException("Duplication analysis was cancelled.", "AbortError"))
     const timer = setTimeout(
-      () => finish(() => reject(new DuplicationAnalysisError("analyzer-timeout"))),
+      () => finish(new DuplicationAnalysisError("analyzer-timeout")),
       timeoutMs,
     )
 
     worker.on("message", (value: unknown) => {
       if (!isWorkerReply(value) || "ready" in value) return
       if (!value.ok) {
-        finish(() => reject(new DuplicationAnalysisError(value.code)))
+        finish(new DuplicationAnalysisError(value.code))
         return
       }
-      finish(() => resolve(value.report))
+      finish(undefined, value.report)
     })
-    worker.on("error", () => finish(() => reject(new DuplicationAnalysisError("worker-failed"))))
+    worker.on("error", () => finish(new DuplicationAnalysisError("worker-failed")))
     worker.on("exit", () => {
-      finish(() => reject(new DuplicationAnalysisError("worker-failed")))
+      finish(new DuplicationAnalysisError("worker-failed"))
     })
     signal?.addEventListener("abort", abort, { once: true })
     if (signal?.aborted) {
@@ -80,7 +87,7 @@ export function runJscpdSide(
     try {
       worker.postMessage({ id: 1, scan } satisfies JscpdWorkerRequest)
     } catch {
-      finish(() => reject(new DuplicationAnalysisError("worker-failed")))
+      finish(new DuplicationAnalysisError("worker-failed"))
     }
   })
 }

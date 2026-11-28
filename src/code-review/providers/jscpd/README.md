@@ -22,5 +22,26 @@ protected shared worker registrar remains unchanged for Architect composition.
 The provider bundle smoke test loads the emitted public entry and exercises its
 worker and WASM asset together.
 
-The package includes `licenses/jscpd/MIT.txt`; `ARTIFACT.json` records the
-upstream commit, crate versions, target, imports, and reproducible build inputs.
+## Captured configuration
+
+The portable contract consumes detector mode, token normalization, format
+selection and custom format mappings, file/code ignore patterns, cross-format
+groups, size/line limits, gap/AST thresholds, `.ignore`/`.gitignore`/Git exclude
+contents, and local/isolation filters. Captured ignore files are evaluated in
+the worker; the provider never reads a checkout. Oaink's fixed
+`**/node_modules/**` and `**/.git/**` CLI ignore list overrides config-file
+`ignore` globs. Unknown config keys are returned by name in side coverage and
+make the comparison partial instead of being silently treated as supported.
+Filesystem walking, symlink following, blame, baseline/reporting options and
+model-backed semantic analysis are not part of this provider.
+
+Parity requires the independently verified macOS ARM64 jscpd 5.4.0 executable
+at `.cache/jscpd-release-oracle/jscpd` or `JSCPD_RELEASE_CLI`. The verifier checks
+the executable SHA-256 and version, runs its JSON reporter against isolated
+captured fixtures, and deletes its source-bearing temporary reports. The native
+binary is a development oracle only; runtime execution remains WASM and the
+bundled worker.
+
+The package includes the upstream and newly used dependency license texts under
+`licenses/jscpd/`; `ARTIFACT.json` records the upstream commit, crate versions,
+target, imports, and reproducible build inputs.

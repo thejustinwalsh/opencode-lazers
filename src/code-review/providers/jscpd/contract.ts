@@ -62,12 +62,35 @@ export interface JscpdConfig {
   ignoreIdentifiers?: boolean
   ignoreLiterals?: boolean
   ignoreAnnotations?: boolean
-  /** jscpd file globs, scoped to this side. */
+  /** Native `.jscpd.json` `format` filter, normalized to format names. */
+  formats?: readonly string[]
+  /** Native `formatsExts` and `formatsNames` mappings. */
+  formatsExts?: Readonly<Record<string, readonly string[]>>
+  formatsNames?: Readonly<Record<string, readonly string[]>>
+  /** CLI `-i` overrides `.jscpd.json` ignore in the Oaink invocation. */
   ignore?: readonly string[]
-  /** jscpd code-level regular expressions, scoped to this side. */
+  /** Native `.jscpd.json` code-level regular expressions. */
+  ignorePattern?: readonly string[]
+  /** Compatibility spelling accepted by the provider contract. */
   codeIgnorePatterns?: readonly string[]
   /** Format equivalence groups, e.g. [["javascript", "typescript"]]. */
   crossFormats?: readonly (readonly string[])[]
+  /** Native filesystem-walker options that can be evaluated from captured inputs. */
+  maxLines?: number
+  maxSize?: string
+  maxGapLines?: number
+  similarity?: number
+  noGitignore?: boolean
+  skipLocal?: boolean
+  skipIsolated?: readonly (readonly string[])[]
+  pattern?: string
+}
+
+export interface JscpdIgnoreFile {
+  /** Relative path of `.ignore`, `.gitignore`, or `.git/info/exclude`. */
+  path: string
+  /** Captured ignore rules; kept in the worker and never returned. */
+  contents: string
 }
 
 export interface JscpdSideInventory {
@@ -78,6 +101,12 @@ export interface JscpdSideInventory {
   omittedFiles?: number
   /** Side-specific `.jscpd.json` options captured with the source tree. */
   config?: JscpdConfig
+  /** Captured ignore files used by the native walker. */
+  ignoreFiles: readonly JscpdIgnoreFile[]
+  /** False when the captured ignore-file list is known to be incomplete. */
+  ignoreFilesComplete: boolean
+  /** Native config keys not represented by the portable provider contract. */
+  unsupportedConfig?: readonly string[]
 }
 
 export interface ChangedLineRange {
@@ -134,6 +163,8 @@ export interface JscpdSideReport {
 export interface InventoryCoverage extends ScanCoverage {
   complete: boolean
   omittedFiles: number
+  ignoreFilesComplete: boolean
+  unsupportedConfig: readonly string[]
 }
 
 export interface DuplicationCoverage {
@@ -192,6 +223,7 @@ export interface DuplicationFinding {
 
 export interface WasmScanRequest {
   files: readonly JscpdFile[]
+  ignoreFiles: readonly JscpdIgnoreFile[]
   detectors: readonly JscpdDetector[]
   minTokens: number
   minLines: number
