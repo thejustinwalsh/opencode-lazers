@@ -726,6 +726,8 @@ export class TaskRuntime {
     })
     this.cleanupAudit = new CleanupAudit(this.core)
     this.attemptAdvance = new AttemptAdvance(this.core, {
+      releaseWorkerSlot: (attemptID, sessionID) =>
+        this.delegatedAgentCapacity.releaseRunnerSlot(attemptID, sessionID),
       autoResumeInterrupted: this.autoResumeInterrupted,
       workerNoProgressWindowMs: this.workerNoProgressWindowMs,
       command: (...args) => this.command(...args),

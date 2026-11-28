@@ -781,6 +781,43 @@ export class DelegatedAgentCapacity {
     })
   }
 
+  /** Idle is an execution fact, not a task completion. Keep the assignment and release only its slot. */
+  async releaseRunnerSlot(attemptID: string, sessionID: string): Promise<boolean> {
+    await this.projectKey()
+    return this.repository.atomic(
+      (db) =>
+        db
+          .query(
+            `UPDATE delegated_agent_admissions
+       SET state=lz_runner_transition('capacity',state,'released'),updated_at=?
+       WHERE kind='runner' AND state='admitted' AND attempt_id=?
+         AND EXISTS (SELECT 1 FROM runner_attempts r WHERE r.id=attempt_id AND r.session_id=?)`,
+          )
+          .run(this.clock.now(), attemptID, sessionID).changes > 0,
+    )
+  }
+
+  /** Every native model execution, including a resumed turn, acquires the existing task slot first. */
+  async waitForRunnerSession(sessionID: string, signal: AbortSignal): Promise<void> {
+    const projectKey = await this.projectKey()
+    const requestID = this.repository.atomic((db) => {
+      const attempt = db
+        .query<{ id: string; plan_id: string; task_id: string; number: number }, [string]>(
+          "SELECT id,plan_id,task_id,number FROM runner_attempts WHERE session_id=? AND state IN ('preparing','running') ORDER BY number DESC LIMIT 1",
+        )
+        .get(sessionID)
+      if (!attempt) return undefined
+      this.settle(db, projectKey)
+      return this.ensureRunnerQueuedInTransaction(
+        db,
+        { planID: attempt.plan_id, taskID: attempt.task_id, attemptNumber: attempt.number },
+        projectKey,
+        { attemptID: attempt.id },
+      )
+    })
+    if (requestID) await this.waitForAdmission(requestID, "runner", signal)
+  }
+
   async cancelRunnerQueue(planID: string, keepTaskIDs: readonly string[] = []) {
     const projectKey = await this.projectKey()
     const queued = (db: Database) =>
@@ -940,6 +977,14 @@ export class DelegatedAgentCapacity {
   }
 
   async waitForNative(requestID: string, signal: AbortSignal) {
+    return this.waitForAdmission(requestID, "native", signal)
+  }
+
+  private async waitForAdmission(
+    requestID: string,
+    kind: AdmissionRow["kind"],
+    signal: AbortSignal,
+  ) {
     await this.projectKey()
     try {
       for (;;) {
@@ -951,17 +996,17 @@ export class DelegatedAgentCapacity {
             requestID,
             projectKey,
             projectDirectory: this.repository.projectDirectory,
-            kind: "native",
+            kind,
             processID: this.processID(),
             now: this.clock.now(),
           })
           if (result === "unavailable") throw new Error("Delegated-agent request is unavailable")
           if (result === "waiting") {
             const state = db
-              .query<{ state: AdmissionState }, [string]>(
-                "SELECT state FROM delegated_agent_admissions WHERE id=? AND kind='native'",
+              .query<{ state: AdmissionState }, [string, AdmissionRow["kind"]]>(
+                "SELECT state FROM delegated_agent_admissions WHERE id=? AND kind=?",
               )
-              .get(requestID)?.state
+              .get(requestID, kind)?.state
             if (state === "cancelled" || state === "released")
               throw new Error("Delegated-agent request is no longer available")
           }
@@ -975,9 +1020,9 @@ export class DelegatedAgentCapacity {
         db
           .query(
             `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'cancelled'),updated_at=?
-             WHERE id=? AND kind='native' AND state='queued'`,
+             WHERE id=? AND kind=? AND state='queued'`,
           )
-          .run(this.clock.now(), requestID),
+          .run(this.clock.now(), requestID, kind),
       )
       throw error
     }
