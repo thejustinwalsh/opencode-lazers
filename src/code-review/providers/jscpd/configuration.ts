@@ -32,33 +32,53 @@ function cloneMapping(
   )
 }
 
+function defaulted<T>(value: T | undefined, fallback: T): T {
+  return value ?? fallback
+}
+
+function cloneList<T>(values: readonly T[] | undefined): T[] {
+  return [...(values ?? [])]
+}
+
+function cloneGroups(groups: readonly (readonly string[])[] | undefined): string[][] {
+  return (groups ?? []).map((group) => [...group])
+}
+
+function optionalPattern(pattern: string | undefined): Pick<JscpdConfig, "pattern"> {
+  return pattern === undefined ? {} : { pattern }
+}
+
+function codeIgnorePatterns(config: JscpdConfig | undefined): string[] {
+  return cloneList(config?.ignorePattern ?? config?.codeIgnorePatterns)
+}
+
 function detectorConfig(config: JscpdConfig | undefined): Partial<JscpdConfig> {
   return {
-    mode: config?.mode ?? "mild",
-    ignoreCase: config?.ignoreCase ?? false,
-    ignoreIdentifiers: config?.ignoreIdentifiers ?? false,
-    ignoreLiterals: config?.ignoreLiterals ?? false,
-    ignoreAnnotations: config?.ignoreAnnotations ?? false,
+    mode: defaulted(config?.mode, "mild"),
+    ignoreCase: defaulted(config?.ignoreCase, false),
+    ignoreIdentifiers: defaulted(config?.ignoreIdentifiers, false),
+    ignoreLiterals: defaulted(config?.ignoreLiterals, false),
+    ignoreAnnotations: defaulted(config?.ignoreAnnotations, false),
   }
 }
 
 function formatConfig(config: JscpdConfig | undefined): Partial<JscpdConfig> {
   return {
-    formats: [...(config?.formats ?? [])],
+    formats: cloneList(config?.formats),
     formatsExts: cloneMapping(config?.formatsExts),
     formatsNames: cloneMapping(config?.formatsNames),
-    crossFormats: (config?.crossFormats ?? []).map((group) => [...group]),
+    crossFormats: cloneGroups(config?.crossFormats),
   }
 }
 
 function ignoreConfig(config: JscpdConfig | undefined): Partial<JscpdConfig> {
   return {
-    ignore: [...(config?.ignore ?? [])],
-    codeIgnorePatterns: [...(config?.ignorePattern ?? config?.codeIgnorePatterns ?? [])],
-    noGitignore: config?.noGitignore ?? false,
-    skipLocal: config?.skipLocal ?? false,
-    skipIsolated: (config?.skipIsolated ?? []).map((group) => [...group]),
-    ...(config?.pattern === undefined ? {} : { pattern: config.pattern }),
+    ignore: cloneList(config?.ignore),
+    codeIgnorePatterns: codeIgnorePatterns(config),
+    noGitignore: defaulted(config?.noGitignore, false),
+    skipLocal: defaulted(config?.skipLocal, false),
+    skipIsolated: cloneGroups(config?.skipIsolated),
+    ...optionalPattern(config?.pattern),
   }
 }
 

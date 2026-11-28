@@ -44,3 +44,20 @@ export function makeIsolatedConfigParityRequest(): WasmScanRequest {
     },
   }
 }
+
+export function makeSizeLimitParityRequest(): WasmScanRequest {
+  const oversizedSource = `${repeatedSource}\n// ${"x".repeat(1_300)}\n`
+  return {
+    files: [
+      { path: "src/size-small-a.ts", source: repeatedSource },
+      { path: "src/size-small-b.ts", source: repeatedSource },
+      { path: "src/size-large-a.ts", source: oversizedSource },
+      { path: "src/size-large-b.ts", source: oversizedSource },
+    ],
+    ignoreFiles: [],
+    detectors: ["mild"],
+    minTokens: 50,
+    minLines: 5,
+    config: { mode: "mild", maxSize: "2kb" },
+  }
+}

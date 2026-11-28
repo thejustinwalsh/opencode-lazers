@@ -40,6 +40,12 @@ interface NativeReport {
   duplicates: NativeDuplicate[]
 }
 
+interface ProcessResult {
+  code: number
+  stdout: string
+  stderr: string
+}
+
 const reportPath = (path: string) => path.replaceAll("\\", "/")
 
 function safeRelativePath(path: string): boolean {
@@ -48,19 +54,19 @@ function safeRelativePath(path: string): boolean {
   return parts.every((part) => part !== "" && part !== "." && part !== "..")
 }
 
-async function spawn(command: string[], cwd: string): Promise<{ code: number; stdout: string }> {
+async function spawn(command: string[], cwd: string): Promise<ProcessResult> {
   const child = Bun.spawn(command, {
     cwd,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   })
-  const [code, stdout] = await Promise.all([
+  const [code, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ])
-  return { code, stdout }
+  return { code, stdout, stderr }
 }
 
 let validatedCLI: Promise<string> | undefined
@@ -86,7 +92,7 @@ function releaseCLI(): Promise<string> {
   return validatedCLI
 }
 
-function nativeConfig(config: JscpdConfig) {
+export function nativeConfig(config: JscpdConfig) {
   return {
     mode: config.mode,
     ignoreCase: config.ignoreCase,
@@ -100,7 +106,7 @@ function nativeConfig(config: JscpdConfig) {
     ignorePattern: [...(config.codeIgnorePatterns ?? [])],
     crossFormats: (config.crossFormats ?? []).map((group) => [...group]),
     ...(config.maxLines === undefined ? {} : { maxLines: config.maxLines }),
-    ...(config.maxSize === undefined ? { maxSize: config.maxSize } : {}),
+    ...(config.maxSize === undefined ? {} : { maxSize: config.maxSize }),
     ...(config.maxGapLines === undefined ? {} : { maxGapLines: config.maxGapLines }),
     ...(config.similarity === undefined ? {} : { similarity: config.similarity }),
     noGitignore: config.noGitignore,
@@ -108,6 +114,23 @@ function nativeConfig(config: JscpdConfig) {
     skipIsolated: (config.skipIsolated ?? []).map((group) => [...group]),
     ...(config.pattern === undefined ? {} : { pattern: config.pattern }),
   }
+}
+
+export function assertNativeConfigAccepted(
+  result: ProcessResult,
+  configPath: string,
+  operation: string,
+): void {
+  const expectedConfigNotice = `Using config from ${configPath}`
+  const output = `${result.stdout}\n${result.stderr}`
+  const configDiagnostic =
+    /\b(?:invalid|failed|error|unknown|unrecognized|unsupported|rejected)\b.{0,100}\bconfig(?:uration)?\b|\bconfig(?:uration)?\b.{0,100}\b(?:invalid|failed|error|unknown|unrecognized|unsupported|rejected)\b/i.test(
+      output,
+    )
+  if (!output.includes(expectedConfigNotice) || configDiagnostic)
+    throw new Error(
+      `Pinned jscpd release oracle did not accept captured config during ${operation}.`,
+    )
 }
 
 async function writeCapturedFile(rootPath: string, path: string, contents: string): Promise<void> {
@@ -119,21 +142,43 @@ async function writeCapturedFile(rootPath: string, path: string, contents: strin
   await writeFile(target, contents)
 }
 
+const modeDetectors = new Set<JscpdDetector>(["strict", "mild", "weak"])
+
+function modeOptions(detector: JscpdDetector, config: JscpdConfig): string[] {
+  return ["--mode", modeDetectors.has(detector) ? detector : (config.mode ?? "mild")]
+}
+
+function renamedOptions(detector: JscpdDetector): string[] {
+  return detector === "renamed" ? ["--ignore-identifiers", "--ignore-literals"] : []
+}
+
+function gapOptions(detector: JscpdDetector, config: JscpdConfig): string[] {
+  const maxGapLines = detector === "gap" ? (config.maxGapLines ?? 3) : config.maxGapLines
+  return maxGapLines === undefined ? [] : ["--max-gap-lines", String(maxGapLines)]
+}
+
+function similarityOptions(detector: JscpdDetector, config: JscpdConfig): string[] {
+  const similarity = detector === "ast" ? (config.similarity ?? 0.85) : config.similarity
+  return similarity === undefined ? [] : ["--similarity", String(similarity)]
+}
+
+function crossFormatOptions(detector: JscpdDetector): string[] {
+  return detector === "cross-language" ? ["--cross-formats", "js-ts"] : []
+}
+
+function localOptions(config: JscpdConfig): string[] {
+  return config.skipLocal ? ["--skip-local"] : []
+}
+
 function detectorOptions(detector: JscpdDetector, config: JscpdConfig): string[] {
-  const mode =
-    detector === "strict" || detector === "mild" || detector === "weak"
-      ? detector
-      : (config.mode ?? "mild")
-  const options = ["--mode", mode]
-  if (detector === "renamed") options.push("--ignore-identifiers", "--ignore-literals")
-  if (detector === "gap") options.push("--max-gap-lines", String(config.maxGapLines ?? 3))
-  else if (config.maxGapLines !== undefined)
-    options.push("--max-gap-lines", String(config.maxGapLines))
-  if (detector === "ast") options.push("--similarity", String(config.similarity ?? 0.85))
-  else if (config.similarity !== undefined) options.push("--similarity", String(config.similarity))
-  if (detector === "cross-language") options.push("--cross-formats", "js-ts")
-  if (config.skipLocal) options.push("--skip-local")
-  return options
+  return [
+    ...modeOptions(detector, config),
+    ...renamedOptions(detector),
+    ...gapOptions(detector, config),
+    ...similarityOptions(detector, config),
+    ...crossFormatOptions(detector),
+    ...localOptions(config),
+  ]
 }
 
 function identity(fragment: string): string {
@@ -161,11 +206,24 @@ function location(value: NativeFileLocation, format: string) {
   }
 }
 
+const releaseKinds: Readonly<Record<string, ClonePair["kind"]>> = {
+  exact: "exact",
+  renamed: "renamed",
+  similar: "similar",
+  gap: "gap",
+}
+const detectorKindAliases: Partial<
+  Record<JscpdDetector, Readonly<Record<string, ClonePair["kind"]>>>
+> = {
+  gap: { similar: "gap" },
+  ast: { similar: "similar", ast: "similar" },
+}
+
 function releaseKind(kind: string, detector: JscpdDetector): ClonePair["kind"] {
-  if (detector === "gap" && (kind === "similar" || kind === "gap")) return "gap"
-  if (detector === "ast" && (kind === "similar" || kind === "ast")) return "similar"
-  if (kind === "exact" || kind === "renamed" || kind === "similar" || kind === "gap") return kind
-  throw new Error("Pinned release oracle returned an unsupported clone kind.")
+  const normalized = detectorKindAliases[detector]?.[kind] ?? releaseKinds[kind]
+  if (normalized === undefined)
+    throw new Error("Pinned release oracle returned an unsupported clone kind.")
+  return normalized
 }
 
 function clonePair(value: NativeDuplicate, detector: JscpdDetector): ClonePair {
@@ -234,6 +292,7 @@ async function runDetector(
   const result = await spawn([cli, ...args], fixtureRoot)
   if (result.code !== 0)
     throw new Error(`Pinned jscpd release oracle failed for detector ${detector}.`)
+  assertNativeConfigAccepted(result, configPath, `detector ${detector}`)
   let parsed: unknown
   try {
     parsed = JSON.parse(await readFile(join(output, "jscpd-report.json"), "utf8")) as unknown

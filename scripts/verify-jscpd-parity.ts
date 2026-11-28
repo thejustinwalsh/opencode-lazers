@@ -1,11 +1,13 @@
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { buildJscpdProvider } from "./build-jscpd-provider.ts"
+import { assertParityEvidence, type ParityEvidence } from "./jscpd-parity-evidence.ts"
 import { runJscpdReleaseOracle } from "./jscpd-release-oracle.ts"
 import {
   changedLineMap,
   groupPairs,
   introducedClones,
   mergeClones,
+  type MergedClone,
 } from "../src/code-review/providers/jscpd/compare.ts"
 import {
   DEFAULT_DUPLICATION_SETTINGS,
@@ -19,6 +21,7 @@ import {
 import {
   makeCapturedConfigParityRequest,
   makeIsolatedConfigParityRequest,
+  makeSizeLimitParityRequest,
 } from "../src/code-review/providers/jscpd/config-parity-input.ts"
 import {
   makeEmbeddedParityRequest,
@@ -37,6 +40,9 @@ interface PackagedProvider {
     status: string
     findings: readonly DuplicationFinding[]
     coverage: {
+      base: {
+        filesIgnored: number
+      }
       head: {
         filesIgnored: number
       }
@@ -71,6 +77,32 @@ function sourceLineCount(source: string): number {
   return source.split("\n").length
 }
 
+function findingSeverity(tokens: number): DuplicationFinding["severity"] {
+  return tokens >= DEFAULT_DUPLICATION_SETTINGS.warningTokens ? "warning" : "info"
+}
+
+function findingProvenance(detector: JscpdDetector): DuplicationFinding["provenance"] {
+  return detector === "strict" || detector === "mild" ? "exact" : "heuristic"
+}
+
+function findingFromClone(clone: MergedClone): DuplicationFinding {
+  const finding: DuplicationFinding = {
+    fingerprint: clone.primary.group.fingerprint,
+    detector: clone.detector,
+    detectors: clone.detectors,
+    instances: [...clone.introduced, ...clone.others],
+    introducedInstances: clone.introduced.length,
+    baseInstances: clone.primary.baseInstances,
+    lines: clone.primary.group.lines,
+    tokens: clone.primary.group.tokens,
+    severity: findingSeverity(clone.primary.group.tokens),
+    provenance: findingProvenance(clone.detector),
+    kind: clone.primary.group.kind,
+    configurationChanged: false,
+  }
+  return clone.similarity === undefined ? finding : { ...finding, similarity: clone.similarity }
+}
+
 function expectedFindings(
   base: JscpdSideReport["detectors"],
   head: JscpdSideReport["detectors"],
@@ -87,24 +119,7 @@ function expectedFindings(
   })
   return mergeClones(found, changed)
     .filter((clone) => clone.introduced.length + clone.others.length >= 2)
-    .map((clone) => ({
-      fingerprint: clone.primary.group.fingerprint,
-      detector: clone.detector,
-      detectors: clone.detectors,
-      instances: [...clone.introduced, ...clone.others],
-      introducedInstances: clone.introduced.length,
-      baseInstances: clone.primary.baseInstances,
-      lines: clone.primary.group.lines,
-      tokens: clone.primary.group.tokens,
-      severity:
-        clone.primary.group.tokens >= DEFAULT_DUPLICATION_SETTINGS.warningTokens
-          ? "warning"
-          : "info",
-      provenance: clone.detector === "strict" || clone.detector === "mild" ? "exact" : "heuristic",
-      kind: clone.primary.group.kind,
-      configurationChanged: false,
-      ...(clone.similarity === undefined ? {} : { similarity: clone.similarity }),
-    }))
+    .map(findingFromClone)
 }
 
 function findingIdentity(findings: readonly DuplicationFinding[]) {
@@ -133,10 +148,57 @@ function findingIdentity(findings: readonly DuplicationFinding[]) {
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
 }
 
+function comparisonFor(
+  name: string,
+  scan: WasmScanRequest,
+  headFiles: WasmScanRequest["files"],
+  changedLines: JscpdComparisonInput["changedLines"],
+): JscpdComparisonInput {
+  const side = (files: WasmScanRequest["files"]) => ({
+    files,
+    complete: true,
+    config: scan.config,
+    ignoreFiles: scan.ignoreFiles,
+    ignoreFilesComplete: true,
+  })
+  return {
+    comparisonID: `jscpd-release-parity:${name}`,
+    base: side(scan.files),
+    head: side(headFiles),
+    changedLines,
+  }
+}
+
+function assertFindingsMatch(
+  name: string,
+  actual: readonly DuplicationFinding[],
+  expected: readonly DuplicationFinding[],
+): void {
+  const actualIdentity = JSON.stringify(findingIdentity(actual))
+  const expectedIdentity = JSON.stringify(findingIdentity(expected))
+  if (actualIdentity !== expectedIdentity)
+    throw new Error(
+      `Packaged public provider differs from pinned jscpd 5.4.0 in ${name}: ${JSON.stringify({ actual: findingIdentity(actual), expected: findingIdentity(expected) })}`,
+    )
+}
+
+function assertNoSourceLeak(name: string, result: unknown, files: WasmScanRequest["files"]): void {
+  const serialized = JSON.stringify(result)
+  for (const file of files) {
+    if (serialized.includes(file.source))
+      throw new Error(`Packaged provider output leaked source in parity case ${name}.`)
+  }
+}
+
+function nativePairCount(reports: readonly JscpdSideReport["detectors"][number][]): number {
+  return reports.reduce((sum, report) => sum + report.clones.length, 0)
+}
+
 async function verifyCase(
   provider: PackagedProvider,
   name: string,
   scan: WasmScanRequest,
+  evidence?: ParityEvidence,
 ): Promise<{ findings: number; nativePairs: number }> {
   const original = scan.files[0]
   if (!original) throw new Error(`Parity case ${name} has no source file.`)
@@ -145,24 +207,7 @@ async function verifyCase(
   const changedLines = [{ path: copy.path, startLine: 1, endLine: sourceLineCount(copy.source) }]
   const baseScan = { ...scan, files: scan.files }
   const headScan = { ...scan, files: headFiles }
-  const comparison: JscpdComparisonInput = {
-    comparisonID: `jscpd-release-parity:${name}`,
-    base: {
-      files: baseScan.files,
-      complete: true,
-      config: scan.config,
-      ignoreFiles: scan.ignoreFiles,
-      ignoreFilesComplete: true,
-    },
-    head: {
-      files: headFiles,
-      complete: true,
-      config: scan.config,
-      ignoreFiles: scan.ignoreFiles,
-      ignoreFilesComplete: true,
-    },
-    changedLines,
-  }
+  const comparison = comparisonFor(name, scan, headFiles, changedLines)
 
   const [baseOracle, headOracle, result] = await Promise.all([
     runJscpdReleaseOracle(baseScan),
@@ -174,23 +219,12 @@ async function verifyCase(
   if (result.status !== "complete")
     throw new Error(`Packaged provider returned non-complete coverage in parity case ${name}.`)
   const expected = expectedFindings(baseOracle, headOracle, changedLines)
-  const actualIdentity = JSON.stringify(findingIdentity(result.findings))
-  const expectedIdentity = JSON.stringify(findingIdentity(expected))
-  if (actualIdentity !== expectedIdentity)
-    throw new Error(
-      `Packaged public provider differs from pinned jscpd 5.4.0 in ${name}: ${JSON.stringify({ actual: findingIdentity(result.findings), expected: findingIdentity(expected) })}`,
-    )
-  const serialized = JSON.stringify(result)
-  for (const file of headFiles) {
-    if (serialized.includes(file.source))
-      throw new Error(`Packaged provider output leaked source in parity case ${name}.`)
-  }
+  assertFindingsMatch(name, result.findings, expected)
+  const basePairCount = assertParityEvidence(name, evidence, baseOracle, result)
+  assertNoSourceLeak(name, result, headFiles)
   return {
     findings: result.findings.length,
-    nativePairs: [...baseOracle, ...headOracle].reduce(
-      (sum, report) => sum + report.clones.length,
-      0,
-    ),
+    nativePairs: basePairCount + nativePairCount(headOracle),
   }
 }
 
@@ -206,14 +240,35 @@ const provider = (await import(providerURL.href)) as PackagedProvider
 const cases = [
   ["seven-detectors", makeParityRequest()],
   ["embedded-vue", makeEmbeddedParityRequest()],
-  ["captured-format-and-ignore", configurationRequest],
+  [
+    "captured-format-and-ignore",
+    configurationRequest,
+    {
+      minimumBasePairs: 2,
+      requiredBasePaths: ["generated/keep.jscpd-ts", "src/custom.jscpd-ts", "src/custom-source"],
+      excludedBasePaths: ["src/plain.js", "generated/drop.jscpd-ts"],
+      minimumFindings: 1,
+      minimumIgnoredFiles: 2,
+    },
+  ],
   ["skip-local", localRequest],
   ["skip-isolated", isolatedRequest],
+  [
+    "explicit-size-limit",
+    makeSizeLimitParityRequest(),
+    {
+      minimumBasePairs: 1,
+      requiredBasePaths: ["src/size-small-a.ts", "src/size-small-b.ts"],
+      excludedBasePaths: ["src/size-large-a.ts", "src/size-large-b.ts"],
+      minimumFindings: 1,
+      minimumIgnoredFiles: 2,
+    },
+  ],
 ] as const
 let pairCount = 0
 let findingCount = 0
-for (const [name, scan] of cases) {
-  const result = await verifyCase(provider, name, scan)
+for (const [name, scan, evidence] of cases) {
+  const result = await verifyCase(provider, name, scan, evidence)
   pairCount += result.nativePairs
   findingCount += result.findings
 }
