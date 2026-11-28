@@ -326,19 +326,20 @@ export class DelegatedAgentCapacity {
   }
 
   private async initialize() {
-    const projectKey = await this.projectKeyPromise
-    this.resolvedProjectKey = projectKey
+    const requestedKey = await this.projectKeyPromise
+    this.resolvedProjectKey = requestedKey
     // A core released while the key resolved: touching the repository would reopen its database.
-    if (this.repository.isClosed) return projectKey
+    if (this.repository.isClosed) return requestedKey
     const projectDirectory = canonicalDirectory(this.repository.projectDirectory)
     const now = this.clock.now()
     // The project registry (`registerProject`) owns lazers_projects and its paths; this only
     // backfills admissions for attempts already active in this checkout or the project's others.
-    this.repository.atomic((db) => {
+    return this.repository.atomic((db) => {
       registerLifecycleTransitions(db)
+      const projectKey = this.projectKeyInTransaction(db)
       this.backfillActiveAttempts(db, projectKey, projectDirectory, now)
+      return projectKey
     })
-    return projectKey
   }
 
   private backfillActiveAttempts(
@@ -498,12 +499,47 @@ export class DelegatedAgentCapacity {
   }
 
   private async projectKey() {
-    return this.readyPromise
+    await this.readyPromise
+    if (this.repository.isClosed) return this.resolvedProjectKey!
+    const current = this.repository.read((db) => this.registeredProjectKey(db))
+    if (current === this.resolvedProjectKey) return current
+    return this.repository.atomic((db) => this.projectKeyInTransaction(db))
+  }
+
+  private registeredProjectKey(db: Database): string {
+    const previous = this.resolvedProjectKey
+    if (!previous) throw new Error("Delegated-agent project identity is not ready")
+    const directory = this.repository.projectDirectory
+    const canonical = canonicalDirectory(directory)
+    return (
+      db
+        .query<{ key: string }, [string, string, string]>(
+          "SELECT key FROM lazers_project_paths WHERE path=? OR path=? ORDER BY path=? DESC LIMIT 1",
+        )
+        .get(directory, canonical, canonical)?.key ?? previous
+    )
+  }
+
+  /** Registry identity wins over a transient Git fallback, including cores started before registration. */
+  private projectKeyInTransaction(db: Database): string {
+    const projectKey = this.registeredProjectKey(db)
+    const directory = this.repository.projectDirectory
+    const canonical = canonicalDirectory(directory)
+    // Move the working set, not history. Keep request IDs, attempts and queue order unchanged.
+    db.query(
+      `UPDATE delegated_agent_admissions SET project_key=?,updated_at=?
+       WHERE state IN ('queued','admitted') AND project_key<>?
+         AND (project_directory=? OR project_directory=? OR project_directory IN (
+           SELECT path FROM lazers_project_paths WHERE key=?
+         ))`,
+    ).run(projectKey, this.clock.now(), projectKey, directory, canonical, projectKey)
+    this.resolvedProjectKey = projectKey
+    return projectKey
   }
 
   /** The project key whose `limit` in the Projects settings governs this capacity. */
   async key() {
-    return this.readyPromise
+    return this.projectKey()
   }
 
   private currentSettings(db: Database, projectKey: string) {
@@ -677,8 +713,7 @@ export class DelegatedAgentCapacity {
 
   /** Queue a reused attempt in the command transaction before it returns to preparing. */
   requeueRunnerInTransaction(db: Database, candidate: RunnerCandidate, attemptID: string) {
-    const projectKey = this.resolvedProjectKey
-    if (!projectKey) throw new Error("Delegated-agent project identity is not ready")
+    const projectKey = this.projectKeyInTransaction(db)
     this.settle(db, projectKey)
     return this.ensureRunnerQueuedInTransaction(db, candidate, projectKey, {
       attemptID,
@@ -698,8 +733,8 @@ export class DelegatedAgentCapacity {
     attemptID: string,
     fromAttemptID?: string,
   ) {
-    const projectKey = this.resolvedProjectKey
-    if (!projectKey) return
+    if (!this.resolvedProjectKey) return
+    const projectKey = this.projectKeyInTransaction(db)
     const now = this.clock.now()
     if (fromAttemptID)
       db.query(
@@ -797,8 +832,7 @@ export class DelegatedAgentCapacity {
 
   /** Called inside the same fenced write transaction that inserts the attempt row. */
   admitRunnerInTransaction(db: Database, requestID: string, attemptID: string) {
-    const projectKey = this.resolvedProjectKey
-    if (!projectKey) throw new Error("Delegated-agent project identity is not ready")
+    const projectKey = this.projectKeyInTransaction(db)
     this.settle(db, projectKey)
     return (
       tryAdmitQueued(db, {
@@ -906,11 +940,12 @@ export class DelegatedAgentCapacity {
   }
 
   async waitForNative(requestID: string, signal: AbortSignal) {
-    const projectKey = await this.projectKey()
+    await this.projectKey()
     try {
       for (;;) {
         signal.throwIfAborted()
         const admitted = this.repository.atomic((db) => {
+          const projectKey = this.projectKeyInTransaction(db)
           this.settle(db, projectKey)
           const result = tryAdmitQueued(db, {
             requestID,
