@@ -1,5 +1,9 @@
 import { copyFileSync, watch } from "node:fs"
 import { fileURLToPath } from "node:url"
+import {
+  GITLEAKS_SERVER_ASSETS,
+  GITLEAKS_SERVER_ENTRIES,
+} from "../src/code-review/providers/gitleaks/build-contribution.ts"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
 
@@ -17,18 +21,35 @@ export const serverEntries = [
   ["src/runner/transition-indexes-worker.ts", "transition-indexes-worker.js"],
   ["src/audit/fallow-worker.ts", "fallow-worker.js"],
   ["src/code-review/structural/difftastic-worker.ts", "difftastic-worker.js"],
+  ["src/code-review/structural/index.ts", "code-review-structural.js"],
+  ["src/code-review/providers/cccc/index.ts", "code-review-cccc.js"],
+  ["src/code-review/providers/cccc/code-review-cccc-worker.ts", "code-review-cccc-worker.js"],
+  ["src/code-review/providers/jscpd/index.ts", "jscpd-provider.js"],
+  ["src/code-review/providers/jscpd/jscpd-worker.ts", "jscpd-worker.js"],
+  ["src/code-review/providers/gitleaks/index.ts", "code-review-gitleaks.js"],
+  ...GITLEAKS_SERVER_ENTRIES,
   ["src/audit/fallow-thread.ts", "fallow-thread.js"],
   ["src/streams/reader-worker.ts", "reader-worker.js"],
   ["src/trajectory/effort-worker.ts", "effort-worker.js"],
   ["src/retention/retention-reader-worker.ts", "retention-reader-worker.js"],
 ] as const
 
-export const serverAssets = ["fallow.wasm", "fallow-threads.wasm", "difftastic.wasm.gz"] as const
+export const serverAssets = [
+  "fallow.wasm",
+  "fallow-threads.wasm",
+  "difftastic.wasm.gz",
+  "cccc.wasm",
+  "jscpd.wasm",
+  GITLEAKS_SERVER_ASSETS[0][1],
+] as const
 
 const serverAssetSources = {
   "fallow.wasm": "src/audit/wasm/fallow.wasm",
   "fallow-threads.wasm": "src/audit/wasm/fallow-threads.wasm",
   "difftastic.wasm.gz": "src/code-review/structural/difftastic.wasm.gz",
+  "cccc.wasm": "src/code-review/providers/cccc/wasm/cccc.wasm",
+  "jscpd.wasm": "src/code-review/providers/jscpd/jscpd.wasm",
+  [GITLEAKS_SERVER_ASSETS[0][1]]: GITLEAKS_SERVER_ASSETS[0][0],
 } satisfies Record<(typeof serverAssets)[number], string>
 
 export async function buildServer() {

@@ -1,9 +1,9 @@
 # jscpd provider
 
-`provider.ts` is the comparison provider API. It accepts complete captured base and
-head inventories plus a stable `comparisonID`; it never opens a worktree or
-returns clone text. Every result carries that identity and jscpd 5.4.0 metadata.
-The pinned WASM artifact is produced from the source in `vendor/jscpd/`.
+`provider.ts` is the comparison provider API, exported as `opencode-lazers/code-review/jscpd`. It
+accepts complete captured base and head inventories plus a stable `comparisonID`; it never opens a
+worktree or returns clone text. Every result carries that identity and jscpd 5.4.0 metadata. The
+pinned WASM artifact is produced from the source in `vendor/jscpd/`.
 
 ## Build and verify
 
@@ -14,13 +14,10 @@ RUSTUP_TOOLCHAIN=1.99.0 bun scripts/verify-jscpd-parity.ts
 bun test --timeout 120000 src/code-review/providers/jscpd/
 ```
 
-`build-jscpd-provider.ts` emits `dist/jscpd-provider.js`, its OpenCode-owned
-`dist/jscpd-worker.js`, and the adjacent `dist/jscpd.wasm`. The full server
-packaging entry for this increment is `bun scripts/build-plugin-server.ts`;
-it invokes the common server build and then the provider-owned build. The
-protected shared worker registrar remains unchanged for Architect composition.
-The provider bundle smoke test loads the emitted public entry and exercises its
-worker and WASM asset together.
+`bun run build:server` emits `dist/jscpd-provider.js`, its OpenCode-owned
+`dist/jscpd-worker.js`, and the adjacent `dist/jscpd.wasm` from the checked-in artifact.
+`build-jscpd-provider.ts` remains an explicit provider-only build helper. The bundled public entry
+exercises its worker and WASM asset together.
 
 ## Captured configuration
 

@@ -4,6 +4,10 @@ import { basename, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { assertNoNativeBinaries } from "./native-binary-check.ts"
 import { serverAssets, serverEntries } from "./build-server.ts"
+import {
+  assertReviewPackageFiles,
+  reviewPackageFiles,
+} from "./code-review-package/review-package-files.ts"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
 const [tag, destination] = process.argv.slice(2)
@@ -14,9 +18,6 @@ const version = tag.slice(1)
 const runtimeScripts = [
   ...serverEntries.map(([, file]) => `dist/${file}`),
   ...serverAssets.map((file) => `dist/${file}`),
-  "dist/code-review-cccc.js",
-  "dist/code-review-cccc-worker.js",
-  "dist/cccc.wasm",
 ]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
@@ -26,7 +27,7 @@ const run = async (cwd: string, ...command: string[]) => {
 
 try {
   await run(root, "bun", "run", "build")
-  await run(root, "bun", "run", "build:cccc-wasm")
+  const { installedSmokePath } = await import("./code-review-package/installed-smoke.ts")
   await mkdir(output, { recursive: true })
   const pkg = join(staging, "package")
   const consumer = join(staging, "consumer")
@@ -50,9 +51,15 @@ try {
       join(consumer, "package.json"),
       JSON.stringify({ name: "lazers-install-smoke", private: true }),
     ),
+    cp(installedSmokePath, join(consumer, "installed-smoke.ts")),
+    cp(
+      join(root, "scripts/code-review-package/installed-smoke-runner.ts"),
+      join(consumer, "installed-smoke-runner.ts"),
+    ),
   ])
   // Analysis is WebAssembly; the archive must hold no native addon or executable.
   await assertNoNativeBinaries(pkg)
+  await assertReviewPackageFiles(pkg, reviewPackageFiles)
   await run(pkg, "bun", "pm", "pack", "--destination", staging)
   const filename = `opencode-lazers-${version}.tgz`
   await run(consumer, "bun", "add", "--ignore-scripts", join(staging, filename))
@@ -70,10 +77,11 @@ try {
       }
       const { default: plugin } = await import("opencode-lazers")
       if (!plugin) throw Error("Missing server plugin")
-      const cccc = await import("opencode-lazers/code-review/cccc")
-      if (typeof cccc.analyzeCcccComparison !== "function") throw Error("Missing packaged cccc API")
-      console.log("Installed ${filename}: exports and runtime scripts present; server import passed")`,
+      console.log("Installed ${filename}: exports and runtime files are present")`,
   )
+  await run(consumer, "bun", "run", "installed-smoke-runner.ts")
+  const installed = join(consumer, "node_modules/opencode-lazers")
+  await assertReviewPackageFiles(installed, reviewPackageFiles)
   await cp(join(staging, filename), join(output, filename), { force: false, errorOnExist: true })
 } finally {
   await rm(staging, { recursive: true, force: true })

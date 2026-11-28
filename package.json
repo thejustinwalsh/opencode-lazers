@@ -15,10 +15,21 @@
   "packageManager": "bun@1.4.4-canary.20261030.1",
   "exports": {
     ".": "./dist/server.js",
-    "./code-review/structural": "./src/code-review/structural/index.ts",
+    "./code-review/structural": {
+      "types": "./src/code-review/structural/index.ts",
+      "default": "./dist/code-review-structural.js"
+    },
     "./code-review/cccc": {
       "types": "./src/code-review/providers/cccc/index.ts",
       "default": "./dist/code-review-cccc.js"
+    },
+    "./code-review/jscpd": {
+      "types": "./src/code-review/providers/jscpd/index.ts",
+      "default": "./dist/jscpd-provider.js"
+    },
+    "./code-review/gitleaks": {
+      "types": "./src/code-review/providers/gitleaks/index.ts",
+      "default": "./dist/code-review-gitleaks.js"
     },
     "./gui-experimental": "./dist/gui-experimental.cjs",
     "./webgpu/rpc": "./src/webgpu/rpc.ts",
@@ -32,6 +43,8 @@
   ],
   "scripts": {
     "package:release": "bun scripts/release-package.ts",
+    "code-review:package:verify": "bun scripts/code-review-package/verify.ts",
+    "code-review:package:smoke": "bun run build:server && bun scripts/code-review-package/installed-smoke-runner.ts",
     "test": "bun test --timeout 120000",
     "verify": "bun fmt && bun lint --fix && bun fmt && bun scripts/check-unbounded-reads.ts && bun scripts/check-show-reads.ts && bun check",
     "build:gui": "vite build && bun scripts/verify-gui-bundle.ts",

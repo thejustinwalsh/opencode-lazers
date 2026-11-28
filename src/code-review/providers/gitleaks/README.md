@@ -1,10 +1,10 @@
 # Gitleaks comparison provider
 
-`index.ts` exports the public captured-snapshot API. The reader supplies immutable base/head
-content, changed-file inventory, and changed-line ranges; the provider does not accept filesystem
-paths or read a worktree. Missing content and ranges remain degraded or unclassified, not clean.
-The worker runs pinned Gitleaks 8.30.1 in WASI and projects findings before returning them to the
-host. Raw matched values stay inside detector memory.
+`index.ts` exports the public captured-snapshot API as `opencode-lazers/code-review/gitleaks`. The
+reader supplies immutable base/head content, changed-file inventory, and changed-line ranges; the
+provider does not accept filesystem paths or read a worktree. Missing content and ranges remain
+degraded or unclassified, not clean. The worker runs pinned Gitleaks 8.30.1 in WASI and projects
+findings before returning them to the host. Raw matched values stay inside detector memory.
 
 ## Build and verify
 
@@ -21,7 +21,7 @@ only the packaged WASM and worker; it does not download or invoke native Gitleak
 
 The shared server bundle consumes `GITLEAKS_SERVER_ENTRIES` and `GITLEAKS_SERVER_ASSETS` from
 `build-contribution.ts`: `gitleaks-worker.js` and `gitleaks.wasm` are copied beside
-`dist/server.js`. The provider contributes those paths without changing the shared build registry.
+`dist/server.js`. The common build manifest uses these provider-owned paths without duplicating them.
 
 ## Provenance and licenses
 
