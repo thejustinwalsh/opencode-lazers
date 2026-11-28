@@ -27,10 +27,7 @@ const ReviewPanel = lazy(() =>
   import("./panel.tsx").then((module) => ({ default: module.ReviewPanel })),
 )
 
-/**
- * The task-specific semantic review. The host's own panel is "Review" (session diff), so this one
- * is "Semantic review" in the strip and the panel menu.
- */
+/** Task-specific code review uses the plugin-scoped panel ID. */
 export function setupReviewPanel(ctx: ReviewContext, openers: ReviewOpeners): ReviewOpener {
   const Ui = ctx.ui
   const key = `${ctx.id}:${REVIEW_PANEL_ID}`
@@ -45,12 +42,12 @@ export function setupReviewPanel(ctx: ReviewContext, openers: ReviewOpeners): Re
   }
   const tab = {
     id: REVIEW_PANEL_ID,
-    title: "Semantic review",
+    title: "Review",
     closable: "hover" as const,
     label: () => (
       <div class="flex min-w-0 items-center gap-1.5">
         <Ui.Icon name="review" size="small" class="shrink-0" />
-        <span class="truncate">Semantic review</span>
+        <span class="truncate">Review</span>
       </div>
     ),
   }
@@ -69,7 +66,7 @@ export function setupReviewPanel(ctx: ReviewContext, openers: ReviewOpeners): Re
   })
   ctx.add(Command, {
     id: "review.open",
-    title: "Open LAZERS semantic review",
+    title: "Open task review",
     section: "session",
     slash: { name: "lz-review" },
     run: open,
@@ -78,7 +75,7 @@ export function setupReviewPanel(ctx: ReviewContext, openers: ReviewOpeners): Re
   ctx.add(MenuItem, {
     id: "review.open",
     menu: "session.panel",
-    title: "Semantic review",
+    title: "Review",
     icon: "review",
     order: 45,
     run: open,
