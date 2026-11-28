@@ -12,8 +12,9 @@
   "module": {
     "target": "wasm32-wasip1",
     "wasiSdk": "34.0",
-    "sha256": "1118766cb2edfcf96b5f90c7481ff0bc1e500dc8550874ca7cac4af3c2fcfd18",
-    "bytes": 21922617,
+    "clang": "clang version 23.1.0-wasi-sdk (https://github.com/llvm/llvm-project 895aa2c896ada719451be2e3673c83da8ddf1141)",
+    "sha256": "c216b6aa54ed05c1331b695449d328cc9f89821d638c43693204a94e3bad9c91",
+    "bytes": 21925329,
     "imports": [
       "wasi_snapshot_preview1.environ_get",
       "wasi_snapshot_preview1.environ_sizes_get",
@@ -29,8 +30,8 @@
     "path": "src/code-review/providers/cccc/wasm/cccc.wasm"
   },
   "api": {
-    "sha256": "e4c160f9f41056c5dbdfdb80fc77b16688092c6b185fd8e1d1ed06a5a5bcb57b",
-    "bytes": 17522,
+    "sha256": "4bafbe4053b248c96ceb4b773237f17ef4d0d3f52edbed64e1216c1c214c7711",
+    "bytes": 18229,
     "path": "dist/code-review-cccc.js"
   },
   "worker": {

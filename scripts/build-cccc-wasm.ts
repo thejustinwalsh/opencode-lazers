@@ -15,6 +15,7 @@ const wasmName = "cccc.wasm"
 const apiName = "code-review-cccc.js"
 const workerName = "code-review-cccc-worker.js"
 const WASM_OPT_VERSION = "129"
+const WASI_SDK_VERSION = "34.0"
 const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo")
 const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex")
 
@@ -36,17 +37,74 @@ async function version(command: string[]) {
 
 async function wasiBuildEnvironment() {
   const sdk = requiredWasiSdk()
-  const sysroot = join(sdk, "share/wasi-sysroot")
+  const sdkVersion = await checkedWasiSdkVersion(sdk)
+  const sysroot = checkedWasiSysroot(sdk)
   const clang = process.env.CC_wasm32_wasip1 ?? join(sdk, "bin/clang")
-  if (!validWasiInstallation(clang, sysroot))
-    throw new Error("WASI_SDK_PATH must contain bin/clang and share/wasi-sysroot")
-  return { sdk, sysroot, clang }
+  const clangVersion = await checkedWasiCompiler(clang, sdkVersion)
+  return {
+    sdk,
+    sysroot,
+    clang,
+    sdkVersion: sdkVersion.split("\n")[0] ?? "unknown",
+    clangVersion,
+  }
+}
+
+async function checkedWasiSdkVersion(sdk: string): Promise<string> {
+  let version: string
+  try {
+    version = await readFile(join(sdk, "VERSION"), "utf8")
+  } catch {
+    throw new Error(`WASI SDK ${sdk} is missing its VERSION file`)
+  }
+  if (!version.startsWith(WASI_SDK_VERSION))
+    throw new Error(
+      `WASI SDK ${WASI_SDK_VERSION} is required; found ${version.split("\n")[0] ?? "unknown"}`,
+    )
+  return version
+}
+
+function checkedWasiSysroot(sdk: string): string {
+  const sysroot = join(sdk, "share/wasi-sysroot")
+  if (!validWasiInstallation(join(sdk, "bin/clang"), sysroot))
+    throw new Error(`WASI SDK ${sdk} must contain bin/clang and share/wasi-sysroot`)
+  return sysroot
+}
+
+async function checkedWasiCompiler(clang: string, sdkVersion: string): Promise<string> {
+  const clangVersion = await wasiCompilerVersion(clang)
+  requireWasiCompilerMatch(clangVersion, sdkVersion)
+  return clangVersion
+}
+
+async function wasiCompilerVersion(clang: string): Promise<string> {
+  try {
+    return await version([clang, "--version"])
+  } catch {
+    throw new Error(`WASI compiler ${clang} is unavailable or could not report its version`)
+  }
+}
+
+function requireWasiCompilerMatch(clangVersion: string, sdkVersion: string): void {
+  const llvmVersion = /^llvm-version:\s*(\S+)/m.exec(sdkVersion)?.[1]
+  if (wasiCompilerMatchesSDK(clangVersion, llvmVersion)) return
+  throw new Error(
+    `WASI compiler must be LLVM ${llvmVersion ?? "version from SDK metadata"} from SDK ${WASI_SDK_VERSION}; found ${clangVersion}`,
+  )
+}
+
+function wasiCompilerMatchesSDK(clangVersion: string, llvmVersion: string | undefined): boolean {
+  if (!llvmVersion) return false
+  return clangVersion.includes(`${llvmVersion}-wasi-sdk`)
 }
 
 function requiredWasiSdk(): string {
-  const sdk = process.env.WASI_SDK_PATH
+  const defaults = [join(homedir(), ".local/share/wasi-sdk/34.0"), "/opt/wasi-sdk"]
+  const sdk = process.env.WASI_SDK_PATH ?? defaults.find(existsSync)
   if (!sdk)
-    throw new Error("Set WASI_SDK_PATH to an installed WASI SDK 34.0; no SDK or sysroot is bundled")
+    throw new Error(
+      `WASI SDK ${WASI_SDK_VERSION} was not found at ${defaults.join(" or ")}; set WASI_SDK_PATH to an installed SDK`,
+    )
   return sdk
 }
 
@@ -85,14 +143,14 @@ async function importsOf(bytes: Uint8Array): Promise<string[]> {
 async function buildWasm(): Promise<{
   target: string
   wasiSdk: string
+  clang: string
   sha256: string
   bytes: number
   imports: string[]
 }> {
   const target = "wasm32-wasip1"
   const wasi = await wasiBuildEnvironment()
-  const wasiSdk = (await readFile(join(wasi.sdk, "VERSION"), "utf8")).trim()
-  await checkWasiToolchain(wasiSdk, target)
+  await checkWasiToolchain(wasi.sdkVersion, target)
   const flags = await wasmLinkFlags(wasi.sysroot, target)
   await compileWasm(target, wasi, flags)
   const raw = join(targetDir, target, "release", "lazers-cccc-wasm.wasm")
@@ -101,7 +159,8 @@ async function buildWasm(): Promise<{
   const bytes = new Uint8Array(await readFile(output))
   return {
     target,
-    wasiSdk: wasiSdk.split("\n")[0] ?? "unknown",
+    wasiSdk: wasi.sdkVersion,
+    clang: wasi.clangVersion,
     sha256: sha256(bytes),
     bytes: bytes.byteLength,
     imports: await importsOf(bytes),
@@ -109,7 +168,7 @@ async function buildWasm(): Promise<{
 }
 
 async function checkWasiToolchain(wasiSdk: string, target: string): Promise<void> {
-  if (!wasiSdk.startsWith("34.0"))
+  if (!wasiSdk.startsWith(WASI_SDK_VERSION))
     throw new Error(`WASI SDK 34.0 is required; found ${wasiSdk.split("\n")[0] ?? "unknown"}`)
   const targetStatus = await run(
     ["rustup", "target", "list", "--installed", "--toolchain", "1.99.0"],

@@ -38,8 +38,8 @@ const nativeFixtureFiles = [
   "languages/sample.java",
   "languages/sample.dart",
   "languages/sample.scala",
-  "complexity-increased/base/src/shipping.ts",
-  "complexity-increased/head/src/shipping.ts",
+  "complexity-increased/base/src/shipping.ts.txt",
+  "complexity-increased/head/src/shipping.ts.txt",
   "rust-trait-impl/base/src/lib.rs",
   "rust-trait-impl/head/src/lib.rs",
 ] as const
@@ -97,7 +97,7 @@ async function buildNativeOracle(): Promise<void> {
 }
 
 async function materializeNativeFixture(fixture: string): Promise<string> {
-  if (!fixture.endsWith(".js.txt")) return join(fixtureRoot, fixture)
+  if (!fixture.endsWith(".txt")) return join(fixtureRoot, fixture)
   const nativePath = join(nativeTarget, "fixtures", fixture.slice(0, -".txt".length))
   await mkdir(dirname(nativePath), { recursive: true })
   await writeFile(nativePath, await readFile(join(fixtureRoot, fixture)))
@@ -266,15 +266,15 @@ const shipping = await analyzeOainkFixture(
   api,
   "complexity-increased",
   "src/shipping.ts",
-  "complexity-increased/base/src/shipping.ts",
-  "complexity-increased/head/src/shipping.ts",
+  "complexity-increased/base/src/shipping.ts.txt",
+  "complexity-increased/head/src/shipping.ts.txt",
   Array.from({ length: 22 }, (_, index) => index + 9),
 )
 const nativeShippingBase = nativeReports.get(
-  relative(root, nativeInputs.get("complexity-increased/base/src/shipping.ts")!),
+  relative(root, nativeInputs.get("complexity-increased/base/src/shipping.ts.txt")!),
 )
 const nativeShippingHead = nativeReports.get(
-  relative(root, nativeInputs.get("complexity-increased/head/src/shipping.ts")!),
+  relative(root, nativeInputs.get("complexity-increased/head/src/shipping.ts.txt")!),
 )
 ok(nativeShippingBase && nativeShippingHead, "native shipping fixture reports missing")
 deepStrictEqual(normalizeReport(shipping.base), normalizeReport(nativeShippingBase))

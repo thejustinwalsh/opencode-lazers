@@ -10,10 +10,11 @@ The build emits `dist/code-review-cccc.js`, its OpenCode-owned worker,
 `dist/cccc.wasm`, and `src/code-review/providers/cccc/wasm/ARTIFACT.json`.
 Those assets are included by `bun run package:release`. Build the optimized
 module with Rust 1.99.0, the `wasm32-wasip1` target, `wasm-opt` 129, and an
-installed WASI SDK 34:
+installed WASI SDK 34. The build discovers
+`~/.local/share/wasi-sdk/34.0` (or `/opt/wasi-sdk`) by default; set
+`WASI_SDK_PATH` to override it:
 
 ```sh
-WASI_SDK_PATH=/path/to/wasi-sdk-34 \
 RUSTUP_TOOLCHAIN=1.99.0 bun run build:cccc-wasm
 ```
 

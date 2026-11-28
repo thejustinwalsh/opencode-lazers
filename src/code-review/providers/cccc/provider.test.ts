@@ -3,8 +3,6 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { parity as typeScriptParity } from "../../../../test/code-review/cccc-fixtures/languages/sample.ts"
 import { canarySource } from "../../../../test/code-review/cccc-fixtures/privacy/canary.ts"
-import { baseShippingCost } from "../../../../test/code-review/cccc-fixtures/complexity-increased/base/src/shipping.ts"
-import { headShippingCost } from "../../../../test/code-review/cccc-fixtures/complexity-increased/head/src/shipping.ts"
 import {
   analyzeCcccComparison,
   CCCC_LANGUAGES,
@@ -121,9 +119,29 @@ describe("cccc provider comparison", () => {
   it("keeps the executable fixtures reachable without exposing their source", () => {
     expect(typeScriptParity(true)).toBe(1)
     expect(typeof canarySource).toBe("function")
-    const order = { weightKg: 25, country: "US", express: true, total: 30 }
-    expect(baseShippingCost(order)).toBe(12)
-    expect(headShippingCost(order)).toBe(80)
+  })
+
+  it("preserves the complex comparison scores in non-code source fixtures", async () => {
+    const [base, head] = await Promise.all([
+      readFile(`${fixtures}complexity-increased/base/src/shipping.ts.txt`, "utf8"),
+      readFile(`${fixtures}complexity-increased/head/src/shipping.ts.txt`, "utf8"),
+    ])
+    const reports = await createCcccWorkerAnalyzer()(
+      [
+        { side: "base", path: "src/shipping.ts", source: base },
+        { side: "head", path: "src/shipping.ts", source: head },
+      ],
+      { signal: new AbortController().signal, timeoutMs: 120_000 },
+    )
+
+    expect(reports.find((report) => report.side === "base")).toMatchObject({
+      cognitive: 2,
+      cyclomatic: 3,
+    })
+    expect(reports.find((report) => report.side === "head")).toMatchObject({
+      cognitive: 20,
+      cyclomatic: 13,
+    })
   })
 
   it("keeps the Oaink thresholds, decreases, and changed-line boundary", async () => {
