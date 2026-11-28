@@ -10,9 +10,9 @@ import {
 } from "./code-review-package/review-package-files.ts"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
-const [tag, destination] = process.argv.slice(2)
+const [tag, destination, changelog] = process.argv.slice(2)
 if (!tag || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag) || !destination)
-  throw Error("Usage: bun run package:release vMAJOR.MINOR.PATCH OUTPUT_DIRECTORY")
+  throw Error("Usage: bun run package:release vMAJOR.MINOR.PATCH OUTPUT_DIRECTORY [CHANGELOG_FILE]")
 const output = resolve(destination)
 const version = tag.slice(1)
 const runtimeScripts = [
@@ -39,7 +39,7 @@ try {
   await Promise.all([
     writeFile(join(pkg, "package.json"), JSON.stringify(manifest, null, 2) + "\n"),
     cp(join(root, "README.md"), join(pkg, "README.md")),
-    cp(join(root, "CHANGELOG.md"), join(pkg, "CHANGELOG.md")),
+    cp(resolve(changelog ?? join(root, "CHANGELOG.md")), join(pkg, "CHANGELOG.md")),
     cp(join(root, "licenses"), join(pkg, "licenses"), { recursive: true }),
     cp(join(root, "src"), join(pkg, "src"), {
       recursive: true,

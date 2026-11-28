@@ -53,20 +53,21 @@ jobs:
       - name: Test release tooling
         if: hashFiles('scripts/release-notes.test.ts') != ''
         run: bun run test scripts/release-notes.test.ts scripts/code-review-package/review-package-files.test.ts
-      - name: Build and smoke-install the release package
-        env:
-          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
-        run: bun run package:release "$RELEASE_TAG" release
       - name: Prepare release changelog
         env:
           RELEASE_TAG: ${{ inputs.version || github.ref_name }}
         run: |
+          mkdir -p release
           notes="docs/releases/${RELEASE_TAG#v}.md"
           if test -f "$notes"; then
             cp "$notes" release/CHANGELOG.md
           else
             bun scripts/release-notes.ts "$RELEASE_TAG" release/CHANGELOG.md HEAD
           fi
+      - name: Build and smoke-install the release package
+        env:
+          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+        run: bun run package:release "$RELEASE_TAG" release release/CHANGELOG.md
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: opencode-lazers
