@@ -184,3 +184,98 @@ content is outdated and still opens its original source. Preserve true base path
 Correction-task relations remain owned by `lz-correct-task`; `linkCorrection`
 only associates a thread with an already valid same-goal correction. Include
 actual integrated ranges when navigating later corrective work.
+
+## Pinned symbol index and changed sections
+
+These operations are the next producer contract, not available handlers until
+their implementation lands. Extend `CodeReview` with `symbols` and `sections`;
+export `CodeReviewSymbolPage`, `CodeReviewSymbol` and `CodeReviewSectionPage`.
+
+```ts
+CodeReview.symbols({ sessionID, source, limit?, cursor? })
+// -> { source, producerVersion, indexID, state, symbols, nextCursor }
+// state: "parsed" | "syntax-error" | "no-grammar" | "unavailable"
+
+type CodeReviewSymbol = {
+  id: string
+  name: string
+  qualifiedName: string
+  kind: string
+  range: CodeReviewRange
+  signature: string | null
+  parent: string | null
+  contentHash: string
+  textHash: string
+}
+
+CodeReview.sections({
+  sessionID, comparisonID, path, previousPath?, baseSide?, headSide?,
+  limit?, cursor?
+})
+// -> { comparison, sourceID, sectionsID, producerVersion,
+//      state, sections, nextCursor }
+// state: "ready" | "fallback" | "unavailable"
+```
+
+Use the same pinned side/path policy as `structural`. An index identity binds
+the exact source and parser, grammar and extractor versions. A section identity
+also binds both indices, the structural result and classifier version. Cursors
+are opaque and bound to that identity; lists are bounded and paged.
+
+Adapt the read-only Oaink declaration extractors for TypeScript, TSX,
+JavaScript, Rust and Python, then its `classifyFile`/`classifyUnpaired` and
+`fileSections` logic. A symbol section carries its name/kind, change category,
+true base/head ranges and paths, identity, and addition/deletion counts.
+Outside-symbol changes remain explicit sections. Unsupported or failed parsing
+and line-engine diffs retain an honest file-level fallback; an unavailable index
+is not evidence of symbol addition or removal. No names are guessed by a model.
+
+Pin and package the intended Tree-sitter runtime and grammar assets explicitly,
+including versions in producer identity; do not depend on Repomix's transitive
+installation. Parse in a native-owned JavaScript/WASM worker. Cancellation
+terminates synchronous parsing and settles resources. Cache flattened facts,
+not ASTs or source bodies. Read only validated pinned source; redact
+secret-bearing detector fields before they cross worker output, storage or logs.
+
+`contentHash` ignores syntax trivia and supports classification. It is not
+strict enough for discussion relocation. Preserve `textHash`, the full symbol
+range, qualified name and producer version when deriving an anchor. Only a
+unique same-kind/name declaration with identical text, followed by verification
+of the selected excerpt/range and explicit rename mapping where necessary,
+permits relocation. Existing anchors remain immutable; relocation does not
+resolve a concern or create corrective work.
+
+## Complete the retained UI consumers
+
+Continue the existing external UI rather than replacing its renderer or history.
+The structural continuation first corrects real history ordering and pinned-link
+selection, connects structural/reviewed-baseline operations, bounds loading, and
+repairs native routing and worker recovery.
+
+Once the remaining producers land, use `CodeReviewIntegrations.list/resolve`
+for actual landed comparison selection and PR navigation. Keep this distinct from
+source-attempt changes and show shared-batch membership without claiming exclusive
+authorship. Extend `resolve` with the explicit `since` form
+`{baseComparisonID, headComparisonID}`, retaining both existing forms. Validate
+source/target provenance and recorded progression; never substitute a worker tip
+for an actual target revision.
+
+Use durable discussion operations and paged thread/comment streams. A selected
+range creates a server-derived anchor; `prepareDraft` supplies the validated
+Architect destination, redacted quote/note and issued task-route reference.
+Reuse the task link handler, retaining old links only as compatibility inputs.
+Current-project Architect fallback must work for unplanned tasks. Match server
+and session, preserve both drafts, and let only the user send.
+
+Render real symbol/outside sections through the existing virtualized Pierre
+adapter, preserving source position while sections, wrapping and annotations
+change geometry. Parsing failure leaves code readable. Connect thread relocation
+to exact-text symbol evidence and expose corrective-task and actual corrective
+integration navigation through existing correction authority.
+
+After composition and integration, exercise the regular Desktop with native
+product probes: real structural rows, source/base/history links, source cleanup,
+project Architect routing, existing drafts, durable threads, correction deltas,
+target/PR selection, and worker failure/fallback under the actual origin/CSP.
+The driver's activation operation is separate from these verification results;
+browser-harness or unit results are not Desktop acceptance.
