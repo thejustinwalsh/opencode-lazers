@@ -56,8 +56,11 @@ Conventional Commits. Never add Claude, Codex or any other AI attribution or
 
 Finish code and evidence notes. Run the project's formatter and linter with
 automatic fixes before verification, then commit those fixes with the code.
-Use the project's verification commands, as the task and its project verification
-section list them, and the task's behavior tests. When tests run under Bun, run them as
+Run the task's declared checks and relevant behavior tests using the project's
+commands. The project verification section supplies command templates and environment
+setup, not additional mandatory suites. Broaden checks for changed behavior or a
+concrete failure; avoid repeating an unchanged broad run. Base explicit command
+deadlines on observed run times. When tests run under Bun, run them as
 `bun test --timeout 120000 <files>`: Bun's 5 s per-test default fails correct work on a
 loaded machine, and only the command-line flag applies to every test file. Correct remaining substantive failures; do not hand
 formatting or fixable lint failures back to another model.
@@ -85,4 +88,4 @@ Evidence is passing checks and observed behavior, not file hashes.
 Architect reviews the delivered behavior and check results; runtime records acceptance.
 Verify the requested behavior without adding acceptance requirements. Check the
 coherent result rather than every edit. Use focused checks to diagnose
-failures; repeat broader checks when changes or unresolved risk justify them.
+failures.
