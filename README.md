@@ -13,6 +13,7 @@ LAZERS is developed and tested against OpenCode 2.3.0, the version pinned in thi
 - [Find the user controls](https://github.com/thejustinwalsh/opencode-lazers/blob/main/docs/reference/user-controls.md) for tasks, models, and local features.
 - [Roll out and probe delegated-agent capacity](https://github.com/thejustinwalsh/opencode-lazers/blob/main/docs/how-to/delegated-agent-capacity-rollout.md) across worktrees and native helpers.
 - [Understand the workflow](https://github.com/thejustinwalsh/opencode-lazers/blob/main/docs/explanation/workflow.md) across Architect, the runtime, workers, and you.
+- [Read the changelog](https://github.com/thejustinwalsh/opencode-lazers/blob/main/CHANGELOG.md) for published fixes and features.
 
 LAZERS runs through OpenCode's service and Desktop. It does not need a separate LAZERS service. Local inference is optional.
 

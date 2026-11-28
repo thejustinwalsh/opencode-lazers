@@ -39,7 +39,8 @@
   "files": [
     "src",
     "dist",
-    "licenses"
+    "licenses",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "package:release": "bun scripts/release-package.ts",
