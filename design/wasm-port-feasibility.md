@@ -77,7 +77,7 @@ Native/WASM rule-and-line outputs match across 15 file comparisons from six exis
 
 For `secret-added`, both report `aws-access-token` at `src/config.ts:2` and `github-pat` at `src/client.ts:4`, matching those vectors' expected locations. All values are the existing fake test secrets.
 
-The standard-library WASM probe also matches the native `gore2regex` detector on those 15 file comparisons. A WASM build with `gore2regex` itself executes successfully and matches the same-tag native build on all four file comparisons in `secret-added`. Both regex routes are executable, but their measured costs differ substantially.
+The standard-library WASM probe also matches the native `gore2regex` detector on 33 file comparisons across 13 source-change scenarios. The extended set adds moves between files, copies, untouched lines, removals, renames, CRLF and a clean change; configuration/allowlist scenarios remain outside this detector-only probe. A WASM build with `gore2regex` itself executes successfully and matches the same-tag native build on all four file comparisons in `secret-added`. Both regex routes are executable, but their measured costs differ substantially.
 
 One cold detector call on the same `secret-added` config file produced:
 
@@ -88,11 +88,15 @@ One cold detector call on the same `secret-added` config file produced:
 
 These are one-run observations in development builds, not statistical benchmarks or process/GPU RSS. The Go RE2 route embeds its WASM regex runtime inside the outer WASM execution. Prefer the standard-library WASM route and compare its results against the native release-regex oracle across the provider fixtures; do not import the nested runtime merely because the native release uses it.
 
+Oaink `scanFiles()` exposes whole-line UTF-16 ranges: indentation to the last line's length. Its `matchedText()` separately interprets Gitleaks' 1-based UTF-8 byte columns, including the extra newline offset after line one, for stable finding identity. Preserve both operations; raw detector columns are not viewer columns. `introducedMatches()` consumes base counts across unchanged lines before changed lines, so moving a secret does not report a new secret.
+
 Scope: these detector rule/line comparisons, not exhaustive regex equivalence. Project configuration, allowlists, inline allow markers, columns, introduced-versus-existing classification and the complete Oaink provider contract still need production integration tests. Raw findings contain secrets inside the detector; redact/project before any host output or database write.
 
 ## Implementation order and reuse
 
 Keep LZ-277/LZ-278 running independently. The probes support coherent following increments for the cccc complexity provider, jscpd duplication provider and Gitleaks secret provider. Each should package a pinned WASM entry, execute it in an OpenCode-owned worker, adapt its real findings to the comparison identity, and include native/WASM parity for its existing provider fixtures.
+
+Keep existing Fallow findings authoritative for their audit. `buildPackage()` in `src/audit/audit-findings.ts` already projects complexity, duplication, dead-code and diff-risk findings into `FallowPackage`. cccc/jscpd comparison facts retain their own analyzer provenance; do not create a second Fallow audit or silently substitute one analyzer's measures for another. The three pinned analyzer roots use MIT licenses; retain their notices and review bundled dependency notices when packaging.
 
 Reuse the buffered I/O, read-only filesystem and completed-run memory handling already present in LAZERS. Extract shared host pieces when the actual integrations need them; do not clone the entire Fallow host or build another daemon. Runtime source should come from LZ-278's pinned side inventory, including unchanged files and config/ignore inputs. Oaink provider code is reference for the comparison rules, not a reason to reintroduce native tool downloads.
 
