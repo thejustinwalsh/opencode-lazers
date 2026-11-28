@@ -3,6 +3,22 @@
 LAZERS builds itself through OpenCode Desktop. The goal is accepted software
 changes with clear intent, efficient execution and little manual intervention.
 
+## Integration-target continuation — 2026-11-28
+
+Extend the existing shared feature-target authority with a
+[durable per-plan PR worktree home](../.agents/plans/feature-pr-plan-home-20261128.md).
+The user's existing feature worktree/branch and external PR are the plan's
+execution/integration home; native parallel workers land there, not implicitly
+in main. Multiple PR homes share repository identity/settings and normal
+scheduling. Persist that binding through dispatch, checks, integration and
+Architect restart/recovery; preserve user-owned bases during child cleanup.
+Branch-ref lineage tests alone do not prove this workflow.
+
+This is one coherent systems feature, reusing target/native-worktree/state-machine
+flows after the native Settings producers. Current Settings and Changes work
+continues; the external Opus Settings UI reservation remains separate. Additional
+Changes visual-finish agents still await the user's word.
+
 ## Current delivery front — 2026-11-09
 
 Native runtime state is authoritative. Source integration, live product behavior,
