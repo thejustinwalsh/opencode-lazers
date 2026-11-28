@@ -197,7 +197,7 @@ test("cancellation suppresses a pending scope instruction rather than waking a s
   expect(f.store.attempts(planID)).toHaveLength(1)
 })
 
-test("task integration records a reviewed landing without finalizing the plan or disturbing active dependencies", async () => {
+test("task integration records a reviewed landing on a checked-out non-main branch without finalizing the plan or disturbing active dependencies", async () => {
   const f = fixture({ delayed: true })
   const planID = f.receipt.planID
   await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
@@ -210,13 +210,14 @@ test("task integration records a reviewed landing without finalizing the plan or
   expect(node.state).toBe("accepted")
   expect(f.store.attempts(planID)).toHaveLength(1)
   expect(f.store.execution(successorTaskID)?.waitingOn).toEqual([node.task_id])
+  git(f.root, ["checkout", "-b", "feature"])
   const command = {
     requestID: "land-first",
     planID,
     action: "integrated",
     taskID: node.task_id,
     artifact: node.artifact!,
-    targetBranch: "main",
+    targetBranch: "feature",
     reason: "Reviewed accepted task and passing checks.",
   }
   await expect(f.runtime.command(command, "other")).rejects.toThrow(
@@ -232,6 +233,7 @@ test("task integration records a reviewed landing without finalizing the plan or
     "reviewed target branch",
   )
   await expect(f.runtime.command(command, "owner")).rejects.toThrow()
+  expect(git(f.root, ["branch", "--show-current"])).toBe("feature")
   git(f.root, ["merge", "--ff-only", node.artifact!])
   expect(f.store.attempts(planID)).toHaveLength(1)
   const before = structuredClone({
