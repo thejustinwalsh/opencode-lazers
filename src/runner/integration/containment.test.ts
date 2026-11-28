@@ -40,3 +40,36 @@ test("tree containment finds a landed artifact beneath later target changes", as
 
   expect(result).toMatchObject({ status: "contained", via: "tree" })
 })
+
+test("exact target ancestry is the first containment proof", async () => {
+  const root = fixtureRepo()
+  const artifact = commitFile(root, "feature.txt", "feature\n")
+
+  await expect(changeContained(root, { commit: artifact }, "main")).resolves.toEqual({
+    status: "contained",
+    via: "ancestor",
+    commit: artifact,
+  })
+})
+
+test("tree evidence proves an already-present change after the target moved on", async () => {
+  const root = fixtureRepo()
+  commitFile(root, "base.txt", "base\n")
+  const base = git(root, ["rev-parse", "HEAD"])
+  git(root, ["checkout", "-b", "worker"])
+  const artifact = commitFile(root, "feature.txt", "feature\n")
+  const identity = await artifactIdentity(root, base, artifact)
+
+  git(root, ["checkout", "main"])
+  commitFile(root, "unrelated.txt", "unrelated\n")
+  git(root, ["cherry-pick", artifact])
+  commitFile(root, "later.txt", "later\n")
+
+  await expect(
+    changeContained(root, { tree: identity.tree, base, commit: artifact }, "main"),
+  ).resolves.toMatchObject({
+    status: "contained",
+    via: "tree",
+    commit: git(root, ["rev-parse", "HEAD"]),
+  })
+})

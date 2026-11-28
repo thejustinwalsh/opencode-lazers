@@ -119,6 +119,17 @@ async function computeContainment(
   const baseKnown = Boolean(evidence.base) && (await commitResolves(directory, evidence.base!))
   const range =
     (await readRange(directory, baseKnown ? `${evidence.base}..${targetSha}` : targetSha)) ?? []
+  return contentContainment(directory, evidence, target, targetSha, baseKnown, range)
+}
+
+async function contentContainment(
+  directory: string,
+  evidence: ChangeEvidence,
+  target: string,
+  targetSha: string,
+  baseKnown: boolean,
+  range: readonly RangeCommit[],
+): Promise<Containment> {
   const note = noteContainment(evidence, range)
   if (note) return note
 
@@ -247,6 +258,15 @@ async function treeContainment(
   if (same) return { status: "contained", via: "tree", commit: same.commit }
   if ((await treeOf(directory, target)) === evidence.tree)
     return { status: "contained", via: "tree", commit: target }
+  return mergeTreeContainment(directory, evidence, target, baseKnown)
+}
+
+async function mergeTreeContainment(
+  directory: string,
+  evidence: ChangeEvidence,
+  target: string,
+  baseKnown: boolean,
+): Promise<Containment | undefined> {
   if (!baseKnown || !evidence.commit || !(await commitResolves(directory, evidence.commit)))
     return undefined
 
