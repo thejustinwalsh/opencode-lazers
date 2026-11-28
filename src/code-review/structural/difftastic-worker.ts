@@ -2,6 +2,7 @@ import { parentPort } from "node:worker_threads"
 import { WASI } from "node:wasi"
 import {
   StructuralDiffSchema,
+  type StructuralDegradedReason,
   type StructuralDiff,
   type ValidStructuralCompareRequest,
 } from "./contract.ts"
@@ -12,10 +13,17 @@ import { toStructuralDiff } from "./difftastic-result.ts"
 
 if (!parentPort) throw new Error("Difftastic worker requires a worker thread")
 
-export type DifftasticWorkerRequest = {
-  module: WebAssembly.Module
-  request: ValidStructuralCompareRequest
-}
+export type DifftasticWorkerRequest =
+  | {
+      kind: "compare"
+      module: WebAssembly.Module
+      request: ValidStructuralCompareRequest
+    }
+  | {
+      kind: "fallback"
+      degraded: StructuralDegradedReason
+      request: ValidStructuralCompareRequest
+    }
 
 export type DifftasticWorkerResponse =
   { ok: true; result: StructuralDiff } | { ok: false; error: string }
@@ -66,14 +74,24 @@ function runDifftastic(module: WebAssembly.Module, request: ValidStructuralCompa
   return decoder.decode(output)
 }
 
-parentPort.once("message", ({ module, request }: DifftasticWorkerRequest) => {
+function compareDifftastic(
+  module: WebAssembly.Module,
+  request: ValidStructuralCompareRequest,
+): StructuralDiff {
+  const file = parseDifftasticJson(runDifftastic(module, request))
+  const reason = fallbackReason(file.language)
+  return reason
+    ? lineDiff(request, reason)
+    : StructuralDiffSchema.parse(toStructuralDiff(file, request))
+}
+
+parentPort.once("message", (message: DifftasticWorkerRequest) => {
   let response: DifftasticWorkerResponse
   try {
-    const file = parseDifftasticJson(runDifftastic(module, request))
-    const reason = fallbackReason(file.language)
-    const result = reason
-      ? lineDiff(request, reason)
-      : StructuralDiffSchema.parse(toStructuralDiff(file, request))
+    const result =
+      message.kind === "fallback"
+        ? lineDiff(message.request, message.degraded)
+        : compareDifftastic(message.module, message.request)
     response = { ok: true, result }
   } catch (error) {
     response = {

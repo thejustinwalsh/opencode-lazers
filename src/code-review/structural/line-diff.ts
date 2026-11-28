@@ -7,7 +7,7 @@ import type {
 import { DIFFTASTIC_VERSION } from "./contract.ts"
 import { splitSourceLines } from "./utf-coordinates.ts"
 
-type Operation = "equal" | "remove" | "add"
+export type LineDiffOperation = "equal" | "remove" | "add"
 const MAX_EDIT_DISTANCE = 5000
 
 function movesDown(
@@ -43,7 +43,7 @@ function advanceDiagonal(
 
 type Point = { x: number; y: number }
 
-function appendEqualOperations(operations: Operation[], from: Point, until: Point): Point {
+function appendEqualOperations(operations: LineDiffOperation[], from: Point, until: Point): Point {
   let { x, y } = from
   while (x > until.x && y > until.y) {
     operations.push("equal")
@@ -72,8 +72,8 @@ function backtrack(
   n: number,
   m: number,
   offset: number,
-): Operation[] {
-  const operations: Operation[] = []
+): LineDiffOperation[] {
+  const operations: LineDiffOperation[] = []
   let current = { x: n, y: m }
   for (let depth = distance; depth > 0; depth--) {
     const previous = previousPoint(trace, depth, offset, current.x - current.y)
@@ -89,7 +89,7 @@ function backtrack(
 }
 
 /** Myers' shortest edit script, capped so a pathological fallback cannot grow without bound. */
-function myers(a: readonly string[], b: readonly string[]): Operation[] | undefined {
+function myers(a: readonly string[], b: readonly string[]): LineDiffOperation[] | undefined {
   const n = a.length
   const m = b.length
   const max = Math.min(n + m, MAX_EDIT_DISTANCE)
@@ -110,7 +110,7 @@ function myers(a: readonly string[], b: readonly string[]): Operation[] | undefi
   return undefined
 }
 
-function editScript(a: readonly string[], b: readonly string[]): Operation[] {
+function editScript(a: readonly string[], b: readonly string[]): LineDiffOperation[] {
   let prefix = 0
   while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++
   let suffix = 0
@@ -124,13 +124,13 @@ function editScript(a: readonly string[], b: readonly string[]): Operation[] {
   const middleA = a.slice(prefix, a.length - suffix)
   const middleB = b.slice(prefix, b.length - suffix)
   const middle = myers(middleA, middleB) ?? [
-    ...middleA.map((): Operation => "remove"),
-    ...middleB.map((): Operation => "add"),
+    ...middleA.map((): LineDiffOperation => "remove"),
+    ...middleB.map((): LineDiffOperation => "add"),
   ]
   return [
-    ...new Array<Operation>(prefix).fill("equal"),
+    ...new Array<LineDiffOperation>(prefix).fill("equal"),
     ...middle,
-    ...new Array<Operation>(suffix).fill("equal"),
+    ...new Array<LineDiffOperation>(suffix).fill("equal"),
   ]
 }
 
@@ -145,12 +145,11 @@ function fileFields(
   }
 }
 
-export function lineDiff(
+export function projectLineOperations(
   request: ValidStructuralCompareRequest,
   degraded: StructuralDegradedReason,
+  operations: readonly LineDiffOperation[],
 ): StructuralDiff {
-  const baseLines = splitSourceLines(request.base ?? "")
-  const headLines = splitSourceLines(request.head ?? "")
   const alignedLines: [number | null, number | null][] = []
   const hunks: DiffRow[][] = []
   let baseLine = 0
@@ -175,7 +174,7 @@ export function lineDiff(
     added = []
   }
 
-  for (const operation of editScript(baseLines, headLines)) {
+  for (const operation of operations) {
     if (operation === "remove") removed.push(++baseLine)
     else if (operation === "add") added.push(++headLine)
     else {
@@ -202,6 +201,15 @@ export function lineDiff(
     alignedLines,
     hunks,
   }
+}
+
+export function lineDiff(
+  request: ValidStructuralCompareRequest,
+  degraded: StructuralDegradedReason,
+): StructuralDiff {
+  const baseLines = splitSourceLines(request.base ?? "")
+  const headLines = splitSourceLines(request.head ?? "")
+  return projectLineOperations(request, degraded, editScript(baseLines, headLines))
 }
 
 export function binaryDiff(request: ValidStructuralCompareRequest): StructuralDiff {

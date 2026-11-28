@@ -21,12 +21,13 @@ if (result) render(result.identity, result.diff)
 ```
 
 `comparisonID` is the stable key for the view. `sourceID` must identify the immutable comparison
-inputs, including both revisions, paths and source contents. A new request for the same
-`comparisonID` aborts the old worker; its promise resolves to `undefined` instead of returning an
-obsolete diff. An `AbortSignal` cancels the current request and rejects with its abort reason.
-Timeouts and analyzer/load failures resolve to a line-based diff with an explicit `degraded` reason,
-so callers can keep ordinary source review available. The service retains no completed result or
-per-run WASM memory; only the compiled module is cached.
+inputs, including both revisions, paths and source contents. Requests for different file paths under
+one comparison run concurrently; a newer source for the same path aborts only that file's older
+worker and resolves its promise to `undefined` instead of returning an obsolete diff. An
+`AbortSignal` cancels the current request and rejects with its abort reason. Timeouts and
+analyzer/load failures resolve to a line-based diff with an explicit `degraded` reason, computed in
+an isolated worker where possible, so callers can keep ordinary source review available. The
+service retains no completed result or per-run WASM memory; only the compiled module is cached.
 
 `null` means a source file is absent; `""` means it exists but is empty. `alignedLines` and hunk line
 numbers are 1-based; token and comment columns are UTF-16, zero-based and end-exclusive. The

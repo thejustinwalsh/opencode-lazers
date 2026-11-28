@@ -64,7 +64,7 @@ export class StructuralDiffService {
     const request = StructuralCompareRequestSchema.parse(comparison.request)
     validateCompareOptions(options)
 
-    const key = comparison.identity.comparisonID
+    const key = JSON.stringify([comparison.identity.comparisonID, request.path])
     const active: ActiveComparison = { controller: new AbortController() }
     this.active.get(key)?.controller.abort()
     this.active.set(key, active)

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { Worker } from "node:worker_threads"
 import { describe, expect, test } from "bun:test"
 import {
   StructuralCompareRequestSchema,
@@ -8,6 +9,7 @@ import {
 } from "./contract.ts"
 import { parseDifftasticJson } from "./difftastic-json.ts"
 import { toStructuralDiff } from "./difftastic-result.ts"
+import { coarseLineDiff } from "./coarse-line-diff.ts"
 import { lineDiff } from "./line-diff.ts"
 import { createStructuralDiffService } from "./service.ts"
 import { structuralDiffFromJson } from "./structural-diff.ts"
@@ -159,6 +161,54 @@ describe("Difftastic WASM compatibility", () => {
     expect(result).toMatchObject({ engine: "line", degraded: "timeout", status: "changed" })
   })
 
+  test("waits for timed-out worker termination before starting fallback", async () => {
+    const originalTerminate = Worker.prototype.terminate
+    let releaseTermination!: () => void
+    let notifyTermination!: () => void
+    const terminationGate = new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    })
+    const terminationStarted = new Promise<void>((resolve) => {
+      notifyTermination = resolve
+    })
+    let terminationCalls = 0
+    Worker.prototype.terminate = function (this: Worker) {
+      terminationCalls++
+      if (terminationCalls === 1) {
+        notifyTermination()
+        return terminationGate.then(() => originalTerminate.call(this))
+      }
+      return originalTerminate.call(this)
+    }
+
+    let completed = false
+    try {
+      const pending = compareStructural(
+        {
+          path: "timer.txt",
+          base: `const before = "${"a".repeat(100_000)}";\n`,
+          head: `const after = "${"b".repeat(100_000)}";\n`,
+        },
+        { timeoutMs: 1 },
+      ).then((result) => {
+        completed = true
+        return result
+      })
+      await terminationStarted
+      expect(completed).toBe(false)
+      releaseTermination()
+      await expect(pending).resolves.toMatchObject({
+        engine: "line",
+        degraded: "timeout",
+        status: "changed",
+      })
+      expect(terminationCalls).toBe(2)
+    } finally {
+      releaseTermination()
+      Worker.prototype.terminate = originalTerminate
+    }
+  }, 60_000)
+
   test("an aborted in-flight comparison rejects and terminates its worker", async () => {
     const controller = new AbortController()
     const pending = compareStructural(
@@ -190,6 +240,32 @@ describe("Difftastic WASM compatibility", () => {
     await expect(latest).resolves.toMatchObject({
       identity: { comparisonID: "task:task-id", sourceID: "new-source" },
       diff: { engineVersion: "0.71.0", status: "changed" },
+    })
+  }, 60_000)
+
+  test("same-comparison file lanes run concurrently and revisions supersede only their file", async () => {
+    const service = createStructuralDiffService()
+    const firstPrice = service.compare({
+      identity: { comparisonID: "task:multi-file", sourceID: "price-old" },
+      request: { path: "src/price.ts", base: "before\n", head: "after\n" },
+    })
+    const cart = service.compare({
+      identity: { comparisonID: "task:multi-file", sourceID: "cart-v1" },
+      request: { path: "src/cart.ts", base: "left\n", head: "right\n" },
+    })
+    const latestPrice = service.compare({
+      identity: { comparisonID: "task:multi-file", sourceID: "price-new" },
+      request: { path: "src/price.ts", base: "old\n", head: "new\n" },
+    })
+
+    await expect(firstPrice).resolves.toBeUndefined()
+    await expect(cart).resolves.toMatchObject({
+      identity: { sourceID: "cart-v1" },
+      diff: { path: "src/cart.ts", status: "changed" },
+    })
+    await expect(latestPrice).resolves.toMatchObject({
+      identity: { sourceID: "price-new" },
+      diff: { path: "src/price.ts", status: "changed" },
     })
   }, 60_000)
 
@@ -266,5 +342,22 @@ describe("structural output projection", () => {
         "timeout",
       ).status,
     ).toBe("created")
+  })
+
+  test("uses a linear-space coarse alignment when worker fallback cannot start", () => {
+    const request = StructuralCompareRequestSchema.parse({
+      path: "src/example.ts",
+      base: "keep\nold\nlast\n",
+      head: "keep\nnew\nlast\n",
+    })
+    expect(coarseLineDiff(request, "analysis-failure")).toMatchObject({
+      degraded: "analysis-failure",
+      alignedLines: [
+        [1, 1],
+        [2, 2],
+        [3, 3],
+      ],
+      hunks: [[{ base: { line: 2, tokens: [] }, head: { line: 2, tokens: [] } }]],
+    })
   })
 })

@@ -6,17 +6,22 @@ import { workerURL, wasmURL } from "../../worker-url.ts"
 import {
   StructuralCompareRequestSchema,
   StructuralDiffSchema,
+  type StructuralDegradedReason,
   type StructuralCompareRequest,
   type StructuralDiff,
   type ValidStructuralCompareRequest,
 } from "./contract.ts"
+import { coarseLineDiff } from "./coarse-line-diff.ts"
 import type { DifftasticWorkerRequest, DifftasticWorkerResponse } from "./difftastic-worker.ts"
-import { binaryDiff, lineDiff } from "./line-diff.ts"
+import { binaryDiff } from "./line-diff.ts"
 
 const gunzipAsync = promisify(gunzip)
 const DEFAULT_TIMEOUT_MS = 30_000
+const FALLBACK_TIMEOUT_MS = 5_000
 
 let compiledModule: Promise<WebAssembly.Module> | undefined
+
+class WorkerTimeoutError extends Error {}
 
 function loadWasmModule(): Promise<WebAssembly.Module> {
   if (!compiledModule) {
@@ -58,80 +63,95 @@ function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   })
 }
 
-function workerDiff(
-  request: ValidStructuralCompareRequest,
-  module: WebAssembly.Module,
+function runWorker(
+  message: DifftasticWorkerRequest,
   signal: AbortSignal | undefined,
   timeoutMs: number,
 ): Promise<StructuralDiff> {
+  if (signal?.aborted) return Promise.reject(abortError(signal))
+  const worker = new Worker(workerURL("./difftastic-worker", import.meta.url))
   return new Promise((resolve, reject) => {
-    let worker: Worker
-    try {
-      worker = new Worker(workerURL("./difftastic-worker", import.meta.url))
-    } catch {
-      resolve(lineDiff(request, "analysis-failure"))
-      return
-    }
     let settled = false
-    const finish = (result: StructuralDiff) => {
-      if (settled) return
-      settled = true
+    const cleanup = () => {
       clearTimeout(timer)
       signal?.removeEventListener("abort", abort)
-      void worker.terminate()
-      resolve(result)
+      worker.removeListener("message", onMessage)
+      worker.removeListener("error", onError)
+      worker.removeListener("exit", onExit)
     }
-    const fail = () => {
+    const settle = (
+      outcome: { ok: true; result: StructuralDiff } | { ok: false; error: Error },
+    ) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", abort)
-      void worker.terminate()
-      if (signal?.aborted) reject(abortError(signal))
-      else resolve(lineDiff(request, "analysis-failure"))
+      cleanup()
+      void Promise.resolve()
+        .then(() => worker.terminate())
+        .catch(() => undefined)
+        .then(() => {
+          if (outcome.ok) resolve(outcome.result)
+          else reject(outcome.error)
+        })
     }
-    const abort = () => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", abort)
-      void worker.terminate()
-      reject(
-        signal
+
+    const abort = () =>
+      settle({
+        ok: false,
+        error: signal
           ? abortError(signal)
           : new DOMException("Structural diff was cancelled", "AbortError"),
-      )
-    }
-    const timer = setTimeout(() => finish(lineDiff(request, "timeout")), timeoutMs)
-    worker.once("message", (response: DifftasticWorkerResponse) => {
+      })
+    const onMessage = (response: DifftasticWorkerResponse) => {
       if (!response.ok) {
-        fail()
+        settle({ ok: false, error: new Error(response.error) })
         return
       }
       try {
-        finish(StructuralDiffSchema.parse(response.result))
+        settle({ ok: true, result: StructuralDiffSchema.parse(response.result) })
       } catch {
-        fail()
+        settle({ ok: false, error: new Error("Structural diff worker returned invalid output") })
       }
-    })
-    worker.once("error", () => fail())
-    worker.once("exit", (code) => {
-      if (!settled) {
-        void code
-        fail()
-      }
-    })
+    }
+    const onError = (error: Error) => settle({ ok: false, error })
+    const onExit = (code: number) => {
+      if (!settled)
+        settle({ ok: false, error: new Error(`Structural diff worker exited with code ${code}`) })
+    }
+    const timer = setTimeout(
+      () => settle({ ok: false, error: new WorkerTimeoutError() }),
+      timeoutMs,
+    )
+    worker.on("message", onMessage)
+    worker.on("error", onError)
+    worker.on("exit", onExit)
     signal?.addEventListener("abort", abort, { once: true })
     if (signal?.aborted) {
       abort()
       return
     }
     try {
-      worker.postMessage({ module, request } satisfies DifftasticWorkerRequest)
-    } catch {
-      fail()
+      worker.postMessage(message)
+    } catch (error) {
+      settle({
+        ok: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+      })
     }
   })
+}
+
+async function fallbackDiff(
+  request: ValidStructuralCompareRequest,
+  degraded: StructuralDegradedReason,
+  signal?: AbortSignal,
+): Promise<StructuralDiff> {
+  if (signal?.aborted) throw abortError(signal)
+  try {
+    return await runWorker({ kind: "fallback", request, degraded }, signal, FALLBACK_TIMEOUT_MS)
+  } catch {
+    if (signal?.aborted) throw abortError(signal)
+    return coarseLineDiff(request, degraded)
+  }
 }
 
 /** Compute one Oaink-shaped structural diff; abort terminates the WASM worker. */
@@ -152,8 +172,17 @@ export async function compareStructural(
     module = await awaitWithAbort(loadWasmModule(), options.signal)
   } catch {
     if (options.signal?.aborted) throw abortError(options.signal)
-    return lineDiff(request, "analysis-failure")
+    return fallbackDiff(request, "analysis-failure", options.signal)
   }
   if (options.signal?.aborted) throw abortError(options.signal)
-  return workerDiff(request, module, options.signal, timeoutMs)
+  try {
+    return await runWorker({ kind: "compare", module, request }, options.signal, timeoutMs)
+  } catch (error) {
+    if (options.signal?.aborted) throw abortError(options.signal)
+    return fallbackDiff(
+      request,
+      error instanceof WorkerTimeoutError ? "timeout" : "analysis-failure",
+      options.signal,
+    )
+  }
 }
