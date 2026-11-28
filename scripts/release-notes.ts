@@ -36,9 +36,10 @@ export function commitNotes(log: string, repository: string): string {
 }
 
 if (import.meta.main) {
-  const [tag, destination, sourceRef = tag] = process.argv.slice(2)
+  const [tag, destination, requestedRef] = process.argv.slice(2)
   if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag) || !destination)
     throw Error("Usage: bun scripts/release-notes.ts vMAJOR.MINOR.PATCH OUTPUT_FILE [SOURCE_REF]")
+  const sourceRef = requestedRef ?? tag
   const git = (args: string[]) => {
     const result = Bun.spawnSync(["git", ...args], { stderr: "pipe" })
     if (result.exitCode) throw Error(result.stderr.toString().trim())
