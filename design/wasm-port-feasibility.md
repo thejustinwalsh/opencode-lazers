@@ -11,7 +11,7 @@ Architect admitted plan `f028d426-873e-4708-a852-6ea1a8fd2fdf` on `25cb6e52`:
 | LZ-277 | Pinned Difftastic 0.71.0 WASM content comparison, Oaink-compatible alignment/tokens/comments, worker lifecycle and fixture parity | `f9b6f622-2924-4dae-a0b2-0a78e04e020d` |
 | LZ-278 | Task/Attempt/Since review/Live/Plan comparisons, complete side inventories and paged pinned source reads                          | `8dd4c9e1-ad4e-4521-8203-fff79b722ccc` |
 
-Both initial workers use `openai/gpt-6-luna`, variant `max`, in separate native worktrees under the canonical project's `.worktrees` sibling. The project delegated-agent limit is three. Read the task runtime for their current state; this document does not mirror worker status.
+Both initial workers use `openai/gpt-6-luna`, variant `max`, in separate native worktrees under the canonical project's `.worktrees` sibling. The requested project delegated-agent limit is three. During dispatch, the runtime admitted five workers because path and remote project identities used separate capacity pools; see the observation below. Read the task runtime for their current state; this document does not mirror worker status.
 
 Difftastic remains required for the first usable Review surface. Its port is independent of the three feasibility probes below. The external Opus UI lane follows the concrete structural/comparison contracts; no duplicate Luna UI implementation was dispatched.
 
@@ -45,6 +45,8 @@ Oaink fixture: `fixtures/prs/complexity-increased/{base,head}/src/shipping.ts`.
 | Head | 20        | 13         | Equal                     |
 
 Oaink's `rust-trait-impl/{base,head}/src/lib.rs` also executes with complete native/WASM JSON equality: cognitive/cyclomatic 0/1 at base and 1/2 at head, one function on each side.
+
+A subsequent `cargo check --locked --target wasm32-wasip1 --workspace --exclude cccc-cli --lib` passed for every language/core crate with official WASI SDK 34 C tooling (30.43 seconds). Plain Apple Clang first failed because its WASI target had no `stdio.h`; the SDK clang/sysroot resolved that build failure without grammar patches. This full compile check does not establish all-language execution parity.
 
 Scope: TypeScript and Rust execution and full report parity for these fixtures. This is not the full multi-language port or all-language parity. The production increment must cover the languages Oaink's complexity provider exposes and retain parse-error reporting.
 
@@ -101,6 +103,12 @@ Keep existing Fallow findings authoritative for their audit. `buildPackage()` in
 Reuse the buffered I/O, read-only filesystem and completed-run memory handling already present in LAZERS. Extract shared host pieces when the actual integrations need them; do not clone the entire Fallow host or build another daemon. Runtime source should come from LZ-278's pinned side inventory, including unchanged files and config/ignore inputs. Oaink provider code is reference for the comparison rules, not a reason to reintroduce native tool downloads.
 
 The observed probe binaries are unoptimized development outputs, not release artifacts or package-size measurements. Production builds still need release optimization, bundled asset/worker checks, cancellation and repeated-run memory checks. Analyzer failure remains local to its review result; it must not hold task scheduling or integration.
+
+## Dispatch observation
+
+The follow-up provider plan is `11bfefe3-4fcc-42f0-9d84-14c39cfde460`: LZ-279 cccc, LZ-280 jscpd and LZ-281 Gitleaks. Initial workers use the same OpenAI Luna Max route as the two foundation tasks. This lists task identity, not completion.
+
+Read-only runtime inspection found all five attempts running. `lazers_settings` stores `limit=3` under `github.com/thejustinwalsh/opencode-lazers`, while active admissions split between that key and `path:/Users/tjw/Documents/ChatGPT/opencode-lazers`. `lazers_project_paths` already maps the directory to the remote key. `DelegatedAgentCapacity` cached the independently resolved key and read only that pool's settings/counts. The correction uses the registered identity for capacity and reconciles active/queued admissions without changing request IDs, queue order or workers. Existing work remains intact when its count exceeds the configured limit.
 
 ## Local observations
 
