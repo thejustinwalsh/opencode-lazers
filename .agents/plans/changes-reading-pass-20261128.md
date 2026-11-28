@@ -6,13 +6,13 @@ Authorized 2026-11-28: “Go ahead with changes pass.”
 
 ```text
 LZ-291 structural/navigation + Changes naming repair
-  ├─ Reading presentation: host themes, structural emphasis, importance order
+  ├─ LZ-297 reading presentation: host themes, structural emphasis, importance order
   └─ LZ-289 pinned symbols/sections
        └─ LZ-290 real semantic + existing landed/discussion consumers
              ↑ reading presentation and discussion producer
 
 Native Settings producers → LZ-296 feature-PR homes/branch comparison
-                                 └─ progressing Plan/PR UI consumer
+                                 └─ LZ-298 progressing Plan/PR UI consumer
                                       ↑ LZ-290
 ```
 
@@ -26,6 +26,8 @@ implementation/review uses OpenAI Luna Max within the project limit of three.
 External Opus remains reserved for Settings UI.
 
 ## Reading presentation
+
+Tracked by **LZ-297**. Runtime task/plan records own dispatch state and receipts.
 
 Follow actual OpenCode theme tokens, including switching between two themes
 of the same mode as well as light/dark, surfaces, syntax, selection, font and
@@ -107,6 +109,8 @@ changes. Consumers must not introduce their own parser or competing theme/order
 implementation.
 
 ## Progressing Plan/PR consumer
+
+Tracked by **LZ-298**, after LZ-296 and LZ-290 integration.
 
 This separate follow-up consumes LZ-296 after LZ-290, rather than making its
 backend/Settings prerequisites hold the reading improvements.

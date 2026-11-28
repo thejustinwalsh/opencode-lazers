@@ -115,7 +115,7 @@ Extend the existing comparison and integration-target flows:
 - Reconcile changed native PR identity/base/head through the existing guarded
   target controls, preserving native metadata and historical evidence.
 
-The progressing Plan/PR follow-up consumes this producer after LZ-290: compact
+LZ-298 consumes this producer after LZ-290: compact
 branch/PR identity with a working PR link, explicit task versus full plan/PR
 scope, and separate worker-only sources. LZ-290 retains existing landed-target,
 stored-reopen, discussion, symbol and navigation obligations without waiting for
