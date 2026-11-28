@@ -41,19 +41,30 @@ Settings. It must expose packaged base, existing native instruction provenance,
 editable project supplement, effective composition and revision/conflict state,
 without leaking request secrets or resetting unrelated native fields.
 
-Select one durable supplement authority: native configuration files where
-practical, otherwise existing canonical-project settings. Do not mirror one
-editable preference into two stores. The implementation must document the
-chosen backing/edit path and actual exported contract before UI launch.
+Use the existing canonical-project `lazers_settings` authority for supplements.
+Native `system` is replacement, not append, and file-only discovery does not
+demonstrate inheritance of an uncommitted canonical preference into a commit-based
+worker worktree. Do not mirror the supplement into native configuration files.
+Native agent definitions remain authoritative for custom agents.
+The implementation must document the actual setting/write path and exported
+contract before UI launch.
 `AgentApi` has only list/get; `AgentEditor` belongs to the in-memory
 `ctx.agent.transform` callback. Neither establishes a persistent agent editor API.
+
+Reuse the native keyed session-instruction entry capability already used by
+Architect map/profile guidance. Put/update/remove one stable project-agent
+supplement entry, rather than repeatedly appending text. Narrow packaged agent
+registration to preserve native fields; keyed delivery does not excuse the
+Architect's current blanket field replacement.
 
 The canonical project's preferences must apply to native worker worktrees,
 including uncommitted/local preferences. Native project-wide instructions remain
 separately composed. A supplement appears once after repeated reload/transform
 replay, and clearing it restores the base/native composition rather than erasing
 native settings. Edits must not interrupt or replay a running worker or change
-its pinned model route. Document normal next-request/attempt application semantics.
+its pinned model route. Read the saved supplement at normal prompt admission;
+later prompts receive the updated entry without replaying earlier work. Validate
+the actual application boundary and native reload behavior in the worker probe.
 
 Verify with real native registration/session/worktree behavior and an actual
 runtime-managed worker request, not only a fake AgentEditor assertion. A
