@@ -9,6 +9,13 @@ import type { WorkerObservation } from "./worker-observation.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { planIs } from "./identity-read.ts"
 
+type QueueWait = {
+  planID: string
+  prerequisitePlanIDs?: string[]
+  reservationTaskIDs?: string[]
+  state?: string
+}
+
 /** What `QueueReview` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type QueueReviewDeps = {
   backgroundBlockReason: WorkerObservation["backgroundBlockReason"]
@@ -61,16 +68,28 @@ export class QueueReview {
     return this.core.directory
   }
 
-  async requestQueueReview(
-    waits: { planID: string; prerequisitePlanIDs?: string[]; reservationTaskIDs?: string[] }[],
-    fence: number,
-  ) {
-    const current = () =>
-      waits.filter(
-        ({ planID }) =>
-          this.store.plan(planID)?.state === "running" &&
-          !this.store.effectiveDispatchPause(planID),
+  async requestQueueReview(waits: QueueWait[], fence: number) {
+    const current = () => {
+      const waiting = new Map<string, QueueWait>(
+        waits
+          .filter(
+            ({ planID }) =>
+              this.store.plan(planID)?.state === "running" &&
+              !this.store.effectiveDispatchPause(planID),
+          )
+          .map((wait) => [wait.planID, wait]),
       )
+      // A delivered notice is not resolution. Revisit unfinished review on the normal cadence.
+      for (const plan of this.store.runnablePlans(new Set(), [
+        "blocked",
+        "accepted",
+        "cleanup-blocked",
+      ])) {
+        if (!this.store.effectiveDispatchPause(plan.id))
+          waiting.set(plan.id, { planID: plan.id, state: plan.state })
+      }
+      return [...waiting.values()]
+    }
     const waiting = current()
     const anchor = waiting[0]
     if (!anchor) return
@@ -92,14 +111,20 @@ export class QueueReview {
     )
     if (prior && this.now() - prior.requestedAt < PROJECT_RECONCILIATION_INTERVAL_MS) return
     if (prior?.state === "pending") return
+    const needsReview = waiting.some((wait) => wait.state !== undefined)
+    const reviewPlans = new Set(waiting.map((wait) => wait.planID))
     const checking = () =>
       verificationActivitiesForDatabase(this.store.repository.path).some(
         (activity) =>
-          activity.metadata.projectDirectory === this.directory && activity.state === "running",
+          activity.metadata.projectDirectory === this.directory &&
+          activity.state === "running" &&
+          (!needsReview ||
+            (typeof activity.metadata.planID === "string" &&
+              reviewPlans.has(activity.metadata.planID))),
       )
     if (checking()) return
     const active = this.store.activeProjectAttempts()
-    for (const attempt of active) {
+    for (const attempt of needsReview ? [] : active) {
       const session = await this.host.session(attempt.session_id)
       if (
         session?.busy ||

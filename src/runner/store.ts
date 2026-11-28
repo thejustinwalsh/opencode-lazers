@@ -1639,7 +1639,10 @@ export class RunnerStore {
    * Page execution candidates after filtering history; never use the display window for scheduling.
    * Rows carry only what ordering needs; load a body with plan(id) for the one being stepped.
    */
-  *runnablePlans(terminalStates: ReadonlySet<string>): Generator<RunnablePlan> {
+  *runnablePlans(
+    terminalStates: ReadonlySet<string>,
+    onlyStates?: readonly string[],
+  ): Generator<RunnablePlan> {
     type Candidate = RunnablePlan & { priority: number; sequence: number }
     const states = [...terminalStates]
     const queueRank = `CASE
@@ -1660,12 +1663,14 @@ export class RunnerStore {
            ${planPrioritySortSQL("body")} AS priority,rowid AS sequence
            FROM runner_plans WHERE project_directory=?
            ${states.length ? `AND state NOT IN (${states.map(() => "?").join(",")})` : ""}
+           ${onlyStates ? `AND state IN (${onlyStates.map(() => "?").join(",")})` : ""}
            ${cursor ? `AND (${queueRank}<? OR (${queueRank}=? AND (${planPrioritySortSQL("body")}>? OR (${planPrioritySortSQL("body")}=? AND rowid>?))))` : ""}
            ORDER BY queue_rank DESC,priority ASC,rowid LIMIT 1000`,
           )
           .all(
             this.repository.projectDirectory,
             ...states,
+            ...(onlyStates ?? []),
             ...(cursor
               ? [
                   cursor.queue_rank,

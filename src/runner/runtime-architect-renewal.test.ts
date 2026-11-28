@@ -210,6 +210,12 @@ test("an idle, cold, large Architect with nothing new to deliver is never renewe
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
   await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4, false)
+  // An unresolved blocked plan needs follow-through; this no-news case keeps its worker running.
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?")
+      .run(f.receipt.planID),
+  )
   const owner = f.sessions.get("owner")!
   owner.contextTokens = 60_000
   const notified = f.notifications.length
@@ -230,10 +236,23 @@ test("a new notice for a cold, large Architect renews once; the idle successor i
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
   await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4, false)
+  // An unresolved blocked plan needs follow-through; this no-news case keeps its worker running.
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?")
+      .run(f.receipt.planID),
+  )
   f.sessions.get("owner")!.contextTokens = 60_000
   for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
   expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
 
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Awaiting Architect judgement' WHERE id=?",
+      )
+      .run(f.receipt.planID),
+  )
   queueArchitectNotice(f)
   await f.runtime.tick()
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
