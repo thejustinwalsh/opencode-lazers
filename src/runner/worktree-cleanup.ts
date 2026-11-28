@@ -21,11 +21,11 @@ import { errorText } from "./runtime-helpers.ts"
 import { isRecord } from "./runtime-helpers.ts"
 import { WORKTREE_CLEANUP_FALLBACK_MS, WORKTREE_CLEANUP_LIVE_RETRY_MS } from "./runtime-helpers.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
-import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 import {
   cleanupAttemptWorkerOwnership,
   cleanupWorkerActivityBlockers,
 } from "./cleanup/worker-ownership.ts"
+import { assertGraphWorkspaceQuiescent } from "./cleanup/graph-workspace.ts"
 import {
   CleanupFactsCache,
   currentWorktreeCleanupRetryFacts,
@@ -133,65 +133,6 @@ export class WorktreeCleanup {
     }
   }
 
-  private assertGraphWorkspaceQuiescent(plan: PlanRow, workspace: string, allowCancelled = false) {
-    const source = this.runtime.store.effects(plan.id).find((effect) => {
-      if (effect.kind !== "graph-worktree" || effect.state !== "completed") return false
-      try {
-        return JSON.parse(effect.receipt ?? "{}").workspace === workspace
-      } catch {
-        return false
-      }
-    })
-    let sourceArtifact: unknown
-    try {
-      sourceArtifact = JSON.parse(source?.receipt ?? "{}").base
-    } catch {
-      sourceArtifact = undefined
-    }
-    const artifact = plan.artifact ?? (allowCancelled ? sourceArtifact : undefined)
-    if (typeof artifact !== "string")
-      throw new Error("Combined artifact is missing; preserve the workspace")
-    const checks = PlanInput.parse(JSON.parse(plan.body)).verification
-    const effects = this.runtime.store.effects(plan.id)
-    for (const check of checks) {
-      const matches = effects.filter((effect) => {
-        if (effect.kind !== `graph-verify:${check.id}`) return false
-        try {
-          const payload = JSON.parse(effect.payload) as { workspace?: unknown; artifact?: unknown }
-          return payload.workspace === workspace && payload.artifact === artifact
-        } catch {
-          return false
-        }
-      })
-      const effect = matches.at(-1)
-      let receipt: RunnerCheckReceipt | undefined
-      let payload: { check?: unknown } | undefined
-      try {
-        if (effect) {
-          payload = JSON.parse(effect.payload) as typeof payload
-          const body = JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt }
-          receipt = body.check
-        }
-      } catch {
-        receipt = undefined
-      }
-      if (
-        !effect ||
-        effect.state !== "completed" ||
-        !sameVerificationCheckIdentity(payload?.check, check) ||
-        !receipt ||
-        receipt.id !== check.id ||
-        receipt.command !== check.command ||
-        receipt.cwd !== workspace ||
-        receipt.artifact !== artifact ||
-        receipt.inputIdentity !== artifact
-      )
-        throw new Error(
-          "Combined worktree check activity is not conclusively complete; preserve it",
-        )
-    }
-  }
-
   private async assertWorktreeQuiescent(
     plan: PlanRow,
     effect: EffectRow,
@@ -214,7 +155,7 @@ export class WorktreeCleanup {
     if (effect.kind === "graph-worktree") {
       if (this.runtime.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
-      this.assertGraphWorkspaceQuiescent(plan, workspace, allowCancelled)
+      assertGraphWorkspaceQuiescent(this.runtime.store.effects(plan.id), workspace)
       return
     }
     const attempts = this.runtime.store

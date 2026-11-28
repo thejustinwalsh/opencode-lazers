@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { git } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { HostSession } from "./host.ts"
 import {
   acceptedMergedFixture,
@@ -14,8 +15,57 @@ import {
   runPlan,
   useRuntimeFixtureCleanup,
 } from "./runtime.fixture.ts"
+import { canonicalProjectWorktreePath } from "./workspace-location.ts"
 
 useRuntimeFixtureCleanup()
+
+type RunnerFixture = ReturnType<typeof fixture>
+
+async function addGraphCandidate(f: RunnerFixture, planID: string, artifact: string, name: string) {
+  const workspace = canonicalProjectWorktreePath(f.root, name)
+  await f.host.worktree({ directory: workspace, base: artifact })
+  const check = f.input.verification[0]!
+  const receipt: RunnerCheckReceipt = {
+    id: check.id,
+    command: check.command,
+    cwd: workspace,
+    artifact,
+    inputIdentity: artifact,
+    environmentIdentity: "{}",
+    startedAt: 1,
+    endedAt: 2,
+    exitCode: 0,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    processCleanup: {
+      state: "settled",
+      capability: "process-group",
+      rootPID: process.pid,
+    },
+  }
+  f.store.atomic((db) => {
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'completed',?,?,1)").run(
+      crypto.randomUUID(),
+      planID,
+      null,
+      null,
+      "graph-worktree",
+      JSON.stringify({ workspace, base: artifact }),
+      JSON.stringify({ workspace, base: artifact }),
+    )
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'completed',?,?,1)").run(
+      crypto.randomUUID(),
+      planID,
+      null,
+      null,
+      `graph-verify:${check.id}`,
+      JSON.stringify({ workspace, artifact, check }),
+      JSON.stringify({ check: receipt }),
+    )
+  })
+  return { workspace, check, receipt }
+}
 
 test("native cleanup follows verified integration, preserves dirty work, and retries explicitly", async () => {
   const f = fixture({ commit: true })
@@ -47,6 +97,184 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(await f.host.worktrees()).toEqual([f.root])
   expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("integrated cleanup removes historical graph candidates from their own settled receipts", async () => {
+  const { f, plan } = await acceptedMergedFixture()
+  const oldArtifact = plan.artifact!
+  const oldCandidate = await addGraphCandidate(f, plan.id, oldArtifact, "combined-old-candidate")
+  const oldWorkspace = oldCandidate.workspace
+
+  const historicalCheck = {
+    ...oldCandidate.receipt,
+    id: "historical-procedure",
+    command: "exit 7",
+    cwd: oldWorkspace,
+    artifact: oldArtifact,
+    inputIdentity: oldArtifact,
+    exitCode: 7,
+    timedOut: false,
+  }
+  f.store.atomic((db) =>
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'completed',?,?,1)").run(
+      crypto.randomUUID(),
+      plan.id,
+      null,
+      null,
+      "graph-verify:historical-procedure",
+      JSON.stringify({
+        workspace: oldWorkspace,
+        artifact: oldArtifact,
+        check: { id: "historical-procedure", command: "exit 7" },
+      }),
+      JSON.stringify({ check: historicalCheck }),
+    ),
+  )
+
+  writeFileSync(join(f.root, "later.txt"), "newer integrated candidate\n")
+  git(f.root, ["add", "later.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Newer combined candidate",
+  ])
+  const newerArtifact = git(f.root, ["rev-parse", "HEAD"])
+  const newerCandidate = await addGraphCandidate(
+    f,
+    plan.id,
+    newerArtifact,
+    "combined-newer-candidate",
+  )
+  const newerWorkspace = newerCandidate.workspace
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET artifact=? WHERE id=?").run(newerArtifact, plan.id)
+  })
+
+  const removed: string[] = []
+  const nativeRemove = f.host.removeWorktree
+  f.host.removeWorktree = async (workspace) => {
+    removed.push(workspace)
+    await nativeRemove(workspace)
+  }
+  const checksBefore = f.store
+    .effects(plan.id)
+    .filter((effect) => effect.kind.startsWith("graph-verify:"))
+    .map((effect) => [effect.id, effect.state, effect.receipt])
+
+  await f.runtime.command(
+    {
+      requestID: "integrate-newer-candidate",
+      planID: plan.id,
+      action: "integrated",
+      artifact: newerArtifact,
+      targetBranch: "main",
+      reason: "Integrate the newer combined candidate",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)).toMatchObject({ state: "integrated", reason: null })
+  expect(removed).toContain(oldWorkspace)
+  expect(removed).toContain(newerWorkspace)
+  expect(await f.host.worktrees()).not.toContain(oldWorkspace)
+  expect(await f.host.worktrees()).not.toContain(newerWorkspace)
+  expect(
+    f.store
+      .effects(plan.id)
+      .filter((effect) => effect.kind.startsWith("graph-verify:"))
+      .map((effect) => [effect.id, effect.state, effect.receipt]),
+  ).toEqual(checksBefore)
+})
+
+test("historical graph cleanup retries after nested process settlement without rewriting check evidence", async () => {
+  const { f, plan, integrate } = await acceptedMergedFixture()
+  const artifact = plan.artifact!
+  const candidate = await addGraphCandidate(f, plan.id, artifact, "combined-settlement-retry")
+  const workspace = candidate.workspace
+  const uncertainCheck = {
+    ...candidate.receipt,
+    id: "historical-unsettled",
+    command: "exit 13",
+    cwd: workspace,
+    artifact,
+    inputIdentity: artifact,
+    exitCode: 13,
+    aborted: true,
+    processCleanup: {
+      state: "uncertain",
+      capability: "process-group",
+      rootPID: 123,
+    },
+  }
+  const uncertainEffectID = crypto.randomUUID()
+  f.store.atomic((db) =>
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'uncertain',?,?,1)").run(
+      uncertainEffectID,
+      plan.id,
+      null,
+      null,
+      "graph-verify:historical-unsettled",
+      JSON.stringify({
+        workspace,
+        artifact,
+        check: { id: "historical-unsettled", command: "exit 13" },
+      }),
+      JSON.stringify({
+        schema: "lazers-uncertain-effect/v1",
+        error: "Check journaling was interrupted",
+        result: { check: uncertainCheck },
+      }),
+    ),
+  )
+  const integrateCurrent = (requestID: string) =>
+    f.runtime.command(
+      {
+        requestID,
+        planID: plan.id,
+        action: "integrated",
+        artifact,
+        targetBranch: "main",
+        reason: "Retry cleanup after process settlement",
+      },
+      "owner",
+    )
+
+  await integrate("integrate-before-settlement")
+  await f.runtime.tick()
+  expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+  expect(f.store.plan(plan.id)?.reason).toContain("not conclusively complete")
+  expect(await f.host.worktrees()).toContain(workspace)
+
+  const recoveredCheck = { ...uncertainCheck, processCleanup: { ...uncertainCheck.processCleanup } }
+  recoveredCheck.processCleanup.state = "terminated"
+  const settledEffectReceipt = JSON.stringify({
+    schema: "lazers-uncertain-effect/v1",
+    error: "Check journaling was interrupted",
+    result: { check: recoveredCheck },
+  })
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET receipt=? WHERE id=?")
+      .run(settledEffectReceipt, uncertainEffectID),
+  )
+  await integrateCurrent("integrate-after-settlement")
+  await f.runtime.tick()
+
+  const settledEffect = f.store.effects(plan.id).find((effect) => effect.id === uncertainEffectID)!
+  expect(f.store.plan(plan.id)).toMatchObject({ state: "integrated", reason: null })
+  expect(await f.host.worktrees()).not.toContain(workspace)
+  expect(settledEffect.state).toBe("uncertain")
+  expect(settledEffect.receipt).toBe(settledEffectReceipt)
+  expect(JSON.parse(settledEffect.receipt!).result.check).toMatchObject({
+    exitCode: 13,
+    aborted: true,
+    processCleanup: { state: "terminated" },
+  })
 })
 
 test("scheduler retires an integrated worker without any idle report", async () => {
