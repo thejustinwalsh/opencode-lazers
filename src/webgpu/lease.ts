@@ -140,7 +140,12 @@ export class ModelLease {
     previous?: ModelLeasePersistence | null,
     private readonly persistState?: (state: ModelLeasePersistence) => void,
   ) {
-    this.previousProviderEpoch = previous?.providerEpoch
+    // A provider can stop without acquiring the inherited lease. Its successor
+    // must still identify that lease's provider, rather than the skipped wrapper.
+    this.previousProviderEpoch =
+      previous?.state === "retired" && previous.lease
+        ? previous.lease.providerEpoch
+        : previous?.providerEpoch
     if (!previous) return
 
     const hasOwnerIdentity = previous.windowID !== undefined && previous.lease !== undefined

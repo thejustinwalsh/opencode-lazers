@@ -922,6 +922,43 @@ try {
     }
   }
 
+  // Multiple main reloads can finish before the renderer acquires from any replacement.
+  {
+    const original = makeMain()
+    let successor: MainHost | undefined
+    try {
+      const a = makeRuntime(original)
+      await until(() => a.runtime.state() === "ready", "skipped-provider original model")
+      const originalOwner = original.workerOwner
+      a.controller.abort()
+      await a.runtime.dispose()
+      await cleanupHost(original)
+      const skipped = makeMain(original.persistent)
+      await cleanupHost(skipped)
+      successor = makeMain(original.persistent)
+      successor.memory = original.memory
+      successor.workerOwner = originalOwner
+      const b = makeRuntime(successor)
+      await until(() => b.runtime.state() === "ready", "skipped-provider exact retained handoff")
+      assert.equal(successor.workerOwner, originalOwner)
+      assert.equal(allocations, 1)
+      assert.equal(
+        entryFor(successor, 2).grant?.retired?.generationID,
+        entryFor(successor, 1).generationID,
+      )
+      await assertOtherWindowBlocked(
+        successor,
+        (await b.files.identity()).providerEpoch,
+        "skipped-provider",
+      )
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (successor) await cleanupHost(successor)
+      await cleanupHost(original)
+    }
+  }
+
   // Main cleanup can finish first; the replacement must wait for the renderer's disposal proof.
   {
     const original = makeMain()
