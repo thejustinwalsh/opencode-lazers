@@ -1,4 +1,4 @@
-import { blobBytes, diffHunks, treeFiles } from "./git.ts"
+import { blobBytes, diffHunks, isConfidentialSourcePath, treeFiles } from "./git.ts"
 import {
   CODE_REVIEW_CONTRACT_VERSION,
   CodeReviewComparisonSchema,
@@ -203,6 +203,7 @@ export class CodeReviewResolver {
     file: NonNullable<ReturnType<CodeReviewStore["file"]>>,
     signal: AbortSignal,
   ): Promise<Uint8Array | undefined> {
+    if (isConfidentialSourcePath(file.path)) return Promise.resolve(undefined)
     if (file.kind !== "text" && !(file.kind === "unknown" && !file.objectID?.startsWith("sha256:")))
       return Promise.resolve(undefined)
     return this.sourceBytes(file.objectID!, signal)

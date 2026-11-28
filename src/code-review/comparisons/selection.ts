@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { diffHunks, treeFiles } from "./git.ts"
+import { diffPaths, treeFiles } from "./git.ts"
 import type {
   CodeReviewComparison,
   CodeReviewComparisonIdentity,
@@ -296,8 +296,9 @@ export class CodeReviewSelectionResolver {
       const attempt = this.attemptForArtifact(plan.id, node.task_id, node.artifact)
       if (!attempt) continue
       const base = this.taskChainBase(attempt)
-      const changes = await diffHunks(this.repository.projectDirectory, base, node.artifact, signal)
-      taskFiles[node.task_id] = [...changes.keys()].sort()
+      taskFiles[node.task_id] = (
+        await diffPaths(this.repository.projectDirectory, base, node.artifact, signal)
+      ).sort()
     }
     const dependencies = body.dependencies.map((dependency) => ({
       prerequisite: dependency.prerequisite,

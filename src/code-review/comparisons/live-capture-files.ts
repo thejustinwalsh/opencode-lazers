@@ -14,7 +14,8 @@ import {
   bytesAreText,
   gitBytes,
   gitText,
-  isSourcePath,
+  isConfidentialSourcePath,
+  isKnownBinaryPath,
   type GitIndexFile,
 } from "./git.ts"
 
@@ -51,6 +52,7 @@ export function indexEntries(
       objectID: null,
       size: null,
       kind: "unknown",
+      conflicted: true,
     })
   return entries
 }
@@ -112,8 +114,10 @@ export async function enrichIndexEntries(
           (file) =>
             file.objectID &&
             file.mode !== "160000" &&
-            headEntries.get(file.path)?.objectID !== file.objectID &&
-            isSourcePath(file.path),
+            file.mode !== "120000" &&
+            !isConfidentialSourcePath(file.path) &&
+            !isKnownBinaryPath(file.path) &&
+            headEntries.get(file.path)?.objectID !== file.objectID,
         )
         .map((file) => file.objectID!),
     ),

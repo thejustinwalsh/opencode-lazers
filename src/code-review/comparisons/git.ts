@@ -182,24 +182,48 @@ function nulRecords(bytes: Uint8Array): Uint8Array[] {
 }
 
 function treeFile(row: Uint8Array): GitFile {
+  const entry = treeEntry(row)
+  return {
+    path: entry.path,
+    mode: entry.mode,
+    objectID: entry.objectID,
+    size: entry.size,
+    kind: treeFileKind(entry.path, entry.mode),
+  }
+}
+
+function treeEntry(row: Uint8Array): {
+  path: string
+  mode: string
+  objectID: string
+  size: number | null
+} {
   const tab = row.indexOf(9)
   if (tab < 0) throw new Error("Git returned a malformed tree entry")
-  const [mode, type, objectID, sizeText] = pathText(row.subarray(0, tab)).split(" ")
-  if (!mode || !type || !objectID || sizeText === undefined)
+  const metadata = pathText(row.subarray(0, tab)).trim().split(/\s+/)
+  const [mode, type, objectID, sizeText, ...extra] = metadata
+  if (!mode || !type || !objectID || sizeText === undefined || extra.length > 0)
     throw new Error("Git returned an incomplete tree entry")
-  const path = pathText(row.subarray(tab + 1))
   return {
-    path,
+    path: pathText(row.subarray(tab + 1)),
     mode,
     objectID,
-    size: sizeText === "-" ? null : Number(sizeText),
-    kind: treeFileKind(path, mode),
+    size: treeEntrySize(sizeText),
   }
+}
+
+function treeEntrySize(value: string): number | null {
+  if (value === "-") return null
+  const size = Number(value)
+  if (!Number.isSafeInteger(size) || size < 0)
+    throw new Error("Git returned an invalid tree-entry size")
+  return size
 }
 
 function treeFileKind(path: string, mode: string): GitFile["kind"] {
   if (mode === "120000") return "symlink"
   if (mode === "160000") return "submodule"
+  if (isConfidentialSourcePath(path)) return "unknown"
   if (isKnownBinaryPath(path)) return "binary"
   if (isSourcePath(path)) return "text"
   return "unknown"
@@ -226,6 +250,20 @@ export async function diffHunks(
     signal,
   )
   return diffHunksFromText(output)
+}
+
+export async function diffPaths(
+  directory: string,
+  base: string,
+  head: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const output = await gitBytes(
+    directory,
+    ["diff", "--name-only", "-z", "--no-renames", base, head, "--"],
+    signal,
+  )
+  return nulStrings(output)
 }
 
 function filePathFromHeader(value: string, prefix: string): string | undefined {
@@ -331,6 +369,15 @@ export function isSourcePath(path: string): boolean {
     return true
   return /\.(?:c|cc|cpp|cs|css|dart|ex|exs|go|graphql|h|hpp|html|java|js|jsx|json|jsonc|kt|lua|md|mjs|mts|php|proto|py|rb|rs|scss|sh|sql|svelte|swift|ts|tsx|vue|xml|yaml|yml|toml|txt|svg)$/i.test(
     path,
+  )
+}
+
+/** Mirrors the source-context exclusions; these paths remain inventory-only in code review. */
+export function isConfidentialSourcePath(path: string): boolean {
+  return (
+    /(^|\/)(?:\.env(?:\..*)?|[^/]*\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519)|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)$/i.test(
+      path,
+    ) && !/(?:^|\/)\.env\.example$/.test(path)
   )
 }
 

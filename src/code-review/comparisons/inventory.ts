@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto"
 import { lstat, readFile, readlink, realpath } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
-import { bytesAreText, isKnownBinaryPath, isSourcePath, type GitFile, type GitHunk } from "./git.ts"
+import {
+  bytesAreText,
+  isConfidentialSourcePath,
+  isKnownBinaryPath,
+  isSourcePath,
+  type GitFile,
+  type GitHunk,
+} from "./git.ts"
 import type { CodeReviewFileKind, CodeReviewHunk, CodeReviewSide } from "../contract.ts"
 import type { ComparisonBlob, ComparisonFile } from "./store.ts"
 
@@ -11,6 +18,7 @@ export type SnapshotEntry = {
   objectID: string | null
   size: number | null
   kind: CodeReviewFileKind
+  conflicted?: true
 }
 
 export type LiveCapture = {
@@ -44,8 +52,9 @@ export function kindFor(path: string, mode: string | null, bytes?: Uint8Array): 
   if (!mode) return "absent"
   if (mode === "120000") return "symlink"
   if (mode === "160000") return "submodule"
-  if (bytes) return bytesAreText(bytes) ? "text" : "binary"
+  if (isConfidentialSourcePath(path)) return "unknown"
   if (isKnownBinaryPath(path)) return "binary"
+  if (bytes) return bytesAreText(bytes) ? "text" : "binary"
   return isSourcePath(path) ? "text" : "unknown"
 }
 
@@ -67,11 +76,22 @@ function statusBetween(
   before: SnapshotEntry | undefined,
   after: SnapshotEntry | undefined,
 ): ComparisonFile["status"] {
-  if (!before) return after ? "added" : "unchanged"
-  if (!after) return "deleted"
-  const sameObject = before.objectID === after.objectID
-  const bothHaveObjects = Boolean(before.objectID && after.objectID)
-  return sameObject && (!bothHaveObjects || before.mode === after.mode) ? "unchanged" : "modified"
+  const beforeFile = presentEntry(before)
+  const afterFile = presentEntry(after)
+  if (beforeFile?.conflicted || afterFile?.conflicted) return "conflicted"
+  if (!beforeFile) return afterFile ? "added" : "unchanged"
+  if (!afterFile) return "deleted"
+  return sameFile(beforeFile, afterFile) ? "unchanged" : "modified"
+}
+
+function presentEntry(entry: SnapshotEntry | undefined): SnapshotEntry | undefined {
+  return entry?.kind === "absent" ? undefined : entry
+}
+
+function sameFile(beforeFile: SnapshotEntry, afterFile: SnapshotEntry): boolean {
+  const sameObject = beforeFile.objectID === afterFile.objectID
+  const bothHaveObjects = Boolean(beforeFile.objectID && afterFile.objectID)
+  return sameObject && (!bothHaveObjects || beforeFile.mode === afterFile.mode)
 }
 
 export function hunkMapForSide(
@@ -156,17 +176,17 @@ export function liveFileRows(
   head: Map<string, SnapshotEntry>,
   capture: LiveCapture,
 ): ComparisonFile[] {
-  const staged = capture.sides.get("staged")!
-  const unstaged = capture.sides.get("unstaged")!
+  const staged = withAbsentEntries(head, capture.sides.get("staged")!)
+  const unstaged = withAbsentEntries(staged, capture.sides.get("unstaged")!)
   const untracked = capture.sides.get("untracked")!
   const stagedRows = exactFileRows(
-    withAbsentEntries(head, staged),
+    staged,
     "staged",
     compareStatus(head, staged),
     capture.hunks.get("staged")!,
   )
   const unstagedRows = exactFileRows(
-    withAbsentEntries(staged, unstaged),
+    unstaged,
     "unstaged",
     compareStatus(staged, unstaged),
     capture.hunks.get("unstaged")!,
@@ -260,7 +280,13 @@ export async function readWorkingEntry(
   const captured = symlink
     ? new TextEncoder().encode(await readlink(location))
     : await readFile(location)
-  const content = isSourcePath(path) && !symlink && bytesAreText(captured) ? captured : undefined
+  const content =
+    !symlink &&
+    !isConfidentialSourcePath(path) &&
+    !isKnownBinaryPath(path) &&
+    bytesAreText(captured)
+      ? captured
+      : undefined
   const objectID = `sha256:${createHash("sha256").update(captured).digest("hex")}`
   return {
     entry: {
