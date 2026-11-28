@@ -104,7 +104,7 @@ test("integration schemas retain target, source, batch and comparison identities
 
   expect(integrated).toEqual({ comparison, integration })
   expect(listInput.cursor).toEqual(cursor)
-  expect(listOutput.integrations[0]?.target.pullRequest).toEqual(pullRequest)
+  expect(listOutput.integrations[0]?.target?.pullRequest).toEqual(pullRequest)
   expect(
     CodeReviewIntegrationSchema.safeParse({
       ...integration,

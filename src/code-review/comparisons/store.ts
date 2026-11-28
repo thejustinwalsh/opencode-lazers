@@ -89,6 +89,54 @@ function installCodeReviewSchema(repository: TaskRepository): void {
         baseline_id TEXT NOT NULL,
         PRIMARY KEY(project_directory,request_id)
       );
+      CREATE TABLE IF NOT EXISTS code_review_integration_targets (
+        project_directory TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        base_revision TEXT NOT NULL,
+        pull_request_json TEXT,
+        observed_head TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(project_directory,target_id),
+        UNIQUE(project_directory,branch)
+      );
+      CREATE TABLE IF NOT EXISTS code_review_integration_target_tasks (
+        project_directory TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        PRIMARY KEY(project_directory,target_id,task_id),
+        UNIQUE(project_directory,task_id),
+        FOREIGN KEY(project_directory,target_id)
+          REFERENCES code_review_integration_targets(project_directory,target_id)
+      );
+      CREATE TABLE IF NOT EXISTS code_review_integrations (
+        project_directory TEXT NOT NULL,
+        integration_id TEXT NOT NULL,
+        target_id TEXT,
+        task_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        integration_json TEXT NOT NULL,
+        PRIMARY KEY(project_directory,integration_id),
+        FOREIGN KEY(project_directory,target_id)
+          REFERENCES code_review_integration_targets(project_directory,target_id)
+      );
+      CREATE INDEX IF NOT EXISTS code_review_integrations_task_page
+        ON code_review_integrations(project_directory,task_id,created_at,integration_id);
+      CREATE TABLE IF NOT EXISTS code_review_integration_comparisons (
+        project_directory TEXT NOT NULL,
+        integration_id TEXT NOT NULL,
+        comparison_id TEXT NOT NULL,
+        PRIMARY KEY(project_directory,integration_id),
+        UNIQUE(project_directory,comparison_id),
+        FOREIGN KEY(project_directory,integration_id)
+          REFERENCES code_review_integrations(project_directory,integration_id),
+        FOREIGN KEY(project_directory,comparison_id)
+          REFERENCES code_review_comparisons(project_directory,comparison_id)
+      );
     `)
   })
 }
@@ -170,51 +218,60 @@ export class CodeReviewStore {
     files: readonly ComparisonFile[],
     blobs: readonly ComparisonBlob[],
   ): CodeReviewComparison {
-    const identity = comparison.identity
-    const resultJSON = JSON.stringify(comparison)
+    const comparisonID = comparison.identity.comparisonID
     this.repository.atomic((db) => {
-      db.query(
-        `INSERT OR IGNORE INTO code_review_comparisons(
-           project_directory,comparison_id,task_id,plan_id,attempt_id,mode,identity_json,result_json,created_at
-         ) VALUES(?,?,?,?,?,?,?,?,?)`,
-      ).run(
+      this.persistIn(db, comparison, files, blobs)
+    })
+    return this.comparison(comparisonID) ?? comparison
+  }
+
+  persistIn(
+    db: Database,
+    comparison: CodeReviewComparison,
+    files: readonly ComparisonFile[],
+    blobs: readonly ComparisonBlob[],
+  ): void {
+    const identity = comparison.identity
+    db.query(
+      `INSERT OR IGNORE INTO code_review_comparisons(
+         project_directory,comparison_id,task_id,plan_id,attempt_id,mode,identity_json,result_json,created_at
+       ) VALUES(?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      this.repository.projectDirectory,
+      identity.comparisonID,
+      identity.taskID,
+      identity.planID,
+      identity.attemptID,
+      identity.mode,
+      JSON.stringify(identity),
+      JSON.stringify(comparison),
+      identity.capturedAt ?? Date.now(),
+    )
+    const insertBlob = db.query(
+      `INSERT OR IGNORE INTO code_review_blobs(project_directory,blob_id,content) VALUES(?,?,?)`,
+    )
+    for (const blob of blobs)
+      insertBlob.run(this.repository.projectDirectory, blob.id, blob.content)
+    const insertFile = db.query(
+      `INSERT OR IGNORE INTO code_review_files(
+         project_directory,comparison_id,side,path,mode,object_id,size,kind,status,changed,hunks,attribution_task_ids
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (const file of files)
+      insertFile.run(
         this.repository.projectDirectory,
         identity.comparisonID,
-        identity.taskID,
-        identity.planID,
-        identity.attemptID,
-        identity.mode,
-        JSON.stringify(identity),
-        resultJSON,
-        identity.capturedAt ?? Date.now(),
+        file.side,
+        file.path,
+        file.mode,
+        file.objectID,
+        file.size,
+        file.kind,
+        file.status,
+        Number(file.changed),
+        JSON.stringify(file.hunks),
+        JSON.stringify(file.attributionTaskIDs),
       )
-      const insertBlob = db.query(
-        `INSERT OR IGNORE INTO code_review_blobs(project_directory,blob_id,content) VALUES(?,?,?)`,
-      )
-      for (const blob of blobs)
-        insertBlob.run(this.repository.projectDirectory, blob.id, blob.content)
-      const insertFile = db.query(
-        `INSERT OR IGNORE INTO code_review_files(
-           project_directory,comparison_id,side,path,mode,object_id,size,kind,status,changed,hunks,attribution_task_ids
-         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      for (const file of files)
-        insertFile.run(
-          this.repository.projectDirectory,
-          identity.comparisonID,
-          file.side,
-          file.path,
-          file.mode,
-          file.objectID,
-          file.size,
-          file.kind,
-          file.status,
-          Number(file.changed),
-          JSON.stringify(file.hunks),
-          JSON.stringify(file.attributionTaskIDs),
-        )
-    })
-    return this.comparison(identity.comparisonID) ?? comparison
   }
 
   /** Direct read counterpart used by stream authorization; project partition is always explicit. */

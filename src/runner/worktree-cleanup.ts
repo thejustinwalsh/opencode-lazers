@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
+import { CodeReviewIntegrationTargetStore } from "../code-review/integrations/target-store.ts"
 import { cleanupRevisionStamp } from "../observability/cleanup-revision.ts"
 import { gitAsync, registeredWorktreePaths } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
@@ -21,6 +22,7 @@ import {
   checkSettlementProblem,
   errorText,
   isRecord,
+  isCommitID,
   WORKTREE_CLEANUP_FALLBACK_MS,
   WORKTREE_CLEANUP_LIVE_RETRY_MS,
 } from "./runtime-helpers.ts"
@@ -53,6 +55,49 @@ type WorktreeCleanupRun = {
   retryFacts: string | undefined
   source: EffectRow | undefined
   facts: CleanupFacts
+}
+
+type RecordedTargetPayload = { targetID: string; branch: string; head: string }
+
+function integrationTargetPayload(
+  store: TaskRuntime["store"],
+  planID: string,
+): RecordedTargetPayload | undefined {
+  const row = store.read((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        `SELECT payload FROM runner_transitions
+         WHERE plan_id=? AND task_id IS NULL AND event='INTEGRATION_RECORDED'
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(planID),
+  )
+  if (!row) return undefined
+  let payload: unknown
+  try {
+    payload = JSON.parse(row.payload)
+  } catch {
+    throw new Error("Integration target receipt is malformed; preserve the worktree")
+  }
+  if (!isRecord(payload) || payload.targetID === undefined) return undefined
+  if (
+    typeof payload.targetID !== "string" ||
+    typeof payload.branch !== "string" ||
+    !isCommitID(payload.head)
+  )
+    throw new Error("Integration target receipt is incomplete; preserve the worktree")
+  return { targetID: payload.targetID, branch: payload.branch, head: payload.head }
+}
+
+function resolveRecordedTarget(
+  repository: TaskRuntime["store"]["repository"],
+  projectID: string,
+  payload: RecordedTargetPayload,
+): { branch: string; head: string } {
+  const target = new CodeReviewIntegrationTargetStore(repository).target(payload.targetID)
+  if (!target || target.target.projectID !== projectID || target.target.branch !== payload.branch)
+    throw new Error("Recorded integration target is unavailable or foreign; preserve the worktree")
+  return { branch: target.target.branch, head: payload.head }
 }
 
 class LiveActivityBlockedError extends Error {}
@@ -258,36 +303,49 @@ export class WorktreeCleanup {
     return this.abandonIfStale(run) ? "stop" : "ready"
   }
 
-  /**
-   * The accepted artifact's change (note, patch-id or tree, not its commit SHA)
-   * must be contained in the current checkout before its worktree is removed.
-   */
+  /** Prove accepted changes in the recorded target, falling back to legacy HEAD receipts. */
   private async assertArtifactIntegrated(attempt: AttemptRow) {
     if (!attempt.artifact) return
+    const target = this.recordedIntegrationTarget(attempt.plan_id)
     try {
       const proof = await proofForArtifact(
         (run) => this.runtime.store.repository.read(run),
         this.runtime.directory,
-        { artifact: attempt.artifact, attemptID: attempt.id, base: attempt.base_commit },
+        {
+          artifact: attempt.artifact,
+          attemptID: attempt.id,
+          base: attempt.base_commit,
+          target: target?.head,
+        },
       )
       if (proof.containment.status !== "contained")
         throw new Error(
-          containmentReason(proof.containment, "The accepted artifact", "the integration branch"),
+          containmentReason(
+            proof.containment,
+            "The accepted artifact",
+            target ? `branch ${target.branch}` : "the integration branch",
+          ),
         )
     } catch (error) {
       throw new Error(
-        `Accepted artifact is not contained in the checkout (${errorText(error)}); preserve the worktree`,
+        `Accepted artifact is not contained in ${
+          target ? `recorded target branch ${target.branch}` : "the checkout"
+        } (${errorText(error)}); preserve the worktree`,
         { cause: error },
       )
     }
   }
 
-  /**
-   * A worktree is safe to remove when its HEAD is an ancestor of the checkout or
-   * its change is contained there (rebased, amended, re-signed or squashed).
-   * Anything else is preserved; an ambiguous match keeps its reason visible.
-   */
-  private async assertHeadMerged(workspace: string, head: string) {
+  /** Resolve only the plan's pinned target receipt; old receipts continue using HEAD. */
+  private recordedIntegrationTarget(planID: string): { branch: string; head: string } | undefined {
+    const payload = integrationTargetPayload(this.runtime.store, planID)
+    return payload
+      ? resolveRecordedTarget(this.runtime.store.repository, this.runtime.projectID, payload)
+      : undefined
+  }
+
+  /** A worktree is removable only if its head is contained in the selected or legacy target. */
+  private async assertHeadMerged(planID: string, workspace: string, head: string) {
     const base = this.runtime.store.repository.read(
       (db) =>
         db
@@ -296,12 +354,17 @@ export class WorktreeCleanup {
           )
           .get(workspace)?.base_commit,
     )
-    const result = await headContained(this.runtime.directory, head, "HEAD", base)
+    const target = this.recordedIntegrationTarget(planID)
+    const result = await headContained(this.runtime.directory, head, target?.head ?? "HEAD", base)
     if (result.status === "contained") return
     throw new Error(
       `Owned worktree has unmerged commits; preserve ${workspace}${
         result.status === "ambiguous"
-          ? ` (${containmentReason(result, "Its change", "the checkout")})`
+          ? ` (${containmentReason(
+              result,
+              "Its change",
+              target ? `branch ${target.branch}` : "the checkout",
+            )})`
           : ""
       }`,
     )
@@ -676,7 +739,7 @@ export class WorktreeCleanup {
     if (this.abandonIfStale(run)) return "stop"
     const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
     await this.runtime.timed("cleanup:assertHeadMerged", () =>
-      this.assertHeadMerged(workspace, head),
+      this.assertHeadMerged(plan.id, workspace, head),
     )
     for (const attempt of this.runtime.store
       .attempts(plan.id)
@@ -693,7 +756,7 @@ export class WorktreeCleanup {
       throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
     const finalHead = await gitAsync(workspace, ["rev-parse", "HEAD"])
     await this.runtime.timed("cleanup:assertHeadMerged", () =>
-      this.assertHeadMerged(workspace, finalHead),
+      this.assertHeadMerged(plan.id, workspace, finalHead),
     )
     const finalNative = await this.runtime.timed("cleanup:host.worktrees", () =>
       this.runtime.host.worktrees(),

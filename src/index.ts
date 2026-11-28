@@ -73,6 +73,7 @@ import { registerProjects } from "./projects/rpc.ts"
 import { projectsDefaultsOf } from "./projects/overview-store.ts"
 import { taskDatabasePath } from "./storage.ts"
 import { registerCodeReview } from "./code-review/comparisons/rpc.ts"
+import { registerCodeReviewIntegrations } from "./code-review/integrations/rpc.ts"
 
 /**
  * Per-location adapter. OpenCode boots this once per location, so it only registers
@@ -266,7 +267,12 @@ export default Plugin.define({
         }).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:CodeReview", () =>
-        registerCodeReview(ctx, repository, runtime.store, projectID).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          yield* registerCodeReview(ctx, repository, runtime.store, projectID).pipe(Effect.orDie)
+          yield* registerCodeReviewIntegrations(ctx, repository, runtime.store, projectID).pipe(
+            Effect.orDie,
+          )
+        }),
       )
       yield* sectionEffect("setup:Worker", () =>
         registerWorker(ctx, runtime.store, agentRoutes, runtime.delegatedAgentCapacity, () =>

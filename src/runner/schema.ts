@@ -180,6 +180,71 @@ export const PlanSubmissionInput = StrictPlanInput
 export const PlanInput = z.preprocess(dropLegacyHumanEvidence, StrictPlanInput)
 export type PlanInput = z.infer<typeof StrictPlanInput>
 
+type IntegrationCommandFields = {
+  action: string
+  targetBranch?: string
+  expectedTargetHead?: string
+  targetBaseBranch?: string
+  targetBaseRevision?: string
+  targetTaskIDs?: string[]
+  targetPullRequest?: unknown
+  batchTaskIDs?: string[]
+  taskID?: string
+  reason?: string
+}
+
+type CommandValidationIssue = { path: string[]; message: string }
+
+function integrationTargetIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
+  const issues: CommandValidationIssue[] = []
+  const required = [
+    "targetBranch",
+    "expectedTargetHead",
+    "targetBaseBranch",
+    "targetBaseRevision",
+    "targetTaskIDs",
+    "reason",
+  ] as const
+  if (input.action === "integration-target") {
+    for (const field of required)
+      if (!input[field])
+        issues.push({
+          path: [field],
+          message: `Integration target setup requires ${field}`,
+        })
+  } else if (
+    input.targetBaseBranch !== undefined ||
+    input.targetBaseRevision !== undefined ||
+    input.targetTaskIDs !== undefined ||
+    input.targetPullRequest !== undefined
+  )
+    issues.push({
+      path: ["action"],
+      message: "Target metadata fields require integration-target",
+    })
+  return issues
+}
+
+function batchIntegrationIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
+  const batch = input.batchTaskIDs
+  if (!batch) return []
+  const issues: CommandValidationIssue[] = []
+  if (input.action !== "integrated")
+    issues.push({ path: ["batchTaskIDs"], message: "Batch task IDs require integrated" })
+  if (!input.taskID || !batch.includes(input.taskID))
+    issues.push({
+      path: ["batchTaskIDs"],
+      message: "The integration task must belong to its shared batch",
+    })
+  if (new Set(batch).size !== batch.length)
+    issues.push({ path: ["batchTaskIDs"], message: "Batch task IDs must be unique" })
+  return issues
+}
+
+function integrationCommandIssues(input: IntegrationCommandFields): CommandValidationIssue[] {
+  return [...integrationTargetIssues(input), ...batchIntegrationIssues(input)]
+}
+
 export const DispatchPause = z.strictObject({
   reason: z.string(),
   untilPlans: z.array(z.uuid()),
@@ -204,6 +269,7 @@ export const CommandInput = z
         "resume",
         "retry",
         "integrated",
+        "integration-target",
         "schedule",
         "amend-scope",
         "adopt-descendant",
@@ -213,7 +279,7 @@ export const CommandInput = z
         "takeover-submit",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume re-runs the combined check of a blocked, unaccepted plan on its current candidate; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it verifies that commit in a temporary worktree with the task's ordinary checks, without an implementation turn, and records pass or fail. Run it again after a failure; combined acceptance is the ordinary combined check. takeover-submit (taskID, reason) sends a task you took over with lz-request-handoff, as committed in its workspace, to the ordinary verification. See each field description for the narrow retained-repair, descendant-adoption and startup-settlement bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Use integration-target before landing to bind selected tasks to an existing local branch created or inspected through configured repository tooling, its reviewed base, exact observed head and optional external PR metadata; integrated then records the reviewed target range without switching checkouts or merging into the default branch. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume re-runs the combined check of a blocked, unaccepted plan on its current candidate; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it verifies that commit in a temporary worktree with the task's ordinary checks, without an implementation turn, and records pass or fail. Run it again after a failure; combined acceptance is the ordinary combined check. takeover-submit (taskID, reason) sends a task you took over with lz-request-handoff, as committed in its workspace, to the ordinary verification. See each field description for the narrow retained-repair, descendant-adoption and startup-settlement bindings.",
       ),
     reason: z
       .string()
@@ -273,7 +339,45 @@ export const CommandInput = z
       .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
       .optional(),
     adoptionID: z.uuid().optional(),
-    targetBranch: z.string().min(1).max(200).optional(),
+    targetBranch: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        "Selected local target branch. Create or inspect branches and PRs with configured repository tooling first; the runner does not switch checkouts or merge into the default branch.",
+      ),
+    expectedTargetHead: z
+      .string()
+      .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+      .optional(),
+    targetBaseBranch: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Reviewed local base branch for integration-target."),
+    targetBaseRevision: z
+      .string()
+      .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+      .optional(),
+    targetTaskIDs: z
+      .array(z.uuid())
+      .min(1)
+      .max(100)
+      .refine((taskIDs) => new Set(taskIDs).size === taskIDs.length)
+      .optional()
+      .describe("Selected same-project tasks bound to one shared integration target."),
+    targetPullRequest: z
+      .strictObject({
+        id: z.string().min(1).max(256),
+        number: z.int().positive().nullable(),
+        url: z.url(),
+        title: z.string().max(512).nullable(),
+      })
+      .nullable()
+      .optional(),
+    batchTaskIDs: z.array(z.uuid()).min(2).max(100).optional(),
     projectID: z
       .string()
       .min(1)
@@ -290,6 +394,10 @@ export const CommandInput = z
       .positive()
       .optional()
       .describe("Current task revision for retained verification."),
+  })
+  .superRefine((input, context) => {
+    for (const issue of integrationCommandIssues(input))
+      context.addIssue({ code: "custom", path: issue.path, message: issue.message })
   })
   .superRefine((input, context) => {
     if (input.scopeRemovals && input.action !== "amend-scope")

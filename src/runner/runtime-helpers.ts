@@ -1,6 +1,7 @@
 import { GitObservations } from "./git-observations.ts"
 import { type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
 import { type BaseReach, type IntegrationProof } from "./integration-proof.ts"
+import type { ManagedTargetIntegration } from "./integration/target.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
 import type { AttemptRow } from "./store.ts"
 import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
@@ -252,7 +253,11 @@ export type CommandContext = {
   continuedOwner: string | undefined
   configuredWorker: ModelPolicy | undefined
   ownerSession: HostSession | null | undefined
-  preflight: { bases: Map<string, BaseReach>; integration: IntegrationProof | undefined }
+  preflight: {
+    bases: Map<string, BaseReach>
+    integration: IntegrationProof | undefined
+    managedTargetIntegration?: ManagedTargetIntegration
+  }
   terminalContinuation:
     { attemptID: string; messageID: string; inputID: string; worker: HostSession } | undefined
   terminalRepairContinuation: { operationID: string; owner: string } | undefined

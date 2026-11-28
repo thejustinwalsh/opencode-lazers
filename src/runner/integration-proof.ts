@@ -11,6 +11,7 @@ import {
   changeContained,
   commitResolves,
   gitRun,
+  isObjectID,
   isAncestorAsync,
   patchIdOf,
   readChangeNote,
@@ -147,9 +148,13 @@ export async function proveIntegration(
   directory: string,
   artifact: string,
   evidence: ChangeEvidence & { baseTree?: string | null },
+  target = "HEAD",
 ): Promise<IntegrationProof> {
-  const head = (await gitRun(directory, ["rev-parse", "HEAD"])).stdout.trim()
-  const containment = await evidenceContained(directory, { ...evidence, commit: artifact }, "HEAD")
+  const result = await gitRun(directory, ["rev-parse", "--verify", `${target}^{commit}`])
+  if (result.code !== 0 || !isObjectID(result.stdout))
+    throw new Error(`Integration target does not resolve to a commit: ${target}`)
+  const head = result.stdout
+  const containment = await evidenceContained(directory, { ...evidence, commit: artifact }, head)
   return { artifact, head, containment }
 }
 
@@ -160,7 +165,7 @@ export async function proveIntegration(
 export async function proofForArtifact(
   read: <T>(run: (db: Database) => T) => T,
   directory: string,
-  input: { artifact: string; attemptID?: string; base?: string | null },
+  input: { artifact: string; attemptID?: string; base?: string | null; target?: string },
 ): Promise<IntegrationProof> {
   const stored = read((db) => storedEvidence(db, input))
   const live = (await commitResolves(directory, input.artifact))
@@ -171,7 +176,7 @@ export async function proofForArtifact(
   if (live?.patchId) evidence.patchId = live.patchId
   if (live?.commitPatchIds?.length) evidence.commitPatchIds = live.commitPatchIds
   if (live?.tree) evidence.tree = live.tree
-  return proveIntegration(directory, input.artifact, evidence)
+  return proveIntegration(directory, input.artifact, evidence, input.target)
 }
 
 export type BaseReach = { ok: true; via: "ancestor" | "tree" } | { ok: false; reason: string }
