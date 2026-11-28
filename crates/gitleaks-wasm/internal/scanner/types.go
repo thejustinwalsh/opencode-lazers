@@ -46,6 +46,7 @@ type Location struct {
 type Finding struct {
 	Rule        string   `json:"rule"`
 	Description string   `json:"description"`
+	FileIndex   int      `json:"fileIndex"`
 	Location    Location `json:"location"`
 	Fingerprint string   `json:"fingerprint"`
 	Masked      string   `json:"masked"`
@@ -64,10 +65,11 @@ type InlineMatch struct {
 }
 
 type InlineAllow struct {
-	Path    string        `json:"path"`
-	Line    int           `json:"line"`
-	Matches []InlineMatch `json:"matches"`
-	Exact   bool          `json:"exact"`
+	Path      string        `json:"path"`
+	FileIndex int           `json:"fileIndex"`
+	Line      int           `json:"line"`
+	Matches   []InlineMatch `json:"matches"`
+	Exact     bool          `json:"exact"`
 }
 
 type AllowlistFile struct {
@@ -83,10 +85,17 @@ type AllowlistChange struct {
 	Exact   bool            `json:"exact"`
 }
 
+type ScannedFile struct {
+	Side  string `json:"side"`
+	Index int    `json:"index"`
+	Path  string `json:"path"`
+}
+
 type Result struct {
 	ComparisonID string                `json:"comparisonID"`
 	BaseRevision string                `json:"baseRevision"`
 	HeadRevision string                `json:"headRevision"`
+	ScannedFiles []ScannedFile         `json:"scannedFiles"`
 	Introduced   []Finding             `json:"introduced"`
 	Unclassified []UnclassifiedFinding `json:"unclassified"`
 	Inline       []InlineAllow         `json:"inline"`
@@ -101,6 +110,7 @@ type rawMatch struct {
 	endLine     int
 	startCol    int
 	endCol      int
+	fileIndex   int
 	entropy     float32
 	hasEntropy  bool
 	span        string

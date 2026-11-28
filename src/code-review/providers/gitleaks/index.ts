@@ -14,6 +14,7 @@ export {
   type GitleaksLineRange,
   type GitleaksLocation,
   type GitleaksResult,
+  type GitleaksResultIdentity,
   type GitleaksSettings,
   type GitleaksSide,
   type GitleaksSkippedInput,

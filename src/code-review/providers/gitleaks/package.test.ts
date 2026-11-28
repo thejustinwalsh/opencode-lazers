@@ -17,6 +17,7 @@ import {
   type GitleaksLocation,
   type GitleaksProviderSeams,
   type GitleaksResult,
+  type GitleaksResultIdentity,
   type GitleaksSettings,
   type GitleaksSide,
   type GitleaksSkippedInput,
@@ -41,6 +42,7 @@ type PublicSurface =
   | GitleaksLocation
   | GitleaksProviderSeams
   | GitleaksResult
+  | GitleaksResultIdentity
   | GitleaksSettings
   | GitleaksSide
   | GitleaksSkippedInput

@@ -4,6 +4,7 @@ import {
   type GitleaksComparisonReader,
   type GitleaksFailureCode,
   type GitleaksLineRange,
+  type GitleaksResultIdentity,
   type GitleaksSettings,
   type GitleaksSide,
   type GitleaksSkippedInput,
@@ -18,14 +19,15 @@ import {
   sourcePaths,
 } from "./snapshot-input.ts"
 import type { GitleaksWasmRequest, GitleaksWasmSide } from "./wasm-contract.ts"
+import { safeGitleaksIdentity } from "./privacy.ts"
 
 const utf8 = new TextEncoder()
 
 export interface GitleaksPreparedInput {
   request: GitleaksWasmRequest
+  identity: GitleaksResultIdentity
   changes: Record<string, GitleaksLineRange[]>
   head: GitleaksWasmSide
-  scannedFiles: { side: GitleaksSide; path: string }[]
   skipped: GitleaksSkippedInput[]
 }
 
@@ -114,15 +116,16 @@ function isSideFailure(
 
 function requestBase(
   reader: GitleaksComparisonReader,
+  identity: GitleaksResultIdentity,
   base: GitleaksWasmSide,
   head: GitleaksWasmSide,
   changes: Record<string, GitleaksLineRange[]>,
   changesComplete: boolean,
 ): GitleaksWasmRequest {
   return {
-    comparisonID: reader.comparisonID,
-    baseRevision: reader.baseRevision,
-    headRevision: reader.headRevision,
+    comparisonID: identity.comparisonID,
+    baseRevision: identity.baseRevision,
+    headRevision: identity.headRevision,
     salt: randomBytes(32).toString("hex"),
     base,
     head,
@@ -163,7 +166,6 @@ async function readSideSources(
   settings: GitleaksSettings,
   inputBytes: number,
   skipped: GitleaksSkippedInput[],
-  scannedFiles: GitleaksPreparedInput["scannedFiles"],
 ): Promise<SideReadOutcome> {
   let complete = true
   let fileCount = 0
@@ -191,7 +193,6 @@ async function readSideSources(
     target.files.push({ path, content: source.content })
     fileCount++
     inputBytes += addition
-    scannedFiles.push({ side, path })
   }
   return { complete, inputBytes, fileCount }
 }
@@ -225,7 +226,6 @@ export async function prepareGitleaksInput(
   signal: AbortSignal,
 ): Promise<GitleaksInputPreparation> {
   const skipped: GitleaksSkippedInput[] = []
-  const scannedFiles: GitleaksPreparedInput["scannedFiles"] = []
   const baseLoad = await loadCapturedSide(reader, "base", signal, settings.maxFileBytes)
   if (isSideFailure(baseLoad))
     return { ok: false, code: baseLoad.code, skipped: baseLoad.skipped ?? skipped }
@@ -234,7 +234,15 @@ export async function prepareGitleaksInput(
     return { ok: false, code: headLoad.code, skipped: headLoad.skipped ?? skipped }
   const ranges = lineRanges(reader)
   if (!ranges.complete) skipped.push({ side: "comparison", reason: "change-ranges-unavailable" })
-  const request = requestBase(reader, baseLoad.side, headLoad.side, ranges.changes, ranges.complete)
+  const identity = safeGitleaksIdentity(reader)
+  const request = requestBase(
+    reader,
+    identity,
+    baseLoad.side,
+    headLoad.side,
+    ranges.changes,
+    ranges.complete,
+  )
   let inputBytes = utf8.encode(JSON.stringify({ op: "gitleaks", payload: request })).byteLength
   if (inputBytes > settings.maxInputBytes || inputBytes > MAX_WASM_REQUEST_BYTES)
     return tooLarge(skipped)
@@ -249,7 +257,6 @@ export async function prepareGitleaksInput(
     settings,
     inputBytes,
     skipped,
-    scannedFiles,
   )
   if (baseRead.code) return { ok: false, code: baseRead.code, skipped }
   inputBytes = baseRead.inputBytes
@@ -262,7 +269,6 @@ export async function prepareGitleaksInput(
     settings,
     inputBytes,
     skipped,
-    scannedFiles,
   )
   if (headRead.code) return { ok: false, code: headRead.code, skipped }
   request.baseComplete = binary.baseComplete && baseRead.complete
@@ -275,9 +281,9 @@ export async function prepareGitleaksInput(
     ok: true,
     input: {
       request,
+      identity,
       changes: ranges.changes,
       head: headLoad.side,
-      scannedFiles,
       skipped,
     },
   }

@@ -42,6 +42,12 @@ export interface GitleaksComparisonReader {
   isCurrent?(comparisonID: string): boolean | Promise<boolean>
 }
 
+export interface GitleaksResultIdentity {
+  comparisonID: string
+  baseRevision: string
+  headRevision: string
+}
+
 export interface GitleaksSettings {
   /** Gitleaks does not inspect a captured file larger than this many UTF-8 bytes. */
   maxFileBytes: number
@@ -73,6 +79,7 @@ export type GitleaksFailureCode =
   | "invalid-config"
   | "invalid-output"
   | "detector-failed"
+  | "worker-cleanup-failed"
 
 export type GitleaksSkipReason =
   | "binary"
@@ -83,6 +90,7 @@ export type GitleaksSkipReason =
 
 export interface GitleaksSkippedInput {
   side: GitleaksSide | "comparison"
+  /** Internal preparation detail; public results omit unverified paths. */
   path?: string
   reason: GitleaksSkipReason
 }
@@ -165,7 +173,7 @@ export interface GitleaksAllowlistChange {
 export interface GitleaksResult {
   provider: typeof GITLEAKS_PROVIDER_ID
   tool: { id: typeof GITLEAKS_TOOL; version: typeof GITLEAKS_VERSION }
-  identity: { comparisonID: string; baseRevision: string; headRevision: string }
+  identity: GitleaksResultIdentity
   status: "complete" | "degraded" | "failed" | "cancelled" | "stale"
   coverage: GitleaksCoverage
   findings: GitleaksIntroducedFinding[]

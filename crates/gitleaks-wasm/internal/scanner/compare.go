@@ -30,17 +30,18 @@ func Scan(input Request) (Result, string) {
 	if code != "" {
 		return Result{}, code
 	}
+	privacyCandidates := append(rawPrivacyCandidates(base), rawPrivacyCandidates(head)...)
 
 	result := Result{
 		ComparisonID: input.ComparisonID,
 		BaseRevision: input.BaseRevision,
 		HeadRevision: input.HeadRevision,
+		ScannedFiles: []ScannedFile{},
 		Introduced:   []Finding{},
 		Unclassified: []UnclassifiedFinding{},
 		Inline:       []InlineAllow{},
 	}
 	complete := input.BaseComplete && input.HeadComplete && input.ChangesComplete
-	allMatchSpans := append(matchSpans(base.matches), matchSpans(head.matches)...)
 	candidates := introducedMatches(base.matches, head.matches, input.HeadChanges)
 	if complete {
 		for _, match := range candidates {
@@ -57,7 +58,7 @@ func Scan(input Request) (Result, string) {
 	}
 
 	marked := markedLines(input.Head.Files, input.HeadChanges, input.ChangesComplete)
-	if len(marked) > 0 {
+	if hasInlineAllow(input.Base.Files) || hasInlineAllow(input.Head.Files) {
 		baseOpen, errCode := scanSide(input.Base, true, salt)
 		if errCode != "" {
 			return Result{}, errCode
@@ -66,28 +67,31 @@ func Scan(input Request) (Result, string) {
 		if errCode != "" {
 			return Result{}, errCode
 		}
-		allMatchSpans = append(allMatchSpans, matchSpans(baseOpen.matches)...)
-		allMatchSpans = append(allMatchSpans, matchSpans(headOpen.matches)...)
-		hidden := introducedMatches(baseOpen.matches, headOpen.matches, input.HeadChanges)
-		for _, marker := range marked {
-			inline := InlineAllow{
-				Path:    marker.Path,
-				Line:    marker.Line,
-				Exact:   complete,
-				Matches: []InlineMatch{},
-			}
-			if complete {
-				for _, match := range hidden {
-					if match.path == marker.Path && match.startLine <= marker.Line && marker.Line <= match.endLine {
-						inline.Matches = append(inline.Matches, InlineMatch{
-							Rule:        match.rule,
-							Fingerprint: match.fingerprint,
-							Masked:      match.masked,
-						})
+		privacyCandidates = append(privacyCandidates, rawPrivacyCandidates(baseOpen)...)
+		privacyCandidates = append(privacyCandidates, rawPrivacyCandidates(headOpen)...)
+		if len(marked) > 0 {
+			hidden := introducedMatches(baseOpen.matches, headOpen.matches, input.HeadChanges)
+			for _, marker := range marked {
+				inline := InlineAllow{
+					Path:      marker.Path,
+					FileIndex: marker.FileIndex,
+					Line:      marker.Line,
+					Exact:     complete,
+					Matches:   []InlineMatch{},
+				}
+				if complete {
+					for _, match := range hidden {
+						if match.path == marker.Path && match.startLine <= marker.Line && marker.Line <= match.endLine {
+							inline.Matches = append(inline.Matches, InlineMatch{
+								Rule:        match.rule,
+								Fingerprint: match.fingerprint,
+								Masked:      match.masked,
+							})
+						}
 					}
 				}
+				result.Inline = append(result.Inline, inline)
 			}
-			result.Inline = append(result.Inline, inline)
 		}
 	}
 
@@ -103,7 +107,7 @@ func Scan(input Request) (Result, string) {
 		if errCode != "" {
 			return Result{}, errCode
 		}
-		allMatchSpans = append(allMatchSpans, matchSpans(headBaseRules.matches)...)
+		privacyCandidates = append(privacyCandidates, rawPrivacyCandidates(headBaseRules)...)
 		underBase := introducedMatches(base.matches, headBaseRules.matches, input.HeadChanges)
 		introducedCounts := countMatches(candidates)
 		leftOut := 0
@@ -142,10 +146,11 @@ func Scan(input Request) (Result, string) {
 		}
 	}
 
-	secrets := sortedUniqueSecrets(allMatchSpans)
+	secrets := sortedUniqueSecrets(privacyCandidates)
 	result.ComparisonID = sanitizeText(result.ComparisonID, secrets)
 	result.BaseRevision = sanitizeText(result.BaseRevision, secrets)
 	result.HeadRevision = sanitizeText(result.HeadRevision, secrets)
+	result.ScannedFiles = scannedFiles(input, secrets)
 	sanitizeResult(&result, secrets)
 	return result, ""
 }
@@ -263,7 +268,7 @@ func countMatches(matches []rawMatch) map[string]int {
 
 func markedLines(files []File, changes map[string][]LineRange, changesComplete bool) []InlineAllow {
 	marked := make([]InlineAllow, 0)
-	for _, file := range files {
+	for fileIndex, file := range files {
 		if !strings.Contains(file.Content, "gitleaks:allow") {
 			continue
 		}
@@ -271,7 +276,7 @@ func markedLines(files []File, changes map[string][]LineRange, changesComplete b
 		if !changesComplete {
 			for number, line := range lines {
 				if strings.Contains(line, "gitleaks:allow") {
-					marked = append(marked, InlineAllow{Path: file.Path, Line: number + 1})
+					marked = append(marked, InlineAllow{Path: file.Path, FileIndex: fileIndex, Line: number + 1})
 				}
 			}
 			continue
@@ -279,7 +284,7 @@ func markedLines(files []File, changes map[string][]LineRange, changesComplete b
 		for _, interval := range changes[file.Path] {
 			for number := interval[0]; number <= interval[1]; number++ {
 				if number <= len(lines) && strings.Contains(lines[number-1], "gitleaks:allow") {
-					marked = append(marked, InlineAllow{Path: file.Path, Line: number})
+					marked = append(marked, InlineAllow{Path: file.Path, FileIndex: fileIndex, Line: number})
 				}
 			}
 		}
@@ -291,6 +296,15 @@ func markedLines(files []File, changes map[string][]LineRange, changesComplete b
 		return marked[i].Line < marked[j].Line
 	})
 	return marked
+}
+
+func hasInlineAllow(files []File) bool {
+	for _, file := range files {
+		if strings.Contains(file.Content, "gitleaks:allow") {
+			return true
+		}
+	}
+	return false
 }
 
 func changedAllowlists(files []ChangedFile) []AllowlistFile {
@@ -392,14 +406,26 @@ func utf16Slice(value string, limit int) string {
 	return out.String()
 }
 
-func matchSpans(matches []rawMatch) []string {
-	spans := make([]string, 0, len(matches))
-	for _, match := range matches {
+func rawPrivacyCandidates(scan rawScan) []string {
+	spans := make([]string, 0, len(scan.privacyCandidates)+len(scan.matches))
+	spans = append(spans, scan.privacyCandidates...)
+	for _, match := range scan.matches {
 		if match.span != "" {
 			spans = append(spans, match.span)
 		}
 	}
 	return spans
+}
+
+func scannedFiles(input Request, secrets []string) []ScannedFile {
+	files := make([]ScannedFile, 0, len(input.Base.Files)+len(input.Head.Files))
+	for index, file := range input.Base.Files {
+		files = append(files, ScannedFile{Side: "base", Index: index, Path: sanitizeText(file.Path, secrets)})
+	}
+	for index, file := range input.Head.Files {
+		files = append(files, ScannedFile{Side: "head", Index: index, Path: sanitizeText(file.Path, secrets)})
+	}
+	return files
 }
 
 func sanitizeResult(result *Result, secrets []string) {
@@ -452,6 +478,7 @@ func projectFinding(match rawMatch) Finding {
 	finding := Finding{
 		Rule:        match.rule,
 		Description: match.description,
+		FileIndex:   match.fileIndex,
 		Location: Location{
 			Path:      match.path,
 			StartLine: match.startLine,

@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { parentPort } from "node:worker_threads"
 import { memoryExhausted, runFallowModule, WasiTrap } from "../../../audit/fallow-wasi.ts"
 import type {
@@ -11,9 +8,11 @@ import type {
 
 const port = parentPort
 
-type Message = { module: WebAssembly.Module; request: GitleaksWasmRequest }
+type Message = { module: WebAssembly.Module; request: GitleaksWasmRequest; root: string }
 
 export type GitleaksWorkerMessage = Message
+
+const startedMessage = { type: "started" } as const
 
 function parseOutput(stdout: string): Record<string, unknown> | undefined {
   try {
@@ -59,19 +58,17 @@ function wasiFailure(error: unknown): GitleaksWasmResponse {
   return { ok: false, code: "detector-failed" }
 }
 
-function responseFor({ module, request }: Message): GitleaksWasmResponse {
-  const root = mkdtempSync(join(tmpdir(), "lazers-gitleaks-"))
+function responseFor({ module, request, root }: Message): GitleaksWasmResponse {
   try {
     // WASI receives an empty, read-only directory. Captured source only crosses stdin.
     const outcome = runFallowModule(module, { op: "gitleaks", root, payload: request })
     return decodeGitleaksWasmOutput(outcome.stdout, outcome.exitCode ?? null)
   } catch (error) {
     return wasiFailure(error)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
   }
 }
 
 port?.on("message", (message: GitleaksWorkerMessage) => {
+  port.postMessage(startedMessage)
   port.postMessage(responseFor(message))
 })

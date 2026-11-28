@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { expect, test } from "bun:test"
@@ -9,8 +9,11 @@ import {
   GITLEAKS_PARITY_FIXTURES,
   readerFor,
   wasmRequest,
+  type SecretFixture,
 } from "../../../../test/code-review/gitleaks-fixtures/fixtures.ts"
 import { runGitleaksWorker } from "./worker-client.ts"
+
+const CAPTURE_GROUP_CANARY = "ABCDEFGHIJKLMNOP"
 
 async function moduleForTests(): Promise<WebAssembly.Module> {
   return WebAssembly.compile(
@@ -28,6 +31,41 @@ function fixtureReader() {
     changedFiles: [{ path, status: "modified" }],
     changes: { [path]: [{ startLine: 2, endLine: 2 }] },
   })
+}
+
+function captureGroupFixture(): SecretFixture {
+  const path = `src/${CAPTURE_GROUP_CANARY}.ts`
+  const config = [
+    "[extend]",
+    "useDefault = true",
+    "[[rules]]",
+    `id = 'capture-${CAPTURE_GROUP_CANARY}'`,
+    `description = 'description-${CAPTURE_GROUP_CANARY}'`,
+    "regex = '''TOKEN=([A-Z]{16})'''",
+    "secretGroup = 1",
+    "keywords = ['TOKEN=']",
+    "[[allowlists]]",
+    `paths = ['''^never/${CAPTURE_GROUP_CANARY}$''']`,
+  ].join("\n")
+  return {
+    base: {},
+    head: { [path]: `const key = "TOKEN=${CAPTURE_GROUP_CANARY}";\n` },
+    changedFiles: [
+      { path, status: "added" },
+      { path: ".gitleaks.toml", status: "added" },
+    ],
+    changes: {
+      [path]: [{ startLine: 1, endLine: 1 }],
+      ".gitleaks.toml": [{ startLine: 1, endLine: config.split("\n").length }],
+    },
+    headConfig: config,
+  }
+}
+
+function gitleaksTempRoots(): string[] {
+  return readdirSync(tmpdir())
+    .filter((name) => name.startsWith("lazers-gitleaks-"))
+    .sort()
 }
 
 test("Gitleaks reports only a comparison-introduced, redacted finding", async () => {
@@ -50,6 +88,60 @@ test("Gitleaks reports only a comparison-introduced, redacted finding", async ()
   const output = JSON.stringify(result)
   expect(output).not.toContain(FAKE_AWS_KEY)
   expect(output).not.toContain("export const key")
+})
+
+test("capture-group secrets are redacted from WASM metadata and public coverage", async () => {
+  const fixture = captureGroupFixture()
+  const sourceLine = fixture.head[`src/${CAPTURE_GROUP_CANARY}.ts`]!.trimEnd()
+  const reader = {
+    ...readerFor(fixture),
+    comparisonID: CAPTURE_GROUP_CANARY,
+    baseRevision: CAPTURE_GROUP_CANARY,
+    headRevision: CAPTURE_GROUP_CANARY,
+  }
+  const result = await scanGitleaksComparison(reader)
+
+  expect(result.status).toBe("complete")
+  expect(result.findings).toHaveLength(1)
+  expect(result.findings[0]?.location.range).toEqual({
+    startLine: 1,
+    startCol: 0,
+    endLine: 1,
+    endCol: sourceLine.length,
+  })
+  expect(result.findings[0]?.location.prPosition.line).toBe(1)
+  expect(result.coverage.scannedFiles).toHaveLength(1)
+  expect(result.coverage.scannedFiles[0]?.path).not.toContain(CAPTURE_GROUP_CANARY)
+  expect(result.allowlistChange?.added.join(" ")).not.toContain(CAPTURE_GROUP_CANARY)
+  expect(JSON.stringify(result)).not.toContain(CAPTURE_GROUP_CANARY)
+  expect(JSON.stringify(result)).not.toContain(`TOKEN=${CAPTURE_GROUP_CANARY}`)
+  expect(JSON.stringify(result)).not.toContain("const key")
+})
+
+test("stale and binary-degraded results do not echo untrusted identity or coverage paths", async () => {
+  const path = `src/${CAPTURE_GROUP_CANARY}.ts`
+  const reader = {
+    ...readerFor({
+      base: {},
+      head: {},
+      changedFiles: [{ path, status: "added", binary: true }],
+      changes: { [path]: [{ startLine: 1, endLine: 1 }] },
+    }),
+    comparisonID: CAPTURE_GROUP_CANARY,
+    baseRevision: CAPTURE_GROUP_CANARY,
+    headRevision: CAPTURE_GROUP_CANARY,
+  }
+  const stale = await scanGitleaksComparison({ ...reader, isCurrent: () => false })
+  const degraded = await scanGitleaksComparison(reader)
+
+  expect(stale.status).toBe("stale")
+  expect(degraded.status).toBe("degraded")
+  expect(degraded.coverage.skipped).toContainEqual({
+    side: "comparison",
+    reason: "binary",
+  })
+  expect(JSON.stringify(stale)).not.toContain(CAPTURE_GROUP_CANARY)
+  expect(JSON.stringify(degraded)).not.toContain(CAPTURE_GROUP_CANARY)
 })
 
 test("secret fingerprints are keyed per run rather than stable low-entropy hashes", async () => {
@@ -218,7 +310,6 @@ test("an unavailable base file degrades classification instead of claiming intro
   expect(result.unclassified).toHaveLength(1)
   expect(result.coverage.skipped).toContainEqual({
     side: "base",
-    path,
     reason: "source-unavailable",
   })
 })
@@ -239,16 +330,22 @@ test("provider byte limits return typed degraded coverage without echoing conten
   expect(JSON.stringify(result)).not.toContain(FAKE_AWS_KEY)
 })
 
-test("worker failures do not echo secret-bearing input or error messages", async () => {
-  const result = await scanGitleaksComparison(fixtureReader(), undefined, {
+test("worker failures do not echo secret-bearing identity or error messages", async () => {
+  const reader = {
+    ...fixtureReader(),
+    comparisonID: CAPTURE_GROUP_CANARY,
+    baseRevision: CAPTURE_GROUP_CANARY,
+    headRevision: CAPTURE_GROUP_CANARY,
+  }
+  const result = await scanGitleaksComparison(reader, undefined, {
     run: async () => {
-      throw new Error(`${FAKE_AWS_KEY} private worker diagnostic`)
+      throw new Error(`${CAPTURE_GROUP_CANARY} private worker diagnostic`)
     },
   })
 
   expect(result.status).toBe("failed")
   expect(result.failure).toEqual({ code: "worker-failed" })
-  expect(JSON.stringify(result)).not.toContain(FAKE_AWS_KEY)
+  expect(JSON.stringify(result)).not.toContain(CAPTURE_GROUP_CANARY)
   expect(JSON.stringify(result)).not.toContain("private worker diagnostic")
 })
 
@@ -299,28 +396,41 @@ test("an aborted provider does not start source reads or return findings", async
   expect(reads).toBe(0)
 })
 
-test("worker cancellation terminates an in-flight WASI run", async () => {
+test("worker cancellation terminates an in-flight WASI run and removes its parent-owned root", async () => {
   const module = await moduleForTests()
   const controller = new AbortController()
+  const rootsBefore = gitleaksTempRoots()
+  const previousRoots = new Set(rootsBefore)
+  let started = false
+  let rootCreatedBeforeAbort = false
   const request = wasmRequest({
     base: {},
     head: {},
     changedFiles: [],
     changes: {},
   })
-  const pending = runGitleaksWorker(module, request, controller.signal, 120_000)
-  controller.abort()
+  request.head.files = [{ path: "generated-large.ts", content: "x".repeat(4_000_000) }]
+  const pending = runGitleaksWorker(module, request, controller.signal, 120_000, () => {
+    started = true
+    rootCreatedBeforeAbort = gitleaksTempRoots().some((root) => !previousRoots.has(root))
+    controller.abort()
+  })
 
   await expect(pending).rejects.toMatchObject({
     code: "cancelled",
   })
+  expect(started).toBe(true)
+  expect(rootCreatedBeforeAbort).toBe(true)
+  expect(gitleaksTempRoots()).toEqual(rootsBefore)
 })
 
 test("repeated isolated runs release worker and WASI resources", async () => {
+  const rootsBefore = gitleaksTempRoots()
   for (let count = 0; count < 3; count++) {
     const result = await scanGitleaksComparison(fixtureReader())
     expect(result.findings).toHaveLength(1)
   }
+  expect(gitleaksTempRoots()).toEqual(rootsBefore)
   Bun.gc(true)
 })
 
@@ -348,5 +458,44 @@ test("the WASI response contains no source text or matched secret", async () => 
     expect(wasm.stdout).not.toContain("export const key")
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("the WASM stdout sanitizes capture-group secrets in rule, description, path, and allowlist metadata", async () => {
+  const fixture = captureGroupFixture()
+  const module = await moduleForTests()
+  const request = wasmRequest(fixture)
+  request.comparisonID = CAPTURE_GROUP_CANARY
+  request.baseRevision = CAPTURE_GROUP_CANARY
+  request.headRevision = CAPTURE_GROUP_CANARY
+  const root = mkdtempSync(join(tmpdir(), "gitleaks-privacy-test-"))
+  try {
+    const wasm = runFallowModule(module, {
+      op: "gitleaks",
+      root,
+      payload: request,
+    })
+    expect(wasm.exitCode).toBe(0)
+    expect(wasm.stderr).not.toContain(CAPTURE_GROUP_CANARY)
+    expect(wasm.stderr).not.toContain(`TOKEN=${CAPTURE_GROUP_CANARY}`)
+    expect(wasm.stderr).not.toContain("const key")
+    expect(wasm.stdout).not.toContain(CAPTURE_GROUP_CANARY)
+    expect(wasm.stdout).not.toContain(`TOKEN=${CAPTURE_GROUP_CANARY}`)
+    expect(wasm.stdout).not.toContain("const key")
+    const decoded = JSON.parse(wasm.stdout) as {
+      ok: boolean
+      result?: {
+        introduced: { location: { startLine: number }; rule: string; description: string }[]
+        scannedFiles: { side: string; path: string }[]
+        allowlist?: { added: string[] }
+      }
+    }
+    expect(decoded.ok).toBe(true)
+    expect(decoded.result?.introduced).toHaveLength(1)
+    expect(decoded.result?.introduced[0]?.location.startLine).toBe(1)
+    expect(decoded.result?.scannedFiles[0]?.path).not.toContain(CAPTURE_GROUP_CANARY)
+    expect(decoded.result?.allowlist?.added.join(" ")).not.toContain(CAPTURE_GROUP_CANARY)
+  } finally {
+    rmSync(root, { recursive: true })
   }
 })

@@ -56,6 +56,67 @@ func TestScanRedactsAndClassifiesIntroducedSecret(t *testing.T) {
 	}
 }
 
+func TestScanRedactsCaptureGroupFromMetadataAndCoverage(t *testing.T) {
+	const secret = "ABCDEFGHIJKLMNOP"
+	path := "src/" + secret + ".ts"
+	config := strings.Join([]string{
+		"[extend]",
+		"useDefault = true",
+		"[[rules]]",
+		"id = 'capture-" + secret + "'",
+		"description = 'description-" + secret + "'",
+		"regex = '''TOKEN=([A-Z]{16})'''",
+		"secretGroup = 1",
+		"keywords = ['TOKEN=']",
+		"[[allowlists]]",
+		"paths = ['''^never/" + secret + "$''']",
+	}, "\n")
+	input := requestFor(nil, []File{{
+		Path:    path,
+		Content: "const key = \"TOKEN=" + secret + "\";\n",
+	}}, map[string][]LineRange{
+		path:             {{1, 1}},
+		".gitleaks.toml": {{1, 10}},
+	})
+	input.ComparisonID = "comparison-" + secret
+	input.BaseRevision = "base-" + secret
+	input.HeadRevision = "head-" + secret
+	input.Head.Config = config
+	input.Head.ConfigPresent = true
+	input.ChangedFiles = []ChangedFile{
+		{Path: path, Status: "added"},
+		{Path: ".gitleaks.toml", Status: "added"},
+	}
+
+	result, code := Scan(input)
+	if code != "" {
+		t.Fatalf("Scan returned %q", code)
+	}
+	if len(result.Introduced) != 1 || result.Introduced[0].Location.StartLine != 1 {
+		t.Fatalf("expected the introduced capture-group finding with source coordinates, got %#v", result)
+	}
+	if result.Introduced[0].FileIndex != 0 {
+		t.Fatalf("expected the finding to retain its input file index, got %#v", result.Introduced[0])
+	}
+	if len(result.ScannedFiles) != 1 || strings.Contains(result.ScannedFiles[0].Path, secret) {
+		t.Fatalf("scanned-file metadata was not sanitized: %#v", result.ScannedFiles)
+	}
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(encoded)
+	for _, unsafe := range []string{secret, "const key = \"TOKEN="} {
+		if strings.Contains(output, unsafe) {
+			t.Fatalf("serialized result contains unsafe input %q: %s", unsafe, output)
+		}
+	}
+	if result.Allowlist == nil || len(result.Allowlist.Added) == 0 {
+		t.Fatalf("expected allowlist metadata for the sanitizer regression: %#v", result.Allowlist)
+	}
+}
+
 func TestScanDoesNotReportMovedSecretAndCountsCopies(t *testing.T) {
 	base := []File{{
 		Path:    "src/a.ts",

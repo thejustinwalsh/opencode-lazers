@@ -7,15 +7,15 @@
     "regex": "Go standard-library regexp"
   },
   "target": "wasm32-wasip1",
-  "sourceSha256": "9b526a79efe7dc08ab53a9a373295d857398229e42883e83837ab6bedadbafc4",
+  "sourceSha256": "fb9f22b4ad43b3f33caf60d753011905836ffcf1be4ed6e5a7af83feb656c6da",
   "serverContribution": {
     "entries": [["src/code-review/providers/gitleaks/gitleaks-worker.ts", "gitleaks-worker.js"]],
     "assets": [["src/code-review/providers/gitleaks/wasm/gitleaks.wasm", "gitleaks.wasm"]]
   },
   "wasm": {
     "file": "gitleaks.wasm",
-    "bytes": 14915239,
-    "sha256": "d3f73d45d0f9542fd04fcf6f10a5103562a94620508afef2a6133dd8c37d5d43",
+    "bytes": 14924334,
+    "sha256": "39004ece53476e3407d3a2c4794b36ce9ea808dbd43736ea3d1a9bac8798b87f",
     "imports": [
       "wasi_snapshot_preview1.args_get",
       "wasi_snapshot_preview1.args_sizes_get",

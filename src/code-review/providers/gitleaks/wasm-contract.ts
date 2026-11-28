@@ -31,6 +31,7 @@ export interface GitleaksWasmRequest {
 export interface GitleaksWasmFinding {
   rule: string
   description: string
+  fileIndex: number
   location: {
     path: string
     startLine: number
@@ -47,10 +48,12 @@ export interface GitleaksWasmResult {
   comparisonID: string
   baseRevision: string
   headRevision: string
+  scannedFiles: { side: "base" | "head"; index: number; path: string }[]
   introduced: GitleaksWasmFinding[]
   unclassified: (GitleaksWasmFinding & { reason: "incomplete-snapshot" })[]
   inline: {
     path: string
+    fileIndex: number
     line: number
     matches: { rule: string; fingerprint: string; masked: string }[]
     exact: boolean

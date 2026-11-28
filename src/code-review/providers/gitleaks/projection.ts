@@ -1,10 +1,10 @@
 import {
   GITLEAKS_VERSION,
   type GitleaksAllowlistChange,
-  type GitleaksComparisonReader,
   type GitleaksIntroducedFinding,
   type GitleaksLineRange,
   type GitleaksResult,
+  type GitleaksResultIdentity,
   type GitleaksUnclassifiedFinding,
 } from "./contract.ts"
 import { safePath } from "./snapshot-input.ts"
@@ -53,9 +53,11 @@ function location(
 function introducedFinding(
   raw: GitleaksWasmFinding,
   changes: Record<string, GitleaksLineRange[]>,
+  head: GitleaksWasmSide,
 ): GitleaksIntroducedFinding {
   const { location: source } = raw
-  const position = firstChangedLine(changes, source.path, source.startLine, source.endLine)
+  const sourcePath = head.files[raw.fileIndex]?.path ?? source.path
+  const position = firstChangedLine(changes, sourcePath, source.startLine, source.endLine)
   return {
     kind: "secret.introduced",
     severity: "error",
@@ -102,8 +104,20 @@ function unclassifiedFinding(
   }
 }
 
-function sourceLine(side: GitleaksWasmSide, path: string, line: number): string {
-  const content = side.files.find((file) => file.path === path)?.content ?? ""
+function sourceLine(
+  side: GitleaksWasmSide,
+  path: string,
+  line: number,
+  fileIndex?: number,
+): string {
+  const content =
+    fileIndex !== undefined
+      ? (side.files[fileIndex]?.content ?? "")
+      : path === ".gitleaks.toml"
+        ? side.config
+        : path === ".gitleaksignore"
+          ? side.ignore
+          : (side.files.find((file) => file.path === path)?.content ?? "")
   return (content.split("\n")[line - 1] ?? "").replace(/\r$/, "")
 }
 
@@ -116,7 +130,7 @@ function inlineFinding(
     masked,
     fingerprint,
   }))
-  const line = sourceLine(side, raw.path, raw.line)
+  const line = sourceLine(side, raw.path, raw.line, raw.fileIndex)
   const shown = matches[0]
   return {
     kind: "secret.allow.inline",
@@ -229,6 +243,7 @@ function validFindingMetadata(value: Record<string, unknown>): boolean {
   return (
     typeof value.rule === "string" &&
     typeof value.description === "string" &&
+    nonnegativeInteger(value.fileIndex) &&
     typeof value.fingerprint === "string" &&
     /^[0-9a-f]{32}$/.test(value.fingerprint) &&
     safeMasked(value.masked) &&
@@ -250,20 +265,23 @@ function validFindingLocation(source: Record<string, unknown>): boolean {
   )
 }
 
-function wasmFinding(value: unknown): value is GitleaksWasmFinding {
+function wasmFinding(value: unknown, fileCount: number): value is GitleaksWasmFinding {
   return (
     record(value) &&
     record(value.location) &&
     validFindingMetadata(value) &&
+    Number(value.fileIndex) < fileCount &&
     validFindingLocation(value.location)
   )
 }
 
-function validInline(value: unknown): boolean {
+function validInline(value: unknown, fileCount: number): boolean {
   return (
     record(value) &&
     typeof value.path === "string" &&
     safePath(value.path) &&
+    nonnegativeInteger(value.fileIndex) &&
+    Number(value.fileIndex) < fileCount &&
     positiveInteger(value.line) &&
     typeof value.exact === "boolean" &&
     Array.isArray(value.matches) &&
@@ -298,41 +316,80 @@ function validAllowlist(value: unknown): boolean {
   )
 }
 
-function validWasmIdentity(value: Record<string, unknown>, reader: GitleaksComparisonReader) {
+function validWasmIdentity(value: Record<string, unknown>, expected: GitleaksResultIdentity) {
   return (
-    value.comparisonID === reader.comparisonID &&
-    value.baseRevision === reader.baseRevision &&
-    value.headRevision === reader.headRevision
+    sanitizedIdentity(value.comparisonID, expected.comparisonID) &&
+    sanitizedIdentity(value.baseRevision, expected.baseRevision) &&
+    sanitizedIdentity(value.headRevision, expected.headRevision)
   )
 }
 
-function validIntroduced(value: Record<string, unknown>): boolean {
-  return Array.isArray(value.introduced) && value.introduced.every(wasmFinding)
+function sanitizedIdentity(value: unknown, expected: string): boolean {
+  if (value === expected) return true
+  if (typeof value !== "string" || !value.includes("[redacted]")) return false
+  const parts = value.split("[redacted]")
+  if (!expected.startsWith(parts[0]!)) return false
+  let cursor = parts[0]!.length
+  for (let index = 1; index < parts.length; index++) {
+    const part = parts[index]!
+    if (index === parts.length - 1) {
+      return expected.endsWith(part) && expected.length - part.length >= cursor
+    }
+    const next = expected.indexOf(part, cursor)
+    if (next < cursor) return false
+    cursor = next + part.length
+  }
+  return false
 }
 
-function validUnclassified(value: Record<string, unknown>): boolean {
+function validScannedFiles(value: unknown, baseFileCount: number, headFileCount: number): boolean {
   return (
-    Array.isArray(value.unclassified) &&
-    value.unclassified.every(
-      (item) => wasmFinding(item) && record(item) && item.reason === "incomplete-snapshot",
+    Array.isArray(value) &&
+    value.every(
+      (file) =>
+        record(file) &&
+        (file.side === "base" || file.side === "head") &&
+        nonnegativeInteger(file.index) &&
+        Number(file.index) < (file.side === "base" ? baseFileCount : headFileCount) &&
+        typeof file.path === "string" &&
+        safePath(file.path),
     )
   )
 }
 
-function validInlineFindings(value: Record<string, unknown>): boolean {
-  return Array.isArray(value.inline) && value.inline.every(validInline)
+function validIntroduced(value: Record<string, unknown>, fileCount: number): boolean {
+  return (
+    Array.isArray(value.introduced) &&
+    value.introduced.every((item) => wasmFinding(item, fileCount))
+  )
+}
+
+function validUnclassified(value: Record<string, unknown>, fileCount: number): boolean {
+  return (
+    Array.isArray(value.unclassified) &&
+    value.unclassified.every(
+      (item) =>
+        wasmFinding(item, fileCount) && record(item) && item.reason === "incomplete-snapshot",
+    )
+  )
+}
+
+function validInlineFindings(value: Record<string, unknown>, fileCount: number): boolean {
+  return Array.isArray(value.inline) && value.inline.every((item) => validInline(item, fileCount))
 }
 
 function validWasmResult(
   value: unknown,
-  reader: GitleaksComparisonReader,
+  expected: GitleaksResultIdentity,
+  sides: { base: GitleaksWasmSide; head: GitleaksWasmSide },
 ): value is GitleaksWasmResult {
   return (
     record(value) &&
-    validWasmIdentity(value, reader) &&
-    validIntroduced(value) &&
-    validUnclassified(value) &&
-    validInlineFindings(value) &&
+    validWasmIdentity(value, expected) &&
+    validScannedFiles(value.scannedFiles, sides.base.files.length, sides.head.files.length) &&
+    validIntroduced(value, sides.head.files.length) &&
+    validUnclassified(value, sides.head.files.length) &&
+    validInlineFindings(value, sides.head.files.length) &&
     (value.allowlist === undefined || validAllowlist(value.allowlist))
   )
 }
@@ -342,7 +399,7 @@ export function projectGitleaksResult(
   changes: Record<string, GitleaksLineRange[]>,
   head: GitleaksWasmSide,
 ): Pick<GitleaksResult, "findings" | "unclassified" | "inlineAllow" | "allowlistChange"> {
-  const findings = raw.introduced.map((finding) => introducedFinding(finding, changes))
+  const findings = raw.introduced.map((finding) => introducedFinding(finding, changes, head))
   const unclassified = raw.unclassified.map(unclassifiedFinding)
   const inlineAllow = raw.inline.map((finding) => inlineFinding(finding, head))
   const allowlistChange = raw.allowlist ? allowlistFinding(raw.allowlist, changes, head) : undefined
@@ -356,7 +413,8 @@ export function projectGitleaksResult(
 
 export function isValidGitleaksWasmResult(
   value: unknown,
-  reader: GitleaksComparisonReader,
+  expected: GitleaksResultIdentity,
+  sides: { base: GitleaksWasmSide; head: GitleaksWasmSide },
 ): value is GitleaksWasmResult {
-  return validWasmResult(value, reader)
+  return validWasmResult(value, expected, sides)
 }

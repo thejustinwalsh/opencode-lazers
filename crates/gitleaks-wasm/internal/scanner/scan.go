@@ -13,7 +13,8 @@ import (
 )
 
 type rawScan struct {
-	matches []rawMatch
+	matches           []rawMatch
+	privacyCandidates []string
 }
 
 func scanSide(side Side, neutralize bool, salt []byte) (rawScan, string) {
@@ -26,7 +27,12 @@ func scanSide(side Side, neutralize bool, salt []byte) (rawScan, string) {
 	}
 
 	contents := make(map[string]string, len(side.Files))
+	fileIndexes := make(map[string]int, len(side.Files))
+	for index, file := range side.Files {
+		fileIndexes[file.Path] = index
+	}
 	files := append([]File(nil), side.Files...)
+	privacyCandidates := make([]string, 0)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	for _, file := range files {
 		contents[file.Path] = file.Content
@@ -40,6 +46,7 @@ func scanSide(side Side, neutralize bool, salt []byte) (rawScan, string) {
 			StartLine: 1,
 		}
 		for _, finding := range detector.DetectContext(context.Background(), fragment) {
+			privacyCandidates = append(privacyCandidates, finding.Secret, finding.Match)
 			detector.AddFinding(finding)
 		}
 	}
@@ -60,6 +67,7 @@ func scanSide(side Side, neutralize bool, salt []byte) (rawScan, string) {
 			endLine:     finding.EndLine,
 			startCol:    utf16Length(start[:leading]),
 			endCol:      utf16Length(end),
+			fileIndex:   fileIndexes[finding.File],
 			entropy:     finding.Entropy,
 			hasEntropy:  finding.Entropy != 0,
 			span:        span,
@@ -77,7 +85,7 @@ func scanSide(side Side, neutralize bool, salt []byte) (rawScan, string) {
 		}
 		return matches[i].rule < matches[j].rule
 	})
-	return rawScan{matches: matches}, ""
+	return rawScan{matches: matches, privacyCandidates: privacyCandidates}, ""
 }
 
 func sourceLines(source string) []string {
