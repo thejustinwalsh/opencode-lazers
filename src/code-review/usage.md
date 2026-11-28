@@ -65,9 +65,61 @@ const window = await review.source(
 )
 ```
 
+Structural analysis reads both selected sides from that immutable comparison. It returns the engine's
+alignment, token ranges and comments together with the exact source identities; `previousPath` is
+the base-side path for a rename. A missing side is represented by `null`, while an existing empty
+file is read as `""`:
+
+```ts
+const structural = await review.structural(
+  {
+    sessionID,
+    comparisonID: identity.comparisonID,
+    path: file.path,
+  },
+  { ...location, signal },
+)
+if (structural.status === "ready") {
+  const { diff, baseSource, headSource, sourceID } = structural
+  // Apply only while comparisonID/sourceID still match the selected file.
+}
+```
+
+For a moved path, pass the old path explicitly as `previousPath`; the returned `baseSource.path`
+remains the actual base-side path:
+
+```ts
+const moved = await review.structural(
+  { sessionID, comparisonID: identity.comparisonID, path: newPath, previousPath: oldPath },
+  { ...location, signal },
+)
+```
+
+Call `markReviewed` only for an explicit user review action. It is idempotent, does not alter task
+workflow, and pins the selected comparison so an older artifact remains addressable after an attempt
+advances:
+
+```ts
+const baseline = await review.markReviewed(
+  { sessionID, comparisonID: identity.comparisonID, requestID },
+  { ...location, signal },
+)
+const since = await review.resolve(
+  { sessionID, taskID, mode: "since", baseComparisonID: baseline.comparisonID, headAttemptID },
+  { ...location, signal },
+)
+const reviewed = await review.reviewed({ sessionID, taskID, limit: 50 }, { ...location, signal })
+```
+
 For `attempt`, provide `attemptID`; for `since`, provide `baseAttemptID` and `headAttemptID`; for
 `plan`, provide `planID`. `live` accepts an optional `attemptID` and returns `base`, `head`,
 `staged`, `unstaged` and `untracked` sides with an immutable `snapshotID`. A Live result records
 whether edits came from an assigned or shared workspace. A source read is pinned to the selected
 comparison even after its worker workspace is removed. `history` is keyset-paged with its
 `nextCursor`; source windows are limited to 500 lines.
+
+The attempt-pair `since` form remains supported. `CodeReviewDiscussions` and
+`CodeReviewIntegrations` publish the agreed RPC schemas for their independent implementations;
+their handlers are not registered by this structural-review bridge. Discussion references carry a
+validated relative task-route `href`; integration records keep the target's base branch separate
+from the worker's source branch and expose shared-batch membership explicitly.

@@ -32,12 +32,12 @@ Optional semantic JS/language-service enrichment stays on the roadmap.
 Import `CodeReview` from `src/code-review/contract.ts`.
 Its RPC ID remains `lazers.codeReview`.
 
-| Operation | Purpose |
-| --- | --- |
+| Operation | Purpose                                         |
+| --------- | ----------------------------------------------- |
 | `resolve` | Task, Attempt, Since, Live and Plan comparisons |
-| `history` | Paged attempt/artifact selections |
-| `shape` | Shape of an exact `CodeReviewSourceIdentity` |
-| `source` | Pinned near-viewport source window |
+| `history` | Paged attempt/artifact selections               |
+| `shape`   | Shape of an exact `CodeReviewSourceIdentity`    |
+| `source`  | Pinned near-viewport source window              |
 
 Use `codeReviewFilesRef` for `codeReview.files`; keep its existing authorization
 and paging. Use `taskDetailRef` and its cold fields `body`, `execution`,
@@ -141,15 +141,15 @@ existing integration authority and the repository's configured PR tooling.
 Declare `CodeReviewDiscussions` in `src/code-review/discussions/contract.ts`,
 RPC ID `lazers.codeReviewDiscussions`. Every operation includes `sessionID`.
 
-| Operation | Remaining input | Output |
-| --- | --- | --- |
-| `createThread` | `source`, `range`, `comment?`, `requestID` | `CodeReviewThread` |
-| `getThread` | `threadID` | `CodeReviewThread` |
-| `appendComment` | `threadID`, `body`, `requestID` | `CodeReviewComment` |
+| Operation        | Remaining input                                      | Output                              |
+| ---------------- | ---------------------------------------------------- | ----------------------------------- |
+| `createThread`   | `source`, `range`, `comment?`, `requestID`           | `CodeReviewThread`                  |
+| `getThread`      | `threadID`                                           | `CodeReviewThread`                  |
+| `appendComment`  | `threadID`, `body`, `requestID`                      | `CodeReviewComment`                 |
 | `setThreadState` | `threadID`, `state`, `expectedRevision`, `requestID` | updated thread or revision conflict |
-| `prepareDraft` | `threadID`, `intent: "ask" \| "request-fix"` | `CodeReviewDraft` |
-| `locateThread` | `threadID`, `targetComparisonID` | `CodeReviewAnchorLocation` |
-| `linkCorrection` | `threadID`, `correctionTaskID`, `requestID` | updated navigation metadata |
+| `prepareDraft`   | `threadID`, `intent: "ask" \| "request-fix"`         | `CodeReviewDraft`                   |
+| `locateThread`   | `threadID`, `targetComparisonID`                     | `CodeReviewAnchorLocation`          |
+| `linkCorrection` | `threadID`, `correctionTaskID`, `requestID`          | updated navigation metadata         |
 
 `CodeReviewAnchor` contains an exact `CodeReviewSourceIdentity`, range,
 server-derived credential-redacted excerpt, optional verified symbol identity,

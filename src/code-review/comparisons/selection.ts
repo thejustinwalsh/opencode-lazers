@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { diffPaths, treeFiles } from "./git.ts"
+import { commitIsAncestor, diffPaths, treeFiles } from "./git.ts"
 import type {
   CodeReviewComparison,
   CodeReviewComparisonIdentity,
@@ -13,6 +13,7 @@ import { taskChainBase } from "../../runner/task-chain-base.ts"
 import type { ComparisonBlob, ComparisonFile } from "./store.ts"
 import { captureLive } from "./live-capture.ts"
 import { gitFileEntry, liveFileRows } from "./inventory.ts"
+import type { CodeReviewBaselineStore } from "../analysis/baselines.ts"
 
 export type ReviewAttempt = Pick<
   AttemptRow,
@@ -52,10 +53,54 @@ type ResolvedPlan = {
   dependencies: { prerequisite: string; successor: string }[]
 }
 
+function requireReviewedComparison(
+  baselines: CodeReviewBaselineStore,
+  projectID: string,
+  taskID: string,
+  comparisonID: string,
+) {
+  const baseline = baselines.get(taskID, comparisonID)
+  if (!baseline) throw new Error("Since-review comparison is not a reviewed baseline for this task")
+  const comparison = baselines.store.comparison(comparisonID)
+  if (
+    !comparison ||
+    comparison.identity.projectID !== projectID ||
+    comparison.identity.taskID !== taskID ||
+    JSON.stringify(comparison.identity) !== JSON.stringify(baseline.identity)
+  )
+    throw new Error("Reviewed baseline source is unavailable in this project")
+  return baseline
+}
+
+async function assertBaselinePrecedesAttempt(
+  baselineIdentity: CodeReviewComparisonIdentity,
+  selected: ReviewAttempt,
+  projectDirectory: string,
+  requireAttempt: (taskID: string, attemptID: string) => ReviewAttempt,
+  signal: AbortSignal,
+): Promise<string> {
+  const baseRevision = baselineIdentity.headRevision
+  if (!baseRevision) throw new Error("Reviewed baseline has no retained head revision")
+  const baselineAttemptID = baselineIdentity.attemptID
+  if (baselineAttemptID && baselineAttemptID !== selected.id) {
+    const prior = requireAttempt(baselineIdentity.taskID, baselineAttemptID)
+    if (attemptFollows(prior, selected))
+      throw new Error("The since-review baseline must not follow its selected revision")
+  } else if (
+    !(await commitIsAncestor(projectDirectory, baseRevision, selected.artifact!, signal))
+  ) {
+    throw new Error("The since-review baseline must not follow its selected revision")
+  }
+  signal.throwIfAborted()
+  return baseRevision
+}
+
 export class CodeReviewSelectionResolver {
   constructor(
     readonly repository: TaskRepository,
     readonly runner: RunnerStore,
+    readonly baselines: CodeReviewBaselineStore,
+    readonly projectID: string,
   ) {}
 
   select(
@@ -69,6 +114,13 @@ export class CodeReviewSelectionResolver {
       case "attempt":
         return Promise.resolve(this.attemptSelection(taskID, input.attemptID!))
       case "since":
+        if (input.baseComparisonID)
+          return this.sinceComparisonSelection(
+            taskID,
+            input.baseComparisonID,
+            input.headAttemptID!,
+            signal,
+          )
         return Promise.resolve(
           this.sinceSelection(taskID, input.baseAttemptID!, input.headAttemptID!),
         )
@@ -113,6 +165,30 @@ export class CodeReviewSelectionResolver {
     if (attemptFollows(prior, selected))
       throw new Error("The since-review baseline must not follow its selected revision")
     return this.committedSelection(selected.plan_id, selected.id, prior.artifact, selected.artifact)
+  }
+
+  private async sinceComparisonSelection(
+    taskID: string,
+    baseComparisonID: string,
+    headAttemptID: string,
+    signal: AbortSignal,
+  ): Promise<ComparisonSelection> {
+    const baseline = requireReviewedComparison(
+      this.baselines,
+      this.projectID,
+      taskID,
+      baseComparisonID,
+    )
+    const selected = this.requireAttempt(taskID, headAttemptID)
+    if (!selected.artifact) throw new Error("Selected attempt has no retained artifact to compare")
+    const baseRevision = await assertBaselinePrecedesAttempt(
+      baseline.identity,
+      selected,
+      this.repository.projectDirectory,
+      (baselineTaskID, attemptID) => this.requireAttempt(baselineTaskID, attemptID),
+      signal,
+    )
+    return this.committedSelection(selected.plan_id, selected.id, baseRevision, selected.artifact)
   }
 
   private async planSelection(

@@ -156,6 +156,34 @@ export async function requireCommit(
   return resolved
 }
 
+export async function commitIsAncestor(
+  directory: string,
+  ancestor: string,
+  descendant: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(ancestor) ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(descendant)
+  )
+    throw new Error("The selected baseline is not a full Git commit")
+  signal?.throwIfAborted()
+  const child = Bun.spawn(
+    ["git", "-C", directory, "merge-base", "--is-ancestor", ancestor, descendant],
+    {
+      stdout: "ignore",
+      stderr: "pipe",
+      ...(signal ? { signal } : {}),
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+    },
+  )
+  const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+  signal?.throwIfAborted()
+  if (exitCode === 0) return true
+  if (exitCode === 1) return false
+  throw new Error(`git merge-base failed: ${(stderr || "unknown Git error").trim().slice(0, 1200)}`)
+}
+
 export async function treeFiles(
   directory: string,
   revision: string,

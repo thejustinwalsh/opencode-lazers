@@ -1,5 +1,6 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
+import { StructuralDiffSchema } from "./structural/contract.ts"
 
 export const CODE_REVIEW_CONTRACT_VERSION = 1
 
@@ -125,6 +126,10 @@ export const CodeReviewResolveInputSchema = z
     attemptID: z.uuid().optional(),
     baseAttemptID: z.uuid().optional(),
     headAttemptID: z.uuid().optional(),
+    baseComparisonID: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
   })
   .superRefine((input, ctx) => {
     const require = (condition: boolean, field: string) => {
@@ -137,8 +142,15 @@ export const CodeReviewResolveInputSchema = z
     }
     if (input.mode === "attempt") require(input.attemptID !== undefined, "attemptID")
     if (input.mode === "since") {
-      require(input.baseAttemptID !== undefined, "baseAttemptID")
+      require(input.baseAttemptID !== undefined ||
+        input.baseComparisonID !== undefined, "baseAttemptID or baseComparisonID")
       require(input.headAttemptID !== undefined, "headAttemptID")
+      if (input.baseAttemptID !== undefined && input.baseComparisonID !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["baseComparisonID"],
+          message: "Provide one since-review baseline form",
+        })
     }
     if (input.mode === "plan") require(input.planID !== undefined, "planID")
   })
@@ -213,6 +225,68 @@ const CodeReviewSourceWindowSchema = z.strictObject({
 export type CodeReviewSourceWindow = z.infer<typeof CodeReviewSourceWindowSchema>
 export type CodeReviewSourceWindowInput = z.infer<typeof CodeReviewSourceWindowInputSchema>
 
+export const CodeReviewStructuralInputSchema = z.strictObject({
+  sessionID: z.string().min(1).max(256),
+  comparisonID: z.string().regex(/^[0-9a-f]{64}$/),
+  path: RelativePath,
+  previousPath: RelativePath.optional(),
+  baseSide: CodeReviewSideSchema.optional(),
+  headSide: CodeReviewSideSchema.optional(),
+})
+export type CodeReviewStructuralInput = z.infer<typeof CodeReviewStructuralInputSchema>
+
+export const CodeReviewStructuralResultSchema = z.strictObject({
+  comparison: CodeReviewComparisonIdentitySchema,
+  sourceID: z.string().regex(/^[0-9a-f]{64}$/),
+  baseSource: CodeReviewSourceIdentitySchema.nullable(),
+  headSource: CodeReviewSourceIdentitySchema.nullable(),
+  status: z.enum(["ready", "unavailable"]),
+  diff: StructuralDiffSchema.nullable(),
+  reason: z
+    .enum(["binary", "confidential", "unsupported-kind", "source-unavailable", "both-absent"])
+    .nullable(),
+})
+export type CodeReviewStructuralResult = z.infer<typeof CodeReviewStructuralResultSchema>
+
+export const CodeReviewMarkReviewedInputSchema = z.strictObject({
+  sessionID: z.string().min(1).max(256),
+  comparisonID: z.string().regex(/^[0-9a-f]{64}$/),
+  requestID: z.string().min(1).max(256),
+})
+export type CodeReviewMarkReviewedInput = z.infer<typeof CodeReviewMarkReviewedInputSchema>
+
+const CodeReviewReviewedCursorSchema = z.strictObject({
+  reviewedAt: z.int().nonnegative(),
+  baselineID: z.string().regex(/^[0-9a-f]{64}$/),
+})
+
+export const CodeReviewReviewedInputSchema = z.strictObject({
+  sessionID: z.string().min(1).max(256),
+  taskID: z.uuid(),
+  limit: z.int().min(1).max(100).optional(),
+  cursor: CodeReviewReviewedCursorSchema.optional(),
+})
+export type CodeReviewReviewedInput = z.infer<typeof CodeReviewReviewedInputSchema>
+
+export const CodeReviewReviewedBaselineSchema = z
+  .strictObject({
+    baselineID: z.string().regex(/^[0-9a-f]{64}$/),
+    projectID: z.string().min(1).max(256),
+    taskID: z.uuid(),
+    comparisonID: z.string().regex(/^[0-9a-f]{64}$/),
+    identity: CodeReviewComparisonIdentitySchema,
+    reviewedAt: z.int().nonnegative(),
+  })
+  .refine((baseline) => baseline.comparisonID === baseline.identity.comparisonID)
+export type CodeReviewReviewedBaseline = z.infer<typeof CodeReviewReviewedBaselineSchema>
+
+export const CodeReviewReviewedPageSchema = z.strictObject({
+  taskID: z.uuid(),
+  baselines: z.array(CodeReviewReviewedBaselineSchema),
+  nextCursor: CodeReviewReviewedCursorSchema.nullable(),
+})
+export type CodeReviewReviewedPage = z.infer<typeof CodeReviewReviewedPageSchema>
+
 export const CodeReview = Rpc.define({
   id: "lazers.codeReview",
   events: {},
@@ -232,6 +306,18 @@ export const CodeReview = Rpc.define({
     source: {
       input: CodeReviewSourceWindowInputSchema,
       output: CodeReviewSourceWindowSchema,
+    },
+    structural: {
+      input: CodeReviewStructuralInputSchema,
+      output: CodeReviewStructuralResultSchema,
+    },
+    markReviewed: {
+      input: CodeReviewMarkReviewedInputSchema,
+      output: CodeReviewReviewedBaselineSchema,
+    },
+    reviewed: {
+      input: CodeReviewReviewedInputSchema,
+      output: CodeReviewReviewedPageSchema,
     },
   },
 })

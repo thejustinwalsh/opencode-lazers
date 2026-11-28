@@ -9,13 +9,17 @@ import { timedRpc } from "../../diagnostics/stall-probe.ts"
 import {
   CodeReview,
   CodeReviewHistoryInputSchema,
+  CodeReviewMarkReviewedInputSchema,
+  CodeReviewReviewedInputSchema,
   CodeReviewResolveInputSchema,
   CodeReviewSourceIdentitySchema,
   CodeReviewSourceShapeInputSchema,
+  CodeReviewStructuralInputSchema,
   CodeReviewSourceWindowInputSchema,
   type CodeReviewSourceShapeInput,
 } from "../contract.ts"
 import { CodeReviewResolver } from "./resolver.ts"
+import { readStructuralComparison } from "../analysis/structural.ts"
 
 type ReviewContext = Pick<Plugin.Context, "rpc" | "session" | "permission">
 
@@ -91,6 +95,33 @@ export function registerCodeReview(
             if (source.projectID !== projectID)
               throw new Error("Pinned source belongs to another project")
             return resolver.sourceWindow({ ...request, source }, signal)
+          },
+          catch: (error) => error,
+        }).pipe(Effect.orDie),
+      structural: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = CodeReviewStructuralInputSchema.parse(input)
+            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            return readStructuralComparison(resolver, request, signal)
+          },
+          catch: (error) => error,
+        }).pipe(Effect.orDie),
+      markReviewed: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = CodeReviewMarkReviewedInputSchema.parse(input)
+            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            return resolver.markReviewed(request, signal)
+          },
+          catch: (error) => error,
+        }).pipe(Effect.orDie),
+      reviewed: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = CodeReviewReviewedInputSchema.parse(input)
+            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            return resolver.reviewed(request, signal)
           },
           catch: (error) => error,
         }).pipe(Effect.orDie),

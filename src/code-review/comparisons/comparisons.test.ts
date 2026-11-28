@@ -1,20 +1,23 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { spawnSync } from "node:child_process"
 import type { Database } from "bun:sqlite"
 import { Effect, Scope } from "effect"
 import { openStream } from "../../streams/client.ts"
 import { readerPool, type ReaderPool } from "../../streams/pool.ts"
 import { registerStreams } from "../../streams/rpc.ts"
-import { validProposal } from "../../../test/proposal.ts"
 import { TaskRepository } from "../../storage.ts"
 import { RunnerStore } from "../../runner/store.ts"
 import { CodeReviewResolver } from "./resolver.ts"
 import { codeReviewFilesSource } from "../../streams/sources/code-review.ts"
 import { codeReviewFilesRef } from "../../streams/sources/code-review-ref.ts"
 import { registerCodeReview } from "./rpc.ts"
+import {
+  git,
+  gitInput,
+  makeCodeReviewFixture,
+  type CodeReviewFixture,
+} from "../analysis/test-fixture.ts"
 
 const roots: string[] = []
 const repositories: TaskRepository[] = []
@@ -26,149 +29,8 @@ test("GUI consumer reference exposes the complete comparison file inventory", ()
   expect(codeReviewFilesRef.columns.changed).toBe("bool")
 })
 
-function git(root: string, ...args: string[]): string {
-  const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
-  if (result.status !== 0)
-    throw new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`)
-  return result.stdout.trim()
-}
-
-function gitInput(root: string, args: string[], input: string): void {
-  const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", input })
-  if (result.status !== 0)
-    throw new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`)
-}
-
-function makeFixture() {
-  const directory = mkdtempSync(join(tmpdir(), "lazers-code-review-"))
-  roots.push(directory)
-  const projectDirectory = join(directory, "project")
-  mkdirSync(projectDirectory)
-  git(projectDirectory, "init", "--initial-branch=main")
-  git(projectDirectory, "config", "user.name", "Code Review Test")
-  git(projectDirectory, "config", "user.email", "code-review-test@example.invalid")
-  git(projectDirectory, "config", "core.excludesFile", "/dev/null")
-  mkdirSync(join(projectDirectory, "src"))
-  writeFileSync(join(projectDirectory, ".gitignore"), "ignored-output/\n")
-  writeFileSync(join(projectDirectory, "package.json"), '{"name":"review-fixture"}\n')
-  writeFileSync(join(projectDirectory, "src/a.ts"), "export const answer = 1\n")
-  writeFileSync(join(projectDirectory, "src/empty.ts"), "")
-  writeFileSync(join(projectDirectory, "src/staged.ts"), "export const staged = 1\n")
-  writeFileSync(join(projectDirectory, "src/unstaged.ts"), "export const dirty = 1\n")
-  git(projectDirectory, "add", ".")
-  git(projectDirectory, "commit", "-m", "base")
-  const base = git(projectDirectory, "rev-parse", "HEAD")
-
-  writeFileSync(join(projectDirectory, "src/a.ts"), "export const answer = 2\n")
-  git(projectDirectory, "add", "src/a.ts")
-  git(projectDirectory, "commit", "-m", "first artifact")
-  const first = git(projectDirectory, "rev-parse", "HEAD")
-
-  writeFileSync(join(projectDirectory, "src/a.ts"), "export const answer = 3\n")
-  writeFileSync(join(projectDirectory, "src/new-empty.ts"), "")
-  git(projectDirectory, "add", "src/a.ts")
-  git(projectDirectory, "add", "src/new-empty.ts")
-  git(projectDirectory, "commit", "-m", "repair artifact")
-  const second = git(projectDirectory, "rev-parse", "HEAD")
-
-  const workerWorkspace = join(directory, "worker-worktree")
-  git(projectDirectory, "worktree", "add", "--detach", workerWorkspace, second)
-  const databasePath = join(directory, "tasks.sqlite")
-  const repository = new TaskRepository(databasePath, projectDirectory)
-  repositories.push(repository)
-  const taskID = "70cc1c08-0530-43ad-aad2-70b934243dbd"
-  const task = repository.insert({
-    schemaVersion: 1,
-    id: taskID,
-    revision: 1,
-    status: "submitted",
-    createdAt: new Date().toISOString(),
-    provenance: {
-      projectID: "project",
-      projectDirectory,
-      workspaceDirectory: workerWorkspace,
-      sessionID: "owner",
-      startingRevision: { kind: "git", commit: base },
-    },
-    proposal: validProposal(),
-  })
-  const runner = new RunnerStore(repository)
-  const input = {
-    requestID: "code-review-fixture",
-    objective: "Inspect task-specific code review comparisons",
-    baseCommit: base,
-    nodes: [{ taskID: task.id, revision: 1 as const }],
-    dependencies: [],
-    integrationOrder: [task.id],
-    verification: task.proposal.verification,
-    acceptance: task.proposal.acceptance,
-  }
-  const submitted = runner.submit(input, "owner")
-  const planID = submitted.planID
-  const firstAttemptID = "724f0384-9018-49e4-8fbe-7e5e999a9db1"
-  const secondAttemptID = "861b2337-8558-4c9a-8311-78a57a790c7d"
-  repository.atomic((db) => {
-    const insert = db.query(
-      `INSERT INTO runner_attempts(
-        id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,
-        artifact,policy,state,started_at,tool_count,retry_count
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'accepted',?,0,0)`,
-    )
-    insert.run(
-      firstAttemptID,
-      planID,
-      projectDirectory,
-      taskID,
-      1,
-      "session-first",
-      "message-first",
-      workerWorkspace,
-      base,
-      first,
-      "{}",
-      1,
-    )
-    insert.run(
-      secondAttemptID,
-      planID,
-      projectDirectory,
-      taskID,
-      2,
-      "session-second",
-      "message-second",
-      workerWorkspace,
-      first,
-      second,
-      "{}",
-      2,
-    )
-    db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?").run(
-      second,
-      planID,
-      taskID,
-    )
-    db.query("UPDATE runner_plans SET artifact=? WHERE id=?").run(second, planID)
-  })
-  const resolver = new CodeReviewResolver(repository, runner, "project")
-  return {
-    databasePath,
-    projectDirectory,
-    workerWorkspace,
-    repository,
-    runner,
-    resolver,
-    taskID,
-    planID,
-    firstAttemptID,
-    secondAttemptID,
-    base,
-    first,
-    second,
-  }
-}
-
 async function streamSideRows(
-  fixture: ReturnType<typeof makeFixture>,
+  fixture: CodeReviewFixture,
   comparisonID: string,
   side: "base" | "head" | "staged" | "unstaged" | "untracked",
 ) {
@@ -209,7 +71,7 @@ afterEach(async () => {
 })
 
 test("Task, Attempt, Since review and Plan comparisons resolve pinned revisions and full inventories", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   const signal = new AbortController().signal
   const task = await f.resolver.resolve({ taskID: f.taskID, mode: "task" } as never, signal)
   expect(task.identity.baseRevision).toBe(f.base)
@@ -298,7 +160,7 @@ test("Task, Attempt, Since review and Plan comparisons resolve pinned revisions 
 })
 
 test("Live shape preserves binary and symlink metadata after the workspace is removed", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   writeFileSync(join(f.workerWorkspace, "src/image.png"), new Uint8Array([0, 1, 2, 3]))
   writeFileSync(join(f.workerWorkspace, "src/textual.png"), "looks like text\n")
   symlinkSync("target.ts", join(f.workerWorkspace, "src/link.ts"))
@@ -340,7 +202,7 @@ test("Live shape preserves binary and symlink metadata after the workspace is re
 })
 
 test("Live shared-workspace snapshots are explicitly unowned", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   f.repository.atomic((db) =>
     db
       .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
@@ -354,7 +216,7 @@ test("Live shared-workspace snapshots are explicitly unowned", async () => {
 })
 
 test("Live capture refuses tracked paths that escape through a symlinked parent", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   const outside = join(f.workerWorkspace, "..", "outside")
   mkdirSync(outside)
   writeFileSync(join(outside, "a.ts"), "export const escaped = true\n")
@@ -369,7 +231,7 @@ test("Live capture refuses tracked paths that escape through a symlinked parent"
 })
 
 test("Live normalizes staged and unstaged deletions and reports unmerged index conflicts", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   rmSync(join(f.workerWorkspace, "src/unstaged.ts"))
   git(f.workerWorkspace, "rm", "src/staged.ts")
   const deleted = await f.resolver.resolve(
@@ -423,7 +285,7 @@ test("Live normalizes staged and unstaged deletions and reports unmerged index c
 })
 
 test("side inventories page unchanged files and source windows keep exact historical content", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   const comparison = await f.resolver.resolve(
     { taskID: f.taskID, mode: "task" } as never,
     new AbortController().signal,
@@ -470,7 +332,7 @@ test("side inventories page unchanged files and source windows keep exact histor
 })
 
 test("Live captures staged, unstaged and untracked source immutably without task-ownership claims", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   const staged = join(f.workerWorkspace, "src/staged.ts")
   writeFileSync(staged, "export const staged = 2\n")
   git(f.workerWorkspace, "add", "src/staged.ts")
@@ -609,7 +471,7 @@ test("Live captures staged, unstaged and untracked source immutably without task
 })
 
 test("cancelled and cross-project pinned reads cannot persist or disclose comparison content", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   const comparison = await f.resolver.resolve(
     { taskID: f.taskID, mode: "task" } as never,
     new AbortController().signal,
@@ -645,7 +507,7 @@ test("cancelled and cross-project pinned reads cannot persist or disclose compar
 })
 
 test("registered comparison RPCs and file streams enforce project read authorization", async () => {
-  const f = makeFixture()
+  const f = makeCodeReviewFixture({ roots, repositories })
   const handlers: Record<string, (input: unknown) => unknown> = {}
   const permissionCalls: {
     sessionID: string

@@ -2,11 +2,16 @@ import { blobBytes, diffHunks, isConfidentialSourcePath, treeFiles } from "./git
 import {
   CODE_REVIEW_CONTRACT_VERSION,
   CodeReviewComparisonSchema,
+  CodeReviewReviewedPageSchema,
   CodeReviewSourceIdentitySchema,
   type CodeReviewComparison,
   type CodeReviewComparisonIdentity,
   type CodeReviewHistory,
   type CodeReviewHistoryInput,
+  type CodeReviewMarkReviewedInput,
+  type CodeReviewReviewedBaseline,
+  type CodeReviewReviewedInput,
+  type CodeReviewReviewedPage,
   type CodeReviewResolveInput,
   type CodeReviewSide,
   type CodeReviewSourceIdentity,
@@ -19,6 +24,7 @@ import { fingerprint } from "../../identity.ts"
 import type { RunnerStore } from "../../runner/store.ts"
 import type { ComparisonBlob, ComparisonFile } from "./store.ts"
 import { CodeReviewStore } from "./store.ts"
+import { CodeReviewBaselineStore } from "../analysis/baselines.ts"
 import {
   CodeReviewSelectionResolver,
   REVIEW_ATTEMPT_COLUMNS,
@@ -36,8 +42,17 @@ import {
 
 const HISTORY_PAGE_SIZE = 50
 
+export class StructuralSourceReadError extends Error {
+  constructor(
+    readonly reason: "binary" | "confidential" | "unsupported-kind" | "source-unavailable",
+  ) {
+    super(`Pinned source is unavailable for structural analysis: ${reason}`)
+  }
+}
+
 export class CodeReviewResolver {
   readonly store: CodeReviewStore
+  readonly baselines: CodeReviewBaselineStore
   private readonly selection: CodeReviewSelectionResolver
 
   constructor(
@@ -46,7 +61,8 @@ export class CodeReviewResolver {
     readonly projectID: string,
   ) {
     this.store = new CodeReviewStore(repository)
-    this.selection = new CodeReviewSelectionResolver(repository, runner)
+    this.baselines = new CodeReviewBaselineStore(this.store, projectID)
+    this.selection = new CodeReviewSelectionResolver(repository, runner, this.baselines, projectID)
   }
 
   async history(
@@ -113,6 +129,25 @@ export class CodeReviewResolver {
     )
     signal.throwIfAborted()
     return this.store.persist(comparison, inventory.files, inventory.blobs)
+  }
+
+  markReviewed(
+    input: Pick<CodeReviewMarkReviewedInput, "comparisonID" | "requestID">,
+    signal: AbortSignal,
+  ): CodeReviewReviewedBaseline {
+    signal.throwIfAborted()
+    const baseline = this.baselines.mark(input.comparisonID, input.requestID, signal)
+    signal.throwIfAborted()
+    return baseline
+  }
+
+  reviewed(
+    input: Pick<CodeReviewReviewedInput, "taskID" | "limit" | "cursor">,
+    signal: AbortSignal,
+  ): CodeReviewReviewedPage {
+    signal.throwIfAborted()
+    if (!this.repository.get(input.taskID)) throw new Error("Task is unavailable in this project")
+    return CodeReviewReviewedPageSchema.parse(this.baselines.page(input, signal))
   }
 
   private async inventoryFor(selection: ComparisonSelection, signal: AbortSignal) {
@@ -209,6 +244,30 @@ export class CodeReviewResolver {
     return this.sourceBytes(file.objectID!, signal)
   }
 
+  async structuralSourceText(
+    source: CodeReviewSourceIdentity,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const file = this.requirePinnedFile(source, signal)
+    if (isConfidentialSourcePath(file.path)) throw new StructuralSourceReadError("confidential")
+    if (file.kind === "binary") throw new StructuralSourceReadError("binary")
+    if (file.kind !== "text" && file.kind !== "unknown")
+      throw new StructuralSourceReadError("unsupported-kind")
+    let content: Uint8Array | undefined
+    try {
+      content = await this.readTextContent(file, signal)
+    } catch {
+      signal.throwIfAborted()
+      throw new StructuralSourceReadError("source-unavailable")
+    }
+    signal.throwIfAborted()
+    if (!content) throw new StructuralSourceReadError("source-unavailable")
+    const kind = kindFor(file.path, file.mode, content)
+    if (kind === "binary") throw new StructuralSourceReadError("binary")
+    if (kind !== "text") throw new StructuralSourceReadError("unsupported-kind")
+    return new TextDecoder("utf-8", { fatal: true }).decode(content)
+  }
+
   async sourceWindow(
     input: CodeReviewSourceWindowInput,
     signal: AbortSignal,
@@ -236,6 +295,7 @@ export class CodeReviewResolver {
     if (
       !comparison ||
       comparison.identity.projectID !== this.projectID ||
+      source.projectID !== this.projectID ||
       comparison.identity.taskID !== source.taskID ||
       comparison.identity.planID !== source.planID ||
       comparison.identity.attemptID !== source.attemptID ||
@@ -250,6 +310,8 @@ export class CodeReviewResolver {
     side: CodeReviewSide,
     path: string,
   ): CodeReviewSourceIdentity {
+    if (comparison.identity.projectID !== this.projectID)
+      throw new Error("Comparison belongs to another project")
     const file = this.store.file(comparison.identity.comparisonID, side, path)
     if (!file?.objectID || file.kind === "absent")
       throw new Error("The selected comparison side has no source at this path")
