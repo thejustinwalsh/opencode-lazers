@@ -473,3 +473,26 @@ test("capacity: a task taken over by the Architect counts once against the limit
   )
   expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({ active: 0 })
 })
+
+test("a worker waiting on a question releases capacity without losing its task", async () => {
+  const f = fixture({ delayed: true, independent: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await capacityLimit(f, 1)
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  const secondTask = f.createTask("b", "b.txt")
+  const second = f.store.submit(
+    f.inputFor([secondTask], { requestID: "work-beside-question" }),
+    "owner",
+  )
+  await runPlan(f, second.planID, "start-beside-question")
+  await f.runtime.tick()
+  expect(f.store.attempts(second.planID)).toHaveLength(0)
+  f.sessions.get(first.session_id)!.pendingForms = 1
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.attempts(second.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.receipt.planID)[0]?.id).toBe(first.id)
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({ limit: 1, active: 1 })
+})

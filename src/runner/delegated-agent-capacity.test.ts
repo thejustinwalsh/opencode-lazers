@@ -662,3 +662,64 @@ test("a queued native waiter keeps its request through a project identity change
     ),
   ).toEqual({ project_key: "github.com/example/project", state: "admitted" })
 })
+
+test("idle workers release slots and the same session reacquires before resuming", async () => {
+  const f = fixture()
+  await setLimit(f.capacity, f.repository, 1)
+  const first = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const firstRequest = await f.capacity.ensureRunnerQueued({ ...first, attemptNumber: 1 })
+  const firstAttempt = insertAdmittedAttempt(
+    f.repository,
+    f.capacity,
+    firstRequest,
+    first,
+  ) as string
+  const firstSession = `worker-${firstAttempt}`
+  f.repository.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttempt),
+  )
+  const second = submitCandidate(f.store, f.repository, f.projectDirectory, 2)
+  const secondRequest = await f.capacity.ensureRunnerQueued({ ...second, attemptNumber: 1 })
+  expect(insertAdmittedAttempt(f.repository, f.capacity, secondRequest, second)).toBe(false)
+  expect(await f.capacity.releaseRunnerSlot(firstAttempt, firstSession)).toBe(true)
+  const secondAttempt = insertAdmittedAttempt(
+    f.repository,
+    f.capacity,
+    secondRequest,
+    second,
+  ) as string
+  expect(typeof secondAttempt).toBe("string")
+  let resumed = false
+  const waiting = f.capacity
+    .waitForRunnerSession(firstSession, AbortSignal.timeout(3000))
+    .then(() => {
+      resumed = true
+    })
+  await Bun.sleep(10)
+  expect(resumed).toBe(false)
+  expect(await f.capacity.settings()).toMatchObject({ active: 1, queued: 1, limit: 1 })
+  expect(await f.capacity.releaseRunnerSlot(secondAttempt, `worker-${secondAttempt}`)).toBe(true)
+  await waiting
+  expect(resumed).toBe(true)
+  expect(await f.capacity.settings()).toMatchObject({ active: 1, queued: 0, limit: 1 })
+  expect(
+    f.repository.read((db) =>
+      db.query("SELECT session_id,state FROM runner_attempts WHERE id=?").get(firstAttempt),
+    ),
+  ).toEqual({ session_id: firstSession, state: "running" })
+  expect(f.store.attempts(first.planID)).toHaveLength(1)
+})
+
+test("task submission and queueing remain available at the active-worker limit", async () => {
+  const f = fixture()
+  await setLimit(f.capacity, f.repository, 1)
+  const first = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const request = await f.capacity.ensureRunnerQueued({ ...first, attemptNumber: 1 })
+  expect(typeof insertAdmittedAttempt(f.repository, f.capacity, request, first)).toBe("string")
+  for (let i = 2; i <= 6; i++) {
+    const candidate = submitCandidate(f.store, f.repository, f.projectDirectory, i)
+    expect(f.repository.get(candidate.taskID)).toBeDefined()
+    await f.capacity.ensureRunnerQueued({ ...candidate, attemptNumber: 1 })
+  }
+  expect(await f.capacity.settings()).toMatchObject({ limit: 1, active: 1, queued: 5 })
+})

@@ -203,6 +203,12 @@ export function registerWorker(
     const nativeChildren = capacity
       ? yield* nativeChildLifecycle(ctx, capacity, wakeScheduler)
       : undefined
+    if (capacity)
+      yield* timedHooks(ctx.session, "session").hook("model.request", (context) =>
+        context.kind === "primary" && attempt(context.sessionID)
+          ? Effect.promise((signal) => capacity.waitForRunnerSession(context.sessionID, signal))
+          : Effect.void,
+      )
     yield* timedHooks(ctx.session, "session").hook("context", (context) =>
       Effect.sync(() => {
         if (!attempt(context.sessionID)) return
@@ -275,6 +281,10 @@ export function registerWorker(
       yield* timedHooks(ctx.session, "session").hook("experimental.idle", (idle) =>
         Effect.promise(async () => {
           try {
+            const owned = attempt(idle.sessionID)
+            if (owned && !idle.background.some((work) => work.sessionID === idle.sessionID)) {
+              if (await capacity.releaseRunnerSlot(owned.id, idle.sessionID)) wakeScheduler?.()
+            }
             for (const background of idle.background) {
               if (background.kind !== "subagent") continue
               const request = await capacity.nativeRequestForChild(

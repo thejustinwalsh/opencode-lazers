@@ -19,6 +19,7 @@ import type { TaskRuntime } from "./runtime.ts"
 /** What the attempt advance reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type AttemptAdvanceDeps = {
   autoResumeInterrupted: boolean
+  releaseWorkerSlot: (attemptID: string, sessionID: string) => Promise<boolean>
   workerNoProgressWindowMs: number
   command: TaskRuntime["command"]
   prepareWorker: (plan: PlanRow, attempt: AttemptRow, fence: number) => Promise<void>
@@ -61,6 +62,7 @@ type AdvanceContext = {
  * member bodies identical to what they were.
  */
 export class AttemptAdvance {
+  private readonly releaseWorkerSlot: AttemptAdvanceDeps["releaseWorkerSlot"]
   private readonly workerNoProgressWindowMs: number
   private readonly autoResumeInterrupted: boolean
   private readonly command: AttemptAdvanceDeps["command"]
@@ -87,6 +89,7 @@ export class AttemptAdvance {
     private readonly core: RuntimeCore,
     deps: AttemptAdvanceDeps,
   ) {
+    this.releaseWorkerSlot = deps.releaseWorkerSlot
     this.workerNoProgressWindowMs = deps.workerNoProgressWindowMs
     this.autoResumeInterrupted = deps.autoResumeInterrupted
     this.command = (...args) => deps.command(...args)
@@ -497,7 +500,14 @@ export class AttemptAdvance {
   /** Holds the plan while the worker waits on approvals, input or background work. True when held. */
   private async holdWorkerWaits(ctx: AdvanceContext): Promise<boolean> {
     const { plan, attempt, fence, observation, session } = ctx
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
+    const approvalWait = (session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0
+    if (
+      !session.observationUnstable &&
+      !this.backgroundBlockReason(session) &&
+      (approvalWait || (!session.busy && !session.pendingInput && session.outcome !== undefined))
+    )
+      await this.releaseWorkerSlot(attempt.id, session.id)
+    if (approvalWait) {
       this.holdApprovalObservation(plan, attempt, session, observation, fence)
       return true
     }
