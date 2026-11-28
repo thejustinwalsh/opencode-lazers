@@ -80,3 +80,9 @@ The final patch scheduler run passed **80 tests, zero failures, 903 assertions, 
 Final `bun run verify` passed: 115 warnings, zero errors, 1,293 typed files; both read guards passed. `bun run package:release v0.2.1 /private/tmp/lazers-release-021-candidate` built the exact patch, checked for native executables/addons in the staged package, installed 421 dependencies into a fresh consumer, checked all exports/worker files and imported the plugin successfully. Logs: `/private/tmp/lazers-021-final-quality.log`, `/private/tmp/lazers-021-scheduler-tests-fixed.log`, `/private/tmp/lazers-021-final-package.log`.
 
 Release metadata and install commands use 0.2.1. Package creation is complete; publication and final regular-Desktop activation are separate operations and are not claimed by these results.
+
+## GitHub publication
+
+Tag `v0.2.1` resolves to patch commit `74ccd4a6`; main preserves it through normal merge `0e4d127d`. [Release CI 46168612569](https://github.com/thejustinwalsh/opencode-lazers/actions/runs/46168612569) passed quality, 187 WebGPU/packaging/native-binary tests (zero failures, 1,113 assertions), build and fresh-install import checks. [GitHub v0.2.1](https://github.com/thejustinwalsh/opencode-lazers/releases/tag/v0.2.1) is public. Its actual downloaded asset was installed into another disposable consumer: 421 dependencies, zero native executables/addons, no Review feature exports/source. Both temporary consumers were removed after their checks.
+
+Website deployment `46168740427` completed for main merge `0e4d127d`. npm still reports HTTP 401 for `npm whoami`; publication requires renewed maintainer authentication. No npm success is claimed.
