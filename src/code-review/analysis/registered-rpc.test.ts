@@ -487,5 +487,5 @@ test("the reviewed-baseline schema upgrade preserves existing comparison rows", 
           )
           .get("code-review")?.generation,
     ),
-  ).toBe(2)
+  ).toBe(3)
 })

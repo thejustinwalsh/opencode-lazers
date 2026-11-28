@@ -42,6 +42,7 @@ const PLAN_COMMANDS: Readonly<
   resume: { event: "running", from: ["blocked", "cancelled", "failed", "running"] },
   retry: { event: "running", from: ["blocked", "cancelled", "failed", "running"] },
   integrated: { event: "cleaning", from: ["accepted", "cleanup-blocked"] },
+  "integration-target": { from: ["draft", "running", "blocked", "accepted"] },
   schedule: { from: ["draft", "running", "blocked"] },
   "amend-scope": { from: ["draft", "running", "blocked", "cancelling", "cleaning"] },
   "adopt-descendant": { from: ["blocked"] },

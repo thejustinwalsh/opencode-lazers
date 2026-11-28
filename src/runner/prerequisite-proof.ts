@@ -52,6 +52,26 @@ const isCommitID = (value: unknown): value is string =>
   typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+function matchesIntegrationBranch(
+  payload: Record<string, unknown>,
+  branch: string,
+  targetID?: string,
+): boolean {
+  return (
+    typeof payload.branch === "string" &&
+    payload.branch.trim() === branch &&
+    (targetID === undefined || payload.targetID === targetID)
+  )
+}
+function exactTaskPrerequisiteRows(
+  prerequisites: readonly string[],
+  rows: readonly TaskPrerequisiteIntegrationRow[],
+): boolean {
+  return (
+    rows.length === prerequisites.length &&
+    new Set(rows.map((row) => row.task_id)).size === prerequisites.length
+  )
+}
 
 /**
  * Is the change an artifact recorded still in the baseline? Exact ancestry is
@@ -169,10 +189,11 @@ export async function evaluateTaskPrerequisiteIntegration(
   git: Git,
   candidateBaseline?: string,
   lookup?: ArtifactEvidenceLookup,
+  targetID?: string,
 ): Promise<IntegrationDecision> {
   if (!prerequisites.length || new Set(prerequisites).size !== prerequisites.length)
     return { status: "waiting", reason: "Task dependencies are incomplete." }
-  if (rows.length !== prerequisites.length)
+  if (!exactTaskPrerequisiteRows(prerequisites, rows))
     return { status: "waiting", reason: "A prerequisite task source has not been integrated." }
 
   const proof: Array<{ taskID: string; artifact: string }> = []
@@ -196,8 +217,7 @@ export async function evaluateTaskPrerequisiteIntegration(
     if (
       !isRecord(payload) ||
       payload.artifact !== row.artifact ||
-      typeof payload.branch !== "string" ||
-      payload.branch.trim() !== branch ||
+      !matchesIntegrationBranch(payload, branch, targetID) ||
       !isCommitID(payload.head)
     )
       return {

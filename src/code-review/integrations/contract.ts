@@ -38,15 +38,27 @@ const CodeReviewIntegrationBatchSchema = z
 export const CodeReviewIntegrationSchema = z
   .strictObject({
     id: z.string().uuid(),
-    target: CodeReviewIntegrationTargetSchema,
+    target: CodeReviewIntegrationTargetSchema.nullable(),
     taskID: z.string().uuid(),
     planID: z.string().uuid().nullable(),
     attemptID: z.string().uuid().nullable(),
-    sourceBaseRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
-    sourceArtifactRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
-    sourceWorkspaceID: z.string().min(1).max(512),
-    targetBeforeRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
-    targetAfterRevision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+    sourceBaseRevision: z
+      .string()
+      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+      .nullable(),
+    sourceArtifactRevision: z
+      .string()
+      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+      .nullable(),
+    sourceWorkspaceID: z.string().min(1).max(512).nullable(),
+    targetBeforeRevision: z
+      .string()
+      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+      .nullable(),
+    targetAfterRevision: z
+      .string()
+      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+      .nullable(),
     landedCommits: z.array(z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)),
     proofID: z.string().min(1).max(512).nullable(),
     lineage: z.enum(["proven", "uncertain"]),
@@ -60,15 +72,22 @@ export const CodeReviewIntegrationSchema = z
         path: ["batch", "taskIDs"],
         message: "Integration task must belong to its shared batch",
       })
-    if (
-      integration.batch &&
-      integration.batch.taskIDs.some((taskID) => !integration.target.taskIDs.includes(taskID))
-    )
-      ctx.addIssue({
-        code: "custom",
-        path: ["batch", "taskIDs"],
-        message: "Shared batch tasks must belong to the associated integration target",
-      })
+    if (integration.batch) {
+      if (!integration.target)
+        ctx.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "Shared batch integration requires an integration target",
+        })
+      else if (
+        integration.batch.taskIDs.some((taskID) => !integration.target!.taskIDs.includes(taskID))
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["batch", "taskIDs"],
+          message: "Shared batch tasks must belong to the associated integration target",
+        })
+    }
   })
 export type CodeReviewIntegration = z.infer<typeof CodeReviewIntegrationSchema>
 
@@ -89,6 +108,12 @@ export const CodeReviewIntegrationsListOutputSchema = z.strictObject({
   nextCursor: CodeReviewIntegrationCursorSchema.nullable(),
 })
 
+export const CodeReviewIntegrationsResolveInputSchema = z.strictObject({
+  sessionID: z.string().min(1).max(256),
+  taskID: z.string().uuid(),
+  integrationID: z.string().uuid(),
+})
+
 export const CodeReviewIntegratedComparisonSchema = z.strictObject({
   comparison: CodeReviewComparisonSchema,
   integration: CodeReviewIntegrationSchema,
@@ -104,11 +129,7 @@ export const CodeReviewIntegrations = Rpc.define({
       output: CodeReviewIntegrationsListOutputSchema,
     },
     resolve: {
-      input: z.strictObject({
-        sessionID: z.string().min(1).max(256),
-        taskID: z.string().uuid(),
-        integrationID: z.string().uuid(),
-      }),
+      input: CodeReviewIntegrationsResolveInputSchema,
       output: CodeReviewIntegratedComparisonSchema,
     },
   },

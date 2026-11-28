@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite"
-import { changeDispatchPause, changeSchedule, recordIntegration } from "./plan-control.ts"
+import {
+  changeDispatchPause,
+  changeSchedule,
+  recordIntegration,
+  recordIntegrationTarget,
+} from "./plan-control.ts"
 import { GitObservations } from "./git-observations.ts"
 import type {
   CommandContext,
@@ -15,6 +20,12 @@ import {
   type IntegrationProof,
 } from "./integration-proof.ts"
 import { knownTree } from "./identity-store.ts"
+import {
+  prepareManagedTargetIntegration,
+  type ManagedTargetIntegration,
+} from "./integration/target.ts"
+import { localTargetRef, resolveLocalTargetHead } from "./integration/target-ref.ts"
+import { CodeReviewIntegrationTargetStore } from "../code-review/integrations/target-store.ts"
 import type { HostSession } from "./host.ts"
 import { CommandInput } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
@@ -176,7 +187,6 @@ export class CommandPipeline {
    */
   async preflightProofs(command: CommandInput, plan: PlanRow) {
     const bases = new Map<string, BaseReach>()
-    let integration: IntegrationProof | undefined
     if (command.baseCommit)
       bases.set(
         command.baseCommit,
@@ -187,26 +197,64 @@ export class CommandPipeline {
           this.store.repository.read((db) => knownTree(db, command.baseCommit)),
         ),
       )
-    if (command.action === "integrated") {
-      const task = command.taskID
-        ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
-        : undefined
-      const artifact = task?.artifact ?? plan.artifact
-      if (artifact) {
-        const attempt = command.taskID
-          ? this.store
-              .attempts(plan.id)
-              .filter((candidate) => candidate.task_id === command.taskID)
-              .at(-1)
-          : undefined
-        integration = await proofForArtifact(
-          (run) => this.store.repository.read(run),
-          this.directory,
-          { artifact, attemptID: attempt?.id, base: attempt?.base_commit },
-        )
-      }
+    const preflight =
+      command.action === "integrated" ? await this.preflightIntegration(command, plan) : undefined
+    return {
+      bases,
+      integration: preflight?.integration,
+      ...(preflight?.managedTargetIntegration
+        ? { managedTargetIntegration: preflight.managedTargetIntegration }
+        : {}),
     }
-    return { bases, integration }
+  }
+
+  private integrationArtifact(command: CommandInput, plan: PlanRow): string | undefined {
+    const task = command.taskID
+      ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
+      : undefined
+    return task?.artifact ?? plan.artifact ?? undefined
+  }
+
+  private async preflightIntegration(
+    command: CommandInput,
+    plan: PlanRow,
+  ): Promise<{
+    integration?: IntegrationProof
+    managedTargetIntegration?: ManagedTargetIntegration
+  }> {
+    const artifact = this.integrationArtifact(command, plan)
+    if (!artifact) return {}
+    const registeredTarget =
+      command.targetBranch &&
+      new CodeReviewIntegrationTargetStore(this.store.repository).targetByBranch(
+        command.targetBranch,
+      )
+    const attempt = command.taskID
+      ? this.store
+          .attempts(plan.id)
+          .filter(
+            (candidate) => candidate.task_id === command.taskID && candidate.artifact === artifact,
+          )
+          .at(-1)
+      : undefined
+    const proof = await proofForArtifact((run) => this.store.repository.read(run), this.directory, {
+      artifact,
+      attemptID: attempt?.id,
+      base: attempt?.base_commit,
+      ...(registeredTarget && command.targetBranch
+        ? { target: await resolveLocalTargetHead(this.directory, command.targetBranch) }
+        : {}),
+    })
+    const managedTargetIntegration = command.taskID
+      ? await prepareManagedTargetIntegration({
+          store: this.store,
+          projectID: this.core.projectID,
+          plan,
+          command,
+          proof,
+        })
+      : undefined
+    return { integration: proof, managedTargetIntegration }
   }
   async runCommand(input: unknown, caller: string, admission: boolean): Promise<unknown> {
     const command = CommandInput.parse(withoutLegacyVersion(input))
@@ -481,7 +529,9 @@ export class CommandPipeline {
     return this.dispatchCommandIn(db, ctx, plan)
   }
   dispatchCommandIn(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, ownerSession, preflight, cleanupDiagnostics, obs } = ctx
+    const { command, caller, ownerSession, preflight, cleanupDiagnostics } = ctx
+    if (["integrated", "integration-target"].includes(command.action))
+      return this.dispatchIntegrationCommand(db, ctx, plan)
     if (command.action === "retained-repair")
       return this.divergenceHold(plan, command.taskID)
         ? this.commandSendBackDivergence(db, ctx, plan)
@@ -489,15 +539,6 @@ export class CommandPipeline {
     if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
     if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
     if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
-    if (command.action === "integrated")
-      return recordIntegration(
-        this.store,
-        db,
-        plan,
-        command,
-        obs.git(this.directory, ["branch", "--show-current"]),
-        preflight.integration,
-      )
     if (command.action === "pause" || command.action === "unpause")
       return changeDispatchPause(
         this.store,
@@ -524,6 +565,74 @@ export class CommandPipeline {
       return this.commandResumeOrRetry(db, ctx, plan)
     if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
     return this.commandRun(db, ctx, plan)
+  }
+
+  private dispatchIntegrationCommand(db: Database, ctx: CommandContext, plan: PlanRow) {
+    return ctx.command.action === "integrated"
+      ? this.dispatchIntegration(db, ctx, plan)
+      : this.dispatchIntegrationTarget(db, ctx, plan)
+  }
+
+  private dispatchIntegration(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, preflight, obs } = ctx
+    const targetBranch = command.targetBranch
+    if (!targetBranch) throw new Error("Integration requires a reviewed target branch")
+    obs.git(this.directory, ["check-ref-format", "--branch", targetBranch])
+    const registeredTarget = new CodeReviewIntegrationTargetStore(
+      this.store.repository,
+    ).targetByBranch(targetBranch)
+    const currentHead = obs.git(this.directory, ["rev-parse", "HEAD"])
+    const targetHead = registeredTarget
+      ? obs.git(this.directory, [
+          "rev-parse",
+          "--verify",
+          `${localTargetRef(targetBranch)}^{commit}`,
+        ])
+      : currentHead
+    return recordIntegration(
+      this.store,
+      db,
+      plan,
+      command,
+      obs.git(this.directory, ["branch", "--show-current"]),
+      currentHead,
+      targetHead,
+      preflight.integration,
+      preflight.managedTargetIntegration,
+      this.core.projectID,
+    )
+  }
+
+  private dispatchIntegrationTarget(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, obs } = ctx
+    const targetBranch = command.targetBranch
+    const baseBranch = command.targetBaseBranch
+    const baseRevision = command.targetBaseRevision
+    if (!targetBranch || !baseBranch || !baseRevision)
+      throw new Error("Integration target setup requires its branch and selected base")
+    obs.git(this.directory, ["check-ref-format", "--branch", targetBranch])
+    obs.git(this.directory, ["check-ref-format", "--branch", baseBranch])
+    const head = obs.git(this.directory, [
+      "rev-parse",
+      "--verify",
+      `${localTargetRef(targetBranch)}^{commit}`,
+    ])
+    const baseBranchHead = obs.git(this.directory, [
+      "rev-parse",
+      "--verify",
+      `${localTargetRef(baseBranch)}^{commit}`,
+    ])
+    const resolvedBaseRevision = obs.git(this.directory, [
+      "rev-parse",
+      "--verify",
+      `${baseRevision}^{commit}`,
+    ])
+    return recordIntegrationTarget(this.store, db, plan, command, this.core.projectID, {
+      head,
+      baseBranchHead,
+      baseRevision: resolvedBaseRevision,
+      baseIsAncestor: obs.isAncestor(this.directory, baseRevision, head),
+    })
   }
 }
 

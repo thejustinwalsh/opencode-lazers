@@ -190,7 +190,7 @@ export const schemaModules = {
     ],
   },
   "code-review": {
-    generation: 2,
+    generation: 3,
     source: "src/code-review/comparisons/store.ts",
     tables: [
       "code_review_comparisons",
@@ -198,6 +198,10 @@ export const schemaModules = {
       "code_review_blobs",
       "code_review_reviewed_baselines",
       "code_review_reviewed_requests",
+      "code_review_integration_targets",
+      "code_review_integration_target_tasks",
+      "code_review_integrations",
+      "code_review_integration_comparisons",
     ],
   },
   "model-sources": {

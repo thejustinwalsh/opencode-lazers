@@ -64,6 +64,81 @@ test("startup settlement command requires exact task, attempt and decision", () 
   }
 })
 
+test("integration target setup binds an exact head, selected task group, base, and PR metadata", () => {
+  const target = {
+    requestID: "select-feature-target",
+    planID: crypto.randomUUID(),
+    action: "integration-target" as const,
+    targetBranch: "feature/review",
+    expectedTargetHead: "a".repeat(40),
+    targetBaseBranch: "main",
+    targetBaseRevision: "b".repeat(40),
+    targetTaskIDs: [crypto.randomUUID(), crypto.randomUUID()],
+    targetPullRequest: {
+      id: "pr-17",
+      number: 17,
+      url: "https://example.invalid/pull/17",
+      title: "Shared feature",
+    },
+    reason: "Bind the selected task group to the reviewed target.",
+  }
+  expect(CommandInput.parse(target)).toEqual(target)
+  expect(CommandInput.safeParse({ ...target, expectedTargetHead: undefined }).success).toBe(false)
+  expect(
+    CommandInput.safeParse({ ...target, targetTaskIDs: [target.targetTaskIDs[0]] }).success,
+  ).toBe(true)
+  expect(
+    CommandInput.safeParse({
+      ...target,
+      targetTaskIDs: [target.targetTaskIDs[0], target.targetTaskIDs[0]],
+    }).success,
+  ).toBe(false)
+  expect(
+    CommandInput.parse({
+      ...target,
+      reconcileTargetHead: true,
+      targetPullRequest: undefined,
+    }),
+  ).toMatchObject({ reconcileTargetHead: true })
+  expect(
+    CommandInput.safeParse({
+      ...target,
+      reconcileTargetHead: true,
+      targetPullRequest: undefined,
+    }).success,
+  ).toBe(true)
+  expect(
+    CommandInput.safeParse({
+      ...target,
+      reconcileTargetHead: true,
+      targetPullRequest: null,
+    }).success,
+  ).toBe(false)
+})
+
+test("managed integration attempt selections disambiguate every batch task", () => {
+  const taskID = crypto.randomUUID()
+  const secondTaskID = crypto.randomUUID()
+  const batch = {
+    requestID: "integrate-selected-attempts",
+    planID: crypto.randomUUID(),
+    action: "integrated" as const,
+    taskID,
+    batchTaskIDs: [taskID, secondTaskID],
+    integrationAttempts: [
+      { taskID, attemptID: crypto.randomUUID() },
+      { taskID: secondTaskID, attemptID: crypto.randomUUID() },
+    ],
+  }
+  expect(CommandInput.parse(batch)).toEqual(batch)
+  expect(
+    CommandInput.safeParse({
+      ...batch,
+      integrationAttempts: batch.integrationAttempts.slice(0, 1),
+    }).success,
+  ).toBe(false)
+})
+
 test("resume exposes only the exact task and attempt bindings for retained-repair recovery", () => {
   const command = {
     requestID: "resume-retained-repair-after-fence-failure",

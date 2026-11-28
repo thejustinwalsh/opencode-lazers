@@ -23,7 +23,7 @@ import { readStructuralComparison } from "../analysis/structural.ts"
 
 type ReviewContext = Pick<Plugin.Context, "rpc" | "session" | "permission">
 
-async function authorize(
+export async function authorizeCodeReview(
   ctx: ReviewContext,
   sessionID: string,
   projectID: string,
@@ -59,7 +59,13 @@ export function registerCodeReview(
         Effect.tryPromise({
           try: async (signal) => {
             const request = CodeReviewResolveInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             return resolver.resolve(request, signal)
           },
           catch: (error) => error,
@@ -68,7 +74,13 @@ export function registerCodeReview(
         Effect.tryPromise({
           try: async (signal) => {
             const request = CodeReviewHistoryInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             return resolver.history(request, signal)
           },
           catch: (error) => error,
@@ -78,7 +90,13 @@ export function registerCodeReview(
           try: async (signal) => {
             const request: CodeReviewSourceShapeInput =
               CodeReviewSourceShapeInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             const source = CodeReviewSourceIdentitySchema.parse(request.source)
             if (source.projectID !== projectID)
               throw new Error("Pinned source belongs to another project")
@@ -90,7 +108,13 @@ export function registerCodeReview(
         Effect.tryPromise({
           try: async (signal) => {
             const request = CodeReviewSourceWindowInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             const source = CodeReviewSourceIdentitySchema.parse(request.source)
             if (source.projectID !== projectID)
               throw new Error("Pinned source belongs to another project")
@@ -102,7 +126,13 @@ export function registerCodeReview(
         Effect.tryPromise({
           try: async (signal) => {
             const request = CodeReviewStructuralInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             return readStructuralComparison(resolver, request, signal)
           },
           catch: (error) => error,
@@ -111,7 +141,13 @@ export function registerCodeReview(
         Effect.tryPromise({
           try: async (signal) => {
             const request = CodeReviewMarkReviewedInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             return resolver.markReviewed(request, signal)
           },
           catch: (error) => error,
@@ -120,7 +156,13 @@ export function registerCodeReview(
         Effect.tryPromise({
           try: async (signal) => {
             const request = CodeReviewReviewedInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, repository.projectDirectory, signal)
+            await authorizeCodeReview(
+              ctx,
+              request.sessionID,
+              projectID,
+              repository.projectDirectory,
+              signal,
+            )
             return resolver.reviewed(request, signal)
           },
           catch: (error) => error,
