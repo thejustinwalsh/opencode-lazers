@@ -46,6 +46,7 @@ import type { RuntimeJournal } from "./runtime-journal.ts"
 import type { TaskRuntime } from "./runtime.ts"
 import type { VerificationCandidate } from "./verification-candidate.ts"
 import type { AttemptRow } from "./store.ts"
+import { taskChainBase as resolveTaskChainBase } from "./task-chain-base.ts"
 import type { FallowReview } from "./fallow-check.ts"
 import type { AuditorReport } from "./auditor-report.ts"
 import type { PlanFallowContext, RetainedRepairRecord } from "./runtime-helpers.ts"
@@ -630,18 +631,7 @@ export class VerificationReview {
    * starts a new chain, so integrated work from others is never attributed to the task.
    */
   taskChainBase(attempt: AttemptRow): string {
-    const earlier = this.store
-      .attempts(attempt.plan_id)
-      .filter(
-        (candidate) => candidate.task_id === attempt.task_id && candidate.number < attempt.number,
-      )
-      .sort((left, right) => right.number - left.number)
-    let base = attempt.base_commit
-    for (const previous of earlier) {
-      if (previous.artifact !== base) break
-      base = previous.base_commit
-    }
-    return base
+    return resolveTaskChainBase(attempt, this.store.attempts(attempt.plan_id))
   }
   /** True while this attempt, if it fails, moves its task to REPAIR rather than FAIL. */
   repairAvailable(attempt: AttemptRow): boolean {

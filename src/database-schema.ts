@@ -189,6 +189,11 @@ export const schemaModules = {
       "runner_retained_verification_resources",
     ],
   },
+  "code-review": {
+    generation: 1,
+    source: "src/code-review/comparisons/store.ts",
+    tables: ["code_review_comparisons", "code_review_files", "code_review_blobs"],
+  },
   "model-sources": {
     generation: 2,
     source: "src/models/source-store.ts",
