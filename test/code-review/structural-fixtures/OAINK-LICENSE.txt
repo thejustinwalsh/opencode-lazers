@@ -1,0 +1,20 @@
+Oaink — Proprietary Software
+
+Copyright (c) 2026 Justin Walsh. All rights reserved.
+
+Oaink is closed-source, proprietary software. No open-source license is granted
+for Oaink-owned software, source code, branding or designs.
+
+Authorized installation and use of Oaink are governed by the Oaink Terms of
+Service and Software License in TERMS.md, or a separate written agreement with
+the copyright holder. Pro features require an active subscription entitlement
+or other express authorization. A subscription does not transfer ownership or
+grant source-code access, redistribution rights or permanent Pro access.
+
+We may choose a different license for particular materials or versions in the
+future. No such future release or license is promised or granted here.
+
+Third-party software, materials and adapted policy text retain their respective
+licenses, copyrights and required notices. See TERMS.md for the 37signals policy
+template attribution. This notice does not replace or restrict permissions
+independently granted by those third-party licenses.

@@ -16,13 +16,20 @@ export const serverEntries = [
   ["src/models/decision-worker.ts", "decision-worker.js"],
   ["src/runner/transition-indexes-worker.ts", "transition-indexes-worker.js"],
   ["src/audit/fallow-worker.ts", "fallow-worker.js"],
+  ["src/code-review/structural/difftastic-worker.ts", "difftastic-worker.js"],
   ["src/audit/fallow-thread.ts", "fallow-thread.js"],
   ["src/streams/reader-worker.ts", "reader-worker.js"],
   ["src/trajectory/effort-worker.ts", "effort-worker.js"],
   ["src/retention/retention-reader-worker.ts", "retention-reader-worker.js"],
 ] as const
 
-export const serverAssets = ["fallow.wasm", "fallow-threads.wasm"] as const
+export const serverAssets = ["fallow.wasm", "fallow-threads.wasm", "difftastic.wasm.gz"] as const
+
+const serverAssetSources = {
+  "fallow.wasm": "src/audit/wasm/fallow.wasm",
+  "fallow-threads.wasm": "src/audit/wasm/fallow-threads.wasm",
+  "difftastic.wasm.gz": "src/code-review/structural/difftastic.wasm.gz",
+} satisfies Record<(typeof serverAssets)[number], string>
 
 export async function buildServer() {
   for (const [entry, file] of serverEntries) {
@@ -37,9 +44,9 @@ export async function buildServer() {
     })
     if (!result.success) throw new AggregateError(result.logs, `Server build failed: ${entry}`)
   }
-  // The fallow worker loads these modules beside itself through wasmURL.
+  // The workers load these modules beside their bundles through wasmURL.
   for (const module of serverAssets)
-    copyFileSync(`${root}src/audit/wasm/${module}`, `${root}dist/${module}`)
+    copyFileSync(`${root}${serverAssetSources[module]}`, `${root}dist/${module}`)
 }
 
 if (import.meta.main) {
