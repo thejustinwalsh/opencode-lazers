@@ -2,19 +2,16 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { CodeReviewComparisonSchema } from "../contract.ts"
 
-// fallow-ignore-next-line unused-export -- consumed by LZ-285
 export const CodeReviewIntegrationPullRequestSchema = z.strictObject({
   id: z.string().min(1).max(256),
   number: z.int().positive().nullable(),
   url: z.url(),
   title: z.string().max(512).nullable(),
 })
-// fallow-ignore-next-line unused-type -- consumed by LZ-285
 export type CodeReviewIntegrationPullRequest = z.infer<
   typeof CodeReviewIntegrationPullRequestSchema
 >
 
-// fallow-ignore-next-line unused-export -- consumed by LZ-285
 export const CodeReviewIntegrationTargetSchema = z.strictObject({
   id: z.string().uuid(),
   projectID: z.string().min(1).max(256),
@@ -29,7 +26,6 @@ export const CodeReviewIntegrationTargetSchema = z.strictObject({
   createdAt: z.int().nonnegative(),
   updatedAt: z.int().nonnegative(),
 })
-// fallow-ignore-next-line unused-type -- consumed by LZ-285
 export type CodeReviewIntegrationTarget = z.infer<typeof CodeReviewIntegrationTargetSchema>
 
 const CodeReviewIntegrationBatchSchema = z
@@ -39,7 +35,6 @@ const CodeReviewIntegrationBatchSchema = z
   })
   .refine((batch) => new Set(batch.taskIDs).size === batch.taskIDs.length)
 
-// fallow-ignore-next-line unused-export -- consumed by LZ-285
 export const CodeReviewIntegrationSchema = z
   .strictObject({
     id: z.string().uuid(),
@@ -75,7 +70,6 @@ export const CodeReviewIntegrationSchema = z
         message: "Shared batch tasks must belong to the associated integration target",
       })
   })
-// fallow-ignore-next-line unused-type -- consumed by LZ-285
 export type CodeReviewIntegration = z.infer<typeof CodeReviewIntegrationSchema>
 
 const CodeReviewIntegrationCursorSchema = z.strictObject({
@@ -83,7 +77,6 @@ const CodeReviewIntegrationCursorSchema = z.strictObject({
   integrationID: z.string().uuid(),
 })
 
-// fallow-ignore-next-line unused-export -- consumed by LZ-285
 export const CodeReviewIntegrationsListInputSchema = z.strictObject({
   sessionID: z.string().min(1).max(256),
   taskID: z.string().uuid(),
@@ -91,18 +84,15 @@ export const CodeReviewIntegrationsListInputSchema = z.strictObject({
   cursor: CodeReviewIntegrationCursorSchema.optional(),
 })
 
-// fallow-ignore-next-line unused-export -- consumed by LZ-285
 export const CodeReviewIntegrationsListOutputSchema = z.strictObject({
   integrations: z.array(CodeReviewIntegrationSchema),
   nextCursor: CodeReviewIntegrationCursorSchema.nullable(),
 })
 
-// fallow-ignore-next-line unused-export -- consumed by LZ-285
 export const CodeReviewIntegratedComparisonSchema = z.strictObject({
   comparison: CodeReviewComparisonSchema,
   integration: CodeReviewIntegrationSchema,
 })
-// fallow-ignore-next-line unused-type -- consumed by LZ-285
 export type CodeReviewIntegratedComparison = z.infer<typeof CodeReviewIntegratedComparisonSchema>
 
 export const CodeReviewIntegrations = Rpc.define({
