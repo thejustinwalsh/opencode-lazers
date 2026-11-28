@@ -1,0 +1,20 @@
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"default\", \"indexmap\", \"preserve_order\", \"std\"]",
+  "declared_features": "[\"alloc\", \"arbitrary_precision\", \"default\", \"float_roundtrip\", \"indexmap\", \"preserve_order\", \"raw_value\", \"std\", \"unbounded_depth\"]",
+  "target": 5408242616063297496,
+  "profile": 9469513639638652478,
+  "path": 555392024930972376,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "debug/.fingerprint/serde_json-57a48d2aa2900e46/dep-build-script-build-script-build",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 0
+}

@@ -15,6 +15,7 @@
   "packageManager": "bun@1.4.4-canary.20261030.1",
   "exports": {
     ".": "./dist/server.js",
+    "./code-review/structural": "./src/code-review/structural/index.ts",
     "./gui-experimental": "./dist/gui-experimental.cjs",
     "./webgpu/rpc": "./src/webgpu/rpc.ts",
     "./webgpu/contract": "./src/webgpu/contract.ts",

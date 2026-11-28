@@ -1,0 +1,49 @@
+{
+  "aligned_lines": [
+    [0, 0],
+    [1, 1],
+    [2, 2]
+  ],
+  "chunks": [
+    [
+      {
+        "lhs": {
+          "line_number": 0,
+          "changes": [{ "start": 23, "end": 24, "content": "1", "highlight": "normal" }]
+        },
+        "rhs": {
+          "line_number": 0,
+          "changes": [{ "start": 23, "end": 24, "content": "2", "highlight": "normal" }]
+        }
+      },
+      {
+        "lhs": {
+          "line_number": 1,
+          "changes": [
+            { "start": 0, "end": 1, "content": "/", "highlight": "comment" },
+            { "start": 1, "end": 2, "content": "/", "highlight": "comment" },
+            { "start": 2, "end": 3, "content": " ", "highlight": "comment" },
+            { "start": 3, "end": 7, "content": "note", "highlight": "comment" },
+            { "start": 7, "end": 8, "content": " ", "highlight": "comment" },
+            { "start": 8, "end": 12, "content": "🧿", "highlight": "comment" }
+          ]
+        },
+        "rhs": {
+          "line_number": 1,
+          "changes": [
+            { "start": 0, "end": 1, "content": "/", "highlight": "comment" },
+            { "start": 1, "end": 2, "content": "/", "highlight": "comment" },
+            { "start": 2, "end": 3, "content": " ", "highlight": "comment" },
+            { "start": 3, "end": 7, "content": "note", "highlight": "comment" },
+            { "start": 7, "end": 8, "content": " ", "highlight": "comment" },
+            { "start": 8, "end": 12, "content": "🧿", "highlight": "comment" },
+            { "start": 13, "end": 20, "content": "changed", "highlight": "comment" }
+          ]
+        }
+      }
+    ]
+  ],
+  "language": "TypeScript",
+  "path": "sample.ts",
+  "status": "changed"
+}

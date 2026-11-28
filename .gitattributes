@@ -1,0 +1,6 @@
+# Preserve imported upstream sources and legal notices verbatim; their whitespace is intentional.
+vendor/difftastic/** whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
+licenses/difftastic/** whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
+
+# This controlled fixture intentionally retains CRLF for coordinate regression coverage.
+test/code-review/structural-fixtures/fixtures/controlled-unicode/** whitespace=cr-at-eol

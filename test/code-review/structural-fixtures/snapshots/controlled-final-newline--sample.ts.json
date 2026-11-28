@@ -1,0 +1,23 @@
+{
+  "aligned_lines": [
+    [0, 0],
+    [1, 1]
+  ],
+  "chunks": [
+    [
+      {
+        "lhs": {
+          "line_number": 0,
+          "changes": [{ "start": 14, "end": 15, "content": "1", "highlight": "normal" }]
+        },
+        "rhs": {
+          "line_number": 0,
+          "changes": [{ "start": 14, "end": 15, "content": "2", "highlight": "normal" }]
+        }
+      }
+    ]
+  ],
+  "language": "TypeScript",
+  "path": "sample.ts",
+  "status": "changed"
+}

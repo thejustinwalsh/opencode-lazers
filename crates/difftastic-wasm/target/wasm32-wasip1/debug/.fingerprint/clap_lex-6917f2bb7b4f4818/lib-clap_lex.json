@@ -1,0 +1,20 @@
+{
+  "rustc": 17356518491003051113,
+  "features": "[]",
+  "declared_features": "[]",
+  "target": 1825942688849220394,
+  "profile": 5625616314504535156,
+  "path": 11040364578148320854,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/clap_lex-6917f2bb7b4f4818/dep-lib-clap_lex",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

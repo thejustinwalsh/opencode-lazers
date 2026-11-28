@@ -1,0 +1,20 @@
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"alloc\", \"std\"]",
+  "declared_features": "[\"alloc\", \"default\", \"serde\", \"std\", \"unicode\"]",
+  "target": 6471471437625656857,
+  "profile": 8979240926782815398,
+  "path": 2292898678022641031,
+  "deps": [[12613788554453945248, "memchr", false, 14887076672336342978]],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/bstr-a73ffa2146201efa/dep-lib-bstr",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

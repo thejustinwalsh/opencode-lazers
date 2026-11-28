@@ -5,6 +5,7 @@
     "src/models/decision-worker.ts",
     "src/runner/transition-indexes-worker.ts",
     // Threads and processes started by URL string or spawned by tests, not imported.
+    "src/code-review/structural/difftastic-worker.ts",
     "src/audit/fallow-thread.ts",
     "src/audit/wasm/*-probe.ts",
     "src/streams/reader-worker.ts",

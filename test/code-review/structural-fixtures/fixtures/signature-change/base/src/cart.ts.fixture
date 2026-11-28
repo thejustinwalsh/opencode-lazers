@@ -1,0 +1,5 @@
+import { total } from "./price.ts";
+
+export function cartTotal(items: { price: number }[]): number {
+  return total(items);
+}

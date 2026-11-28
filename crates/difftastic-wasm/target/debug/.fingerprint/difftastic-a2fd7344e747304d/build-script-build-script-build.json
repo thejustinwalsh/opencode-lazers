@@ -1,0 +1,24 @@
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"wasm\"]",
+  "declared_features": "[\"cli\", \"default\", \"wasm\"]",
+  "target": 5408242616063297496,
+  "profile": 5964164100107276443,
+  "path": 12953055606773527576,
+  "deps": [
+    [10697383615564341592, "rayon", false, 14331185082819757727],
+    [14744809080291264803, "version_check", false, 1181878903793508844],
+    [15302838639930945004, "cc", false, 9746801957695693053]
+  ],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "debug/.fingerprint/difftastic-a2fd7344e747304d/dep-build-script-build-script-build",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 0
+}

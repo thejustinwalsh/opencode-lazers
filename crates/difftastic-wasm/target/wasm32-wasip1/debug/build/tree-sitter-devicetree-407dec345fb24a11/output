@@ -1,0 +1,37 @@
+cargo:rerun-if-changed=src/parser.c
+OUT_DIR = Some(/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/7d1fb03c-4d30-4a24-a923-77b5f8b1ce16/crates/difftastic-wasm/target/wasm32-wasip1/debug/build/tree-sitter-devicetree-407dec345fb24a11/out)
+OPT_LEVEL = Some(0)
+TARGET = Some(wasm32-wasip1)
+CARGO_ENCODED_RUSTFLAGS = Some()
+HOST = Some(aarch64-apple-darwin)
+cargo:rerun-if-env-changed=CC_wasm32-wasip1
+CC_wasm32-wasip1 = Some(/usr/bin/clang)
+RUSTC_WRAPPER = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+cargo:rerun-if-env-changed=WASI_SYSROOT
+WASI_SYSROOT = Some(/opt/homebrew/share/wasi-sysroot)
+DEBUG = Some(true)
+cargo:rerun-if-env-changed=CFLAGS
+CFLAGS = None
+cargo:rerun-if-env-changed=TARGET_CFLAGS
+TARGET_CFLAGS = None
+cargo:rerun-if-env-changed=CFLAGS_wasm32_wasip1
+CFLAGS_wasm32_wasip1 = None
+cargo:rerun-if-env-changed=CFLAGS_wasm32-wasip1
+CFLAGS_wasm32-wasip1 = Some(--sysroot=/opt/homebrew/share/wasi-sysroot)
+cargo:rerun-if-env-changed=CC_SHELL_ESCAPED_FLAGS
+CC_SHELL_ESCAPED_FLAGS = None
+cargo:rerun-if-env-changed=AR_wasm32-wasip1
+AR_wasm32-wasip1 = Some(/opt/homebrew/opt/llvm/bin/llvm-ar)
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=TARGET_ARFLAGS
+TARGET_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_wasm32_wasip1
+ARFLAGS_wasm32_wasip1 = None
+cargo:rerun-if-env-changed=ARFLAGS_wasm32-wasip1
+ARFLAGS_wasm32-wasip1 = None
+cargo:rustc-link-lib=static=tree-sitter-devicetree
+cargo:rustc-link-search=native=/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/7d1fb03c-4d30-4a24-a923-77b5f8b1ce16/crates/difftastic-wasm/target/wasm32-wasip1/debug/build/tree-sitter-devicetree-407dec345fb24a11/out

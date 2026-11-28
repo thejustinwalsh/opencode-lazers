@@ -1,0 +1,129 @@
+{
+  "aligned_lines": [
+    [0, 0],
+    [1, 1],
+    [2, 2],
+    [3, 3],
+    [4, 4],
+    [5, 5],
+    [6, 6],
+    [7, 7],
+    [8, 8],
+    [9, 9],
+    [10, 10],
+    [null, 11],
+    [null, 12],
+    [null, 13],
+    [null, 14],
+    [null, 15],
+    [null, 16],
+    [11, 17],
+    [12, 18],
+    [13, 19],
+    [14, 20],
+    [15, 21],
+    [16, 22],
+    [17, 23]
+  ],
+  "chunks": [
+    [
+      {
+        "rhs": {
+          "line_number": 11,
+          "changes": [
+            { "start": 8, "end": 10, "content": "if", "highlight": "keyword" },
+            { "start": 11, "end": 16, "content": "bytes", "highlight": "normal" },
+            { "start": 16, "end": 17, "content": ".", "highlight": "normal" },
+            { "start": 17, "end": 20, "content": "len", "highlight": "normal" },
+            { "start": 20, "end": 21, "content": "(", "highlight": "delimiter" },
+            { "start": 21, "end": 22, "content": ")", "highlight": "delimiter" },
+            { "start": 23, "end": 24, "content": ">", "highlight": "normal" },
+            { "start": 25, "end": 29, "content": "self", "highlight": "normal" },
+            { "start": 29, "end": 30, "content": ".", "highlight": "normal" },
+            { "start": 30, "end": 38, "content": "capacity", "highlight": "normal" },
+            { "start": 39, "end": 40, "content": "{", "highlight": "delimiter" }
+          ]
+        }
+      },
+      {
+        "rhs": {
+          "line_number": 12,
+          "changes": [
+            { "start": 12, "end": 16, "content": "self", "highlight": "normal" },
+            { "start": 16, "end": 17, "content": ".", "highlight": "normal" },
+            { "start": 17, "end": 23, "content": "buffer", "highlight": "normal" },
+            { "start": 23, "end": 24, "content": ".", "highlight": "normal" },
+            { "start": 24, "end": 29, "content": "clear", "highlight": "normal" },
+            { "start": 29, "end": 30, "content": "(", "highlight": "delimiter" },
+            { "start": 30, "end": 31, "content": ")", "highlight": "delimiter" },
+            { "start": 31, "end": 32, "content": ";", "highlight": "normal" }
+          ]
+        }
+      },
+      {
+        "rhs": {
+          "line_number": 13,
+          "changes": [
+            { "start": 12, "end": 15, "content": "let", "highlight": "keyword" },
+            { "start": 16, "end": 20, "content": "tail", "highlight": "normal" },
+            { "start": 21, "end": 22, "content": "=", "highlight": "normal" },
+            { "start": 23, "end": 24, "content": "&", "highlight": "keyword" },
+            { "start": 24, "end": 29, "content": "bytes", "highlight": "normal" },
+            { "start": 29, "end": 30, "content": "[", "highlight": "delimiter" },
+            { "start": 30, "end": 35, "content": "bytes", "highlight": "normal" },
+            { "start": 35, "end": 36, "content": ".", "highlight": "normal" },
+            { "start": 36, "end": 39, "content": "len", "highlight": "normal" },
+            { "start": 39, "end": 40, "content": "(", "highlight": "delimiter" },
+            { "start": 40, "end": 41, "content": ")", "highlight": "delimiter" },
+            { "start": 42, "end": 43, "content": "-", "highlight": "normal" },
+            { "start": 44, "end": 48, "content": "self", "highlight": "normal" },
+            { "start": 48, "end": 49, "content": ".", "highlight": "normal" },
+            { "start": 49, "end": 57, "content": "capacity", "highlight": "normal" },
+            { "start": 57, "end": 59, "content": "..", "highlight": "normal" },
+            { "start": 59, "end": 60, "content": "]", "highlight": "delimiter" },
+            { "start": 60, "end": 61, "content": ";", "highlight": "normal" }
+          ]
+        }
+      },
+      {
+        "rhs": {
+          "line_number": 14,
+          "changes": [
+            { "start": 12, "end": 16, "content": "self", "highlight": "normal" },
+            { "start": 16, "end": 17, "content": ".", "highlight": "normal" },
+            { "start": 17, "end": 23, "content": "buffer", "highlight": "normal" },
+            { "start": 23, "end": 24, "content": ".", "highlight": "normal" },
+            { "start": 24, "end": 41, "content": "extend_from_slice", "highlight": "normal" },
+            { "start": 41, "end": 42, "content": "(", "highlight": "delimiter" },
+            { "start": 42, "end": 46, "content": "tail", "highlight": "normal" },
+            { "start": 46, "end": 47, "content": ")", "highlight": "delimiter" },
+            { "start": 47, "end": 48, "content": ";", "highlight": "normal" }
+          ]
+        }
+      },
+      {
+        "rhs": {
+          "line_number": 15,
+          "changes": [
+            { "start": 12, "end": 18, "content": "return", "highlight": "keyword" },
+            { "start": 19, "end": 24, "content": "bytes", "highlight": "normal" },
+            { "start": 24, "end": 25, "content": ".", "highlight": "normal" },
+            { "start": 25, "end": 28, "content": "len", "highlight": "normal" },
+            { "start": 28, "end": 29, "content": "(", "highlight": "delimiter" },
+            { "start": 29, "end": 30, "content": ")", "highlight": "delimiter" },
+            { "start": 30, "end": 31, "content": ";", "highlight": "normal" }
+          ]
+        }
+      },
+      {
+        "rhs": {
+          "line_number": 16,
+          "changes": [{ "start": 8, "end": 9, "content": "}", "highlight": "delimiter" }]
+        }
+      }
+    ]
+  ],
+  "language": "Rust",
+  "path": "src/lib.rs",
+  "status": "changed"
+}

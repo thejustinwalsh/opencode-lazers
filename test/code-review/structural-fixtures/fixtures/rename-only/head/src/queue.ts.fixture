@@ -1,0 +1,17 @@
+export class Queue<T> {
+  private items: T[] = [];
+
+  enqueue(item: T): void {
+    this.items.push(item);
+  }
+
+  dequeue(): T | undefined {
+    return this.items.shift();
+  }
+}
+
+export function drain<T>(queue: Queue<T>): T[] {
+  const out: T[] = [];
+  for (let item = queue.dequeue(); item !== undefined; item = queue.dequeue()) out.push(item);
+  return out;
+}

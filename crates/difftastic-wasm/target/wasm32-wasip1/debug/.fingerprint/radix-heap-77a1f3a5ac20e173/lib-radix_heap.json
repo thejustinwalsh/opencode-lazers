@@ -1,0 +1,20 @@
+{
+  "rustc": 17356518491003051113,
+  "features": "[]",
+  "declared_features": "[\"ordered-float\"]",
+  "target": 8687290698431829862,
+  "profile": 8979240926782815398,
+  "path": 5710339615355891720,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/radix-heap-77a1f3a5ac20e173/dep-lib-radix_heap",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

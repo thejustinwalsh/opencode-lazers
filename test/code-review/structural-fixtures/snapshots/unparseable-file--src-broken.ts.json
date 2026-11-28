@@ -1,0 +1,66 @@
+{
+  "aligned_lines": [
+    [0, 0],
+    [null, 1],
+    [1, 2]
+  ],
+  "chunks": [
+    [
+      {
+        "rhs": {
+          "line_number": 1,
+          "changes": [
+            { "start": 0, "end": 8, "content": "function", "highlight": "normal" },
+            { "start": 8, "end": 9, "content": " ", "highlight": "normal" },
+            { "start": 9, "end": 10, "content": "(", "highlight": "normal" },
+            { "start": 10, "end": 11, "content": " ", "highlight": "normal" },
+            { "start": 11, "end": 12, "content": "=", "highlight": "normal" },
+            { "start": 12, "end": 13, "content": ">", "highlight": "normal" },
+            { "start": 13, "end": 14, "content": " ", "highlight": "normal" },
+            { "start": 14, "end": 15, "content": "]", "highlight": "normal" },
+            { "start": 15, "end": 15, "content": "", "highlight": "normal" }
+          ]
+        }
+      },
+      {
+        "lhs": {
+          "line_number": 0,
+          "changes": [
+            { "start": 0, "end": 6, "content": "export", "highlight": "normal" },
+            { "start": 6, "end": 7, "content": " ", "highlight": "normal" },
+            { "start": 7, "end": 12, "content": "const", "highlight": "normal" },
+            { "start": 12, "end": 13, "content": " ", "highlight": "normal" },
+            { "start": 13, "end": 18, "content": "value", "highlight": "normal" },
+            { "start": 18, "end": 19, "content": " ", "highlight": "normal" },
+            { "start": 19, "end": 20, "content": "=", "highlight": "normal" },
+            { "start": 20, "end": 21, "content": " ", "highlight": "normal" },
+            { "start": 21, "end": 22, "content": "1", "highlight": "normal" },
+            { "start": 22, "end": 23, "content": ";", "highlight": "normal" }
+          ]
+        },
+        "rhs": {
+          "line_number": 0,
+          "changes": [
+            { "start": 0, "end": 6, "content": "export", "highlight": "normal" },
+            { "start": 6, "end": 7, "content": " ", "highlight": "normal" },
+            { "start": 7, "end": 12, "content": "const", "highlight": "normal" },
+            { "start": 12, "end": 13, "content": " ", "highlight": "normal" },
+            { "start": 13, "end": 18, "content": "value", "highlight": "normal" },
+            { "start": 18, "end": 19, "content": " ", "highlight": "normal" },
+            { "start": 19, "end": 20, "content": "=", "highlight": "normal" },
+            { "start": 20, "end": 21, "content": " ", "highlight": "normal" },
+            { "start": 21, "end": 22, "content": "{", "highlight": "normal" },
+            { "start": 22, "end": 23, "content": "{", "highlight": "normal" },
+            { "start": 23, "end": 24, "content": "{", "highlight": "normal" },
+            { "start": 24, "end": 25, "content": " ", "highlight": "normal" },
+            { "start": 25, "end": 26, "content": "1", "highlight": "normal" },
+            { "start": 26, "end": 27, "content": ";", "highlight": "normal" }
+          ]
+        }
+      }
+    ]
+  ],
+  "language": "Text (1 TypeScript parse error, exceeded DFT_PARSE_ERROR_LIMIT, first at 1:0)",
+  "path": "src/broken.ts",
+  "status": "changed"
+}

@@ -1,0 +1,23 @@
+{
+  "rustc": 17356518491003051113,
+  "features": "[]",
+  "declared_features": "[]",
+  "target": 8538020996741879950,
+  "profile": 8979240926782815398,
+  "path": 16988501500698395814,
+  "deps": [
+    [1611130274254986484, "tree_sitter_language", false, 3912557735039729257],
+    [8566280529589216631, "build_script_build", false, 12697766610170855758]
+  ],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/tree-sitter-ada-4c88e7b18ec466cf/dep-lib-tree_sitter_ada",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}
