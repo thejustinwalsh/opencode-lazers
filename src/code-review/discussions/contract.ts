@@ -1,5 +1,7 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
+import { TaskReferenceSchema } from "../../task.ts"
+import { encodeProjectID } from "../../tasks/links.ts"
 import { CodeReviewSourceIdentitySchema } from "../contract.ts"
 
 export const CodeReviewRangeSchema = z
@@ -14,8 +16,10 @@ export const CodeReviewRangeSchema = z
       range.endLine > range.startLine ||
       (range.endLine === range.startLine && range.endCol > range.startCol),
   )
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewRange = z.infer<typeof CodeReviewRangeSchema>
 
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
 export const CodeReviewSymbolIdentitySchema = z.strictObject({
   id: z.string().min(1).max(512),
   name: z.string().min(1).max(512),
@@ -23,8 +27,10 @@ export const CodeReviewSymbolIdentitySchema = z.strictObject({
   startLine: z.int().positive(),
   endLine: z.int().positive(),
 })
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewSymbolIdentity = z.infer<typeof CodeReviewSymbolIdentitySchema>
 
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
 export const CodeReviewAnchorSchema = z.strictObject({
   id: z.string().uuid(),
   source: CodeReviewSourceIdentitySchema,
@@ -33,8 +39,10 @@ export const CodeReviewAnchorSchema = z.strictObject({
   symbol: CodeReviewSymbolIdentitySchema.optional(),
   createdAt: z.int().nonnegative(),
 })
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewAnchor = z.infer<typeof CodeReviewAnchorSchema>
 
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
 export const CodeReviewThreadSchema = z.strictObject({
   id: z.string().uuid(),
   projectID: z.string().min(1).max(256),
@@ -46,8 +54,10 @@ export const CodeReviewThreadSchema = z.strictObject({
   createdAt: z.int().nonnegative(),
   updatedAt: z.int().nonnegative(),
 })
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewThread = z.infer<typeof CodeReviewThreadSchema>
 
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
 export const CodeReviewCommentSchema = z.strictObject({
   id: z.string().uuid(),
   threadID: z.string().uuid(),
@@ -55,16 +65,37 @@ export const CodeReviewCommentSchema = z.strictObject({
   authorSessionID: z.string().min(1).max(256),
   createdAt: z.int().nonnegative(),
 })
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewComment = z.infer<typeof CodeReviewCommentSchema>
 
-export const CodeReviewReferenceSchema = z.strictObject({
-  kind: z.literal("code-review"),
-  threadID: z.string().uuid(),
-  comparisonID: z.string().regex(/^[0-9a-f]{64}$/),
-  source: CodeReviewSourceIdentitySchema,
-  range: CodeReviewRangeSchema,
-  label: z.string().min(1).max(512),
-})
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
+export const CodeReviewReferenceSchema = z
+  .strictObject({
+    kind: z.literal("code-review"),
+    threadID: z.string().uuid(),
+    comparisonID: z.string().regex(/^[0-9a-f]{64}$/),
+    source: CodeReviewSourceIdentitySchema,
+    range: CodeReviewRangeSchema,
+    taskReference: TaskReferenceSchema,
+    href: z.string().min(1).max(2048),
+    label: z.string().min(1).max(512),
+  })
+  .superRefine((reference, ctx) => {
+    if (reference.comparisonID !== reference.source.comparisonID)
+      ctx.addIssue({
+        code: "custom",
+        path: ["comparisonID"],
+        message: "Review reference comparison must match its pinned source",
+      })
+    const expectedHref = `.lazers/tasks/${encodeProjectID(reference.source.projectID)}/${reference.taskReference}?review=${reference.threadID}&comparison=${reference.comparisonID}`
+    if (reference.href !== expectedHref)
+      ctx.addIssue({
+        code: "custom",
+        path: ["href"],
+        message: "Review reference href must use its issued task route",
+      })
+  })
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewReference = z.infer<typeof CodeReviewReferenceSchema>
 
 const CodeReviewArchitectSessionSchema = z.discriminatedUnion("status", [
@@ -75,14 +106,17 @@ const CodeReviewArchitectSessionSchema = z.discriminatedUnion("status", [
   }),
 ])
 
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
 export const CodeReviewDraftSchema = z.strictObject({
   session: CodeReviewArchitectSessionSchema,
   reference: CodeReviewReferenceSchema,
   quote: z.string().max(2_000_000),
   note: z.string().min(1).max(10_000),
 })
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewDraft = z.infer<typeof CodeReviewDraftSchema>
 
+// fallow-ignore-next-line unused-export -- consumed by LZ-286
 export const CodeReviewAnchorLocationSchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("located"),
@@ -93,6 +127,7 @@ export const CodeReviewAnchorLocationSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("ambiguous") }),
   z.strictObject({ status: z.literal("unavailable") }),
 ])
+// fallow-ignore-next-line unused-type -- consumed by LZ-286
 export type CodeReviewAnchorLocation = z.infer<typeof CodeReviewAnchorLocationSchema>
 
 const CodeReviewNavigationSchema = z.strictObject({

@@ -36,7 +36,7 @@ const MODULE = schemaModules["code-review"]
 function installCodeReviewSchema(repository: TaskRepository): void {
   repository.installSchema("code-review", MODULE.generation, MODULE.tables, (db) => {
     db.exec(`
-      CREATE TABLE code_review_comparisons (
+      CREATE TABLE IF NOT EXISTS code_review_comparisons (
         project_directory TEXT NOT NULL,
         comparison_id TEXT NOT NULL,
         task_id TEXT NOT NULL,
@@ -48,7 +48,7 @@ function installCodeReviewSchema(repository: TaskRepository): void {
         created_at INTEGER NOT NULL,
         PRIMARY KEY(project_directory,comparison_id)
       );
-      CREATE TABLE code_review_files (
+      CREATE TABLE IF NOT EXISTS code_review_files (
         project_directory TEXT NOT NULL,
         comparison_id TEXT NOT NULL,
         side TEXT NOT NULL,
@@ -63,13 +63,31 @@ function installCodeReviewSchema(repository: TaskRepository): void {
         attribution_task_ids TEXT NOT NULL,
         PRIMARY KEY(project_directory,comparison_id,side,path)
       );
-      CREATE INDEX code_review_files_side_path
+      CREATE INDEX IF NOT EXISTS code_review_files_side_path
         ON code_review_files(project_directory,comparison_id,side,path);
-      CREATE TABLE code_review_blobs (
+      CREATE TABLE IF NOT EXISTS code_review_blobs (
         project_directory TEXT NOT NULL,
         blob_id TEXT NOT NULL,
         content BLOB NOT NULL,
         PRIMARY KEY(project_directory,blob_id)
+      );
+      CREATE TABLE IF NOT EXISTS code_review_reviewed_baselines (
+        project_directory TEXT NOT NULL,
+        baseline_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        comparison_id TEXT NOT NULL,
+        identity_json TEXT NOT NULL,
+        reviewed_at INTEGER NOT NULL,
+        PRIMARY KEY(project_directory,baseline_id),
+        UNIQUE(project_directory,task_id,comparison_id)
+      );
+      CREATE INDEX IF NOT EXISTS code_review_reviewed_task_page
+        ON code_review_reviewed_baselines(project_directory,task_id,reviewed_at,baseline_id);
+      CREATE TABLE IF NOT EXISTS code_review_reviewed_requests (
+        project_directory TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        baseline_id TEXT NOT NULL,
+        PRIMARY KEY(project_directory,request_id)
       );
     `)
   })

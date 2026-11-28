@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test"
 import {
+  CodeReview,
   CodeReviewResolveInputSchema,
   CodeReviewSourceIdentitySchema,
+  CodeReviewStructuralInputSchema,
   CODE_REVIEW_CONTRACT_VERSION,
 } from "./contract.ts"
+import { CodeReviewDiscussions } from "./discussions/contract.ts"
+import { CodeReviewIntegrations } from "./integrations/contract.ts"
 
 const identity = {
   version: CODE_REVIEW_CONTRACT_VERSION,
@@ -60,4 +64,69 @@ test("mode-specific comparison coordinates are explicit and strict", () => {
       workspace: "/resurrect/me",
     }).success,
   ).toBe(false)
+})
+
+test("reviewed since inputs and structural selections are pinned and strict", () => {
+  expect(
+    CodeReviewResolveInputSchema.parse({
+      sessionID: "ses-1",
+      taskID: identity.taskID,
+      mode: "since",
+      baseComparisonID: "a".repeat(64),
+      headAttemptID: identity.attemptID,
+    }),
+  ).toMatchObject({ baseComparisonID: "a".repeat(64), headAttemptID: identity.attemptID })
+  expect(() =>
+    CodeReviewResolveInputSchema.parse({
+      sessionID: "ses-1",
+      taskID: identity.taskID,
+      mode: "since",
+      baseComparisonID: "a".repeat(64),
+      baseAttemptID: identity.attemptID,
+      headAttemptID: identity.attemptID,
+    }),
+  ).toThrow("one since-review baseline form")
+
+  expect(
+    CodeReviewStructuralInputSchema.parse({
+      sessionID: "ses-1",
+      comparisonID: "a".repeat(64),
+      path: "src/new.ts",
+      previousPath: "src/old.ts",
+      headSide: "head",
+      baseSide: "base",
+    }),
+  ).toMatchObject({ path: "src/new.ts", previousPath: "src/old.ts" })
+  expect(
+    CodeReviewStructuralInputSchema.safeParse({
+      sessionID: "ses-1",
+      comparisonID: "a".repeat(64),
+      path: "../new.ts",
+    }).success,
+  ).toBe(false)
+})
+
+test("shared review consumer RPC contracts publish the agreed operation names", () => {
+  expect(CodeReview.id).toBe("lazers.codeReview")
+  expect(Object.keys(CodeReview.methods)).toEqual([
+    "resolve",
+    "history",
+    "shape",
+    "source",
+    "structural",
+    "markReviewed",
+    "reviewed",
+  ])
+  expect(CodeReviewDiscussions.id).toBe("lazers.codeReviewDiscussions")
+  expect(Object.keys(CodeReviewDiscussions.methods)).toEqual([
+    "createThread",
+    "getThread",
+    "appendComment",
+    "setThreadState",
+    "prepareDraft",
+    "locateThread",
+    "linkCorrection",
+  ])
+  expect(CodeReviewIntegrations.id).toBe("lazers.codeReviewIntegrations")
+  expect(Object.keys(CodeReviewIntegrations.methods)).toEqual(["list", "resolve"])
 })
