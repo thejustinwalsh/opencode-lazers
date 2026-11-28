@@ -1,1 +1,20 @@
-{"rustc":17356518491003051113,"features":"[\"default\", \"std\"]","declared_features":"[\"default\", \"std\"]","target":929485496544747924,"profile":9469513639638652478,"path":16554260860463095081,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug/.fingerprint/shlex-7b725e984a03ceb7/dep-lib-shlex","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":0}
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"default\", \"std\"]",
+  "declared_features": "[\"default\", \"std\"]",
+  "target": 929485496544747924,
+  "profile": 9469513639638652478,
+  "path": 16554260860463095081,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "debug/.fingerprint/shlex-7b725e984a03ceb7/dep-lib-shlex",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 0
+}

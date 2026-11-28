@@ -1,1 +1,20 @@
-{"rustc":17356518491003051113,"features":"[\"alloc\", \"std\"]","declared_features":"[\"alloc\", \"default\", \"loom\", \"loom-crate\", \"nightly\", \"std\"]","target":5408242616063297496,"profile":14801346827131281926,"path":3379233976031097998,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug/.fingerprint/crossbeam-epoch-96d79a2e111dc08b/dep-build-script-build-script-build","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":0}
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"alloc\", \"std\"]",
+  "declared_features": "[\"alloc\", \"default\", \"loom\", \"loom-crate\", \"nightly\", \"std\"]",
+  "target": 5408242616063297496,
+  "profile": 14801346827131281926,
+  "path": 3379233976031097998,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "debug/.fingerprint/crossbeam-epoch-96d79a2e111dc08b/dep-build-script-build-script-build",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 0
+}

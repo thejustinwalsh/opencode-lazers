@@ -1,1 +1,20 @@
-{"rustc":17356518491003051113,"features":"[\"default\", \"std\"]","declared_features":"[\"align\", \"const-extern-fn\", \"default\", \"extra_traits\", \"rustc-dep-of-std\", \"rustc-std-workspace-core\", \"std\", \"use_std\"]","target":17682796336736096309,"profile":8979240926782815398,"path":5962626250992123372,"deps":[[9559541369283268958,"build_script_build",false,17578073068781851833]],"local":[{"CheckDepInfo":{"dep_info":"wasm32-wasip1/debug/.fingerprint/libc-4d8f086b5837a9bc/dep-lib-libc","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":4516028974012260856}
+{
+  "rustc": 17356518491003051113,
+  "features": "[\"default\", \"std\"]",
+  "declared_features": "[\"align\", \"const-extern-fn\", \"default\", \"extra_traits\", \"rustc-dep-of-std\", \"rustc-std-workspace-core\", \"std\", \"use_std\"]",
+  "target": 17682796336736096309,
+  "profile": 8979240926782815398,
+  "path": 5962626250992123372,
+  "deps": [[9559541369283268958, "build_script_build", false, 17578073068781851833]],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/libc-4d8f086b5837a9bc/dep-lib-libc",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

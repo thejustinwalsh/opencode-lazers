@@ -1,1 +1,20 @@
-{"rustc":17356518491003051113,"features":"[]","declared_features":"[]","target":386963995487357571,"profile":8979240926782815398,"path":7107921441730038038,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"wasm32-wasip1/debug/.fingerprint/termcolor-4e466d33341277bb/dep-lib-termcolor","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":4516028974012260856}
+{
+  "rustc": 17356518491003051113,
+  "features": "[]",
+  "declared_features": "[]",
+  "target": 386963995487357571,
+  "profile": 8979240926782815398,
+  "path": 7107921441730038038,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/termcolor-4e466d33341277bb/dep-lib-termcolor",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

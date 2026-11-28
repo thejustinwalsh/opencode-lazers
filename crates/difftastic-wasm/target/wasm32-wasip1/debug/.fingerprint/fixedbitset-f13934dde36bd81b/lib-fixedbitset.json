@@ -1,1 +1,20 @@
-{"rustc":17356518491003051113,"features":"[]","declared_features":"[\"default\", \"serde\", \"std\"]","target":1586632367936366909,"profile":8979240926782815398,"path":10357266035054938251,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"wasm32-wasip1/debug/.fingerprint/fixedbitset-f13934dde36bd81b/dep-lib-fixedbitset","checksum":false}}],"rustflags":[],"config":9396254390672932401,"compile_kind":4516028974012260856}
+{
+  "rustc": 17356518491003051113,
+  "features": "[]",
+  "declared_features": "[\"default\", \"serde\", \"std\"]",
+  "target": 1586632367936366909,
+  "profile": 8979240926782815398,
+  "path": 10357266035054938251,
+  "deps": [],
+  "local": [
+    {
+      "CheckDepInfo": {
+        "dep_info": "wasm32-wasip1/debug/.fingerprint/fixedbitset-f13934dde36bd81b/dep-lib-fixedbitset",
+        "checksum": false
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 9396254390672932401,
+  "compile_kind": 4516028974012260856
+}

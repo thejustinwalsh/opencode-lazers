@@ -1,1 +1,20 @@
-{"rustc":17356518491003051113,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[12705825803163126369,"build_script_build",false,16217171367539508066]],"local":[{"RerunIfChanged":{"output":"wasm32-wasip1/debug/build/libm-efd8f2820b149845/output","paths":["build.rs"]}}],"rustflags":[],"config":0,"compile_kind":0}
+{
+  "rustc": 17356518491003051113,
+  "features": "",
+  "declared_features": "",
+  "target": 0,
+  "profile": 0,
+  "path": 0,
+  "deps": [[12705825803163126369, "build_script_build", false, 16217171367539508066]],
+  "local": [
+    {
+      "RerunIfChanged": {
+        "output": "wasm32-wasip1/debug/build/libm-efd8f2820b149845/output",
+        "paths": ["build.rs"]
+      }
+    }
+  ],
+  "rustflags": [],
+  "config": 0,
+  "compile_kind": 0
+}
