@@ -1,10 +1,9 @@
 import { afterEach, expect, test } from "bun:test"
 import { cleanupFixtureRepos, commitFile, fixtureRepo } from "./change-identity-fixture.ts"
 import { git } from "./artifacts.ts"
+import { changeContained, containmentComputationCount } from "./integration/containment.ts"
 import {
   artifactIdentity,
-  changeContained,
-  containmentComputationCount,
   ensureNotesConfig,
   pushChangeNotes,
   readChangeNote,

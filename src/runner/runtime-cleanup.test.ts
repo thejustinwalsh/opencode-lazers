@@ -158,12 +158,13 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
   await driveWithTaskSourceLandings(f)
   const artifact = f.store.plan(f.receipt.planID)!.artifact!
+  git(f.root, ["checkout", "-b", "feature"])
   const request = (key: string) => ({
     requestID: key,
     planID: f.receipt.planID,
     action: "integrated",
     artifact,
-    targetBranch: "main",
+    targetBranch: "feature",
     reason: "Reviewed task changes and combined checks",
   })
   await expect(f.runtime.command(request("not-merged"), "owner")).rejects.toThrow()
@@ -183,6 +184,7 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(await f.host.worktrees()).toEqual([f.root])
   expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+  expect(f.store.attempts(f.receipt.planID)[0]!.workspace).toBe(worktree)
 })
 
 test("integrated cleanup removes historical graph candidates from their own settled receipts", async () => {

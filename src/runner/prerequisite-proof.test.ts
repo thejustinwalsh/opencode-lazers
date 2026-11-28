@@ -183,6 +183,7 @@ test("task prerequisites require a current recorded landing and fresh artifact c
     node_state: "accepted",
     artifact,
     integration_id: 12,
+    // Legacy task integration records predate `reason`; branch, artifact and head remain readable.
     integration_payload: JSON.stringify({ artifact, branch: currentBranch, head: integratedHead }),
   })
   const gitCalls: string[][] = []
