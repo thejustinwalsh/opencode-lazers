@@ -1,4 +1,4 @@
-# Release verification: 0.2.1 candidate
+# Release verification: 0.2.1
 
 Checked on macOS arm64 with regular OpenCode Desktop/service 2.4.1 and Bun 1.4.4-canary.1. The package SDK remains pinned to 2.3.0. No separate Desktop profile was started for these checks.
 
@@ -85,4 +85,14 @@ Release metadata and install commands use 0.2.1. Package creation is complete; p
 
 Tag `v0.2.1` resolves to patch commit `74ccd4a6`; main preserves it through normal merge `0e4d127d`. [Release CI 46168612569](https://github.com/thejustinwalsh/opencode-lazers/actions/runs/46168612569) passed quality, 187 WebGPU/packaging/native-binary tests (zero failures, 1,113 assertions), build and fresh-install import checks. [GitHub v0.2.1](https://github.com/thejustinwalsh/opencode-lazers/releases/tag/v0.2.1) is public. Its actual downloaded asset was installed into another disposable consumer: 421 dependencies, zero native executables/addons, no Review feature exports/source. Both temporary consumers were removed after their checks.
 
-Website deployment `46168740427` completed for main merge `0e4d127d`. npm still reports HTTP 401 for `npm whoami`; publication requires renewed maintainer authentication. No npm success is claimed.
+Website deployment `46168740427` completed for main merge `0e4d127d`.
+
+## Automated npm publication
+
+The maintainer completed npm's one-time authentication. Trusted publisher `86da5e61-e599-4ef0-abb3-a21b1040be78` binds `thejustinwalsh/opencode-lazers` to `release.yml`. npm reports direct publish and stage-publish permissions; the workflow uses `npm publish`. It stores no npm write token in its configuration.
+
+The tag workflow publishes the tested archive, attaches `CHANGELOG.md`, and uses that changelog as the GitHub release body. New archives include the same generated notes. The changelog generator prefers human-written release notes and falls back to grouped Git history. Non-publishing CI runs `46170781842` and `46171112002` passed; local release-tool checks passed seven tests and `actionlint`. The first live publisher rejected a relative tarball argument as a GitHub package (`EALLOWGIT`); `d71b5f5e` prefixes it with `./` without changing npm's fetch policy.
+
+[OIDC publication run 46171601614](https://github.com/thejustinwalsh/opencode-lazers/actions/runs/46171601614) passed. npm accepted `opencode-lazers@0.2.1` at `2026-11-28T17:40:04Z` and signed provenance. GitHub now exposes the archive and changelog. The npm response said the package was processing; its maintainer Versions page subsequently showed `Validating`, with automated review incomplete. `npm stage list` returned no staged versions awaiting approval. As of the `17:47Z` lookup, public npm still returned 404, so a registry install is not yet claimed.
+
+The native packaging worktree was clean and merged, then removed through OpenCode's non-forced worktree API. Regular Desktop was rebuilt/reloaded from integrated main; the original feature attempt survived, and Tasks Project shows LZ-285 and LZ-291 running. The Review tab label is verified. These main observations include the in-progress 0.3.0 foundation; they are distinct from the repair-only 0.2.1 archive checks above.
