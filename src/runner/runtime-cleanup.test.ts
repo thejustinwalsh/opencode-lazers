@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { git } from "./artifacts.ts"
 import type { RunnerCheckReceipt } from "./artifacts.ts"
+import { fingerprint } from "../identity.ts"
 import type { HostSession } from "./host.ts"
 import {
   acceptedMergedFixture,
@@ -16,6 +17,12 @@ import {
   useRuntimeFixtureCleanup,
 } from "./runtime.fixture.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
+import { summarizeCheckReceipt } from "./runtime-helpers.ts"
+import {
+  forgetVerificationActivity,
+  startVerificationActivity,
+  verificationActivityKey,
+} from "./verification-activities.ts"
 
 useRuntimeFixtureCleanup()
 
@@ -65,6 +72,85 @@ async function addGraphCandidate(f: RunnerFixture, planID: string, artifact: str
     )
   })
   return { workspace, check, receipt }
+}
+
+function addReceiptlessGraphCheckReplacement(
+  f: RunnerFixture,
+  planID: string,
+  workspace: string,
+  artifact: string,
+) {
+  const checkEffect = f.store
+    .effects(planID)
+    .find(
+      (effect) =>
+        effect.kind.startsWith("graph-verify:") &&
+        JSON.parse(effect.payload).workspace === workspace,
+    )!
+  const check = JSON.parse(checkEffect.payload).check as {
+    id: string
+    command: string
+  }
+  const sourceGeneration = "repair-generation-1"
+  const verificationEpoch = 283
+  const reservationPayload = {
+    workspace,
+    artifact,
+    identity: artifact,
+    check,
+    sourceGeneration,
+    verificationEpoch,
+  }
+  const replacementPayload = {
+    ...reservationPayload,
+    check: { ...check, timeoutMs: 2_000, inactivityTimeoutMs: 1_000 },
+    verificationDeadline: { defaultInactivityTimeoutMs: 1_000 },
+  }
+  const reservationReceipt = JSON.stringify({
+    superseded: true,
+    reason: "No settled receipt was recorded; the check re-runs",
+    previous: null,
+  })
+  const checkReceipt: RunnerCheckReceipt = {
+    ...JSON.parse(checkEffect.receipt!).check,
+    ...check,
+    cwd: workspace,
+    artifact,
+    inputIdentity: artifact,
+    exitCode: 0,
+    timedOut: false,
+    aborted: false,
+    phasesComplete: true,
+    processCleanup: {
+      state: "settled",
+      capability: "process-group",
+      rootPID: process.pid,
+    },
+  }
+  const replacementID = crypto.randomUUID()
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_effects SET state='failed',payload=?,receipt=? WHERE id=?").run(
+      JSON.stringify(reservationPayload),
+      reservationReceipt,
+      checkEffect.id,
+    )
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'completed',?,?,1)").run(
+      replacementID,
+      planID,
+      null,
+      null,
+      checkEffect.kind,
+      JSON.stringify(replacementPayload),
+      JSON.stringify({ check: checkReceipt }),
+    )
+  })
+  return {
+    reservationID: checkEffect.id,
+    reservationPayload: JSON.stringify(reservationPayload),
+    reservationReceipt,
+    replacementID,
+    checkReceipt,
+  }
 }
 
 test("native cleanup follows verified integration, preserves dirty work, and retries explicitly", async () => {
@@ -181,6 +267,173 @@ test("integrated cleanup removes historical graph candidates from their own sett
       .filter((effect) => effect.kind.startsWith("graph-verify:"))
       .map((effect) => [effect.id, effect.state, effect.receipt]),
   ).toEqual(checksBefore)
+})
+
+test("integrated cleanup removes a receipt-less graph reservation across verification generations", async () => {
+  const { f, plan, integrate } = await acceptedMergedFixture()
+  const artifact = plan.artifact!
+  const candidate = await addGraphCandidate(
+    f,
+    plan.id,
+    artifact,
+    "combined-receiptless-reservation",
+  )
+  const reservation = addReceiptlessGraphCheckReplacement(f, plan.id, candidate.workspace, artifact)
+  const replacement = f.store
+    .effects(plan.id)
+    .find((effect) => effect.id === reservation.replacementID)!
+  const replacementPayload = JSON.parse(replacement.payload) as Record<string, unknown>
+  replacementPayload.sourceGeneration = "later-repair-generation"
+  replacementPayload.verificationEpoch = 284
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET payload=? WHERE id=?")
+      .run(JSON.stringify(replacementPayload), replacement.id),
+  )
+  const checksBefore = f.store
+    .effects(plan.id)
+    .filter((effect) => effect.kind.startsWith("graph-verify:"))
+    .map((effect) => [effect.id, effect.state, effect.payload, effect.receipt])
+  const removed: string[] = []
+  const nativeRemove = f.host.removeWorktree
+  f.host.removeWorktree = async (workspace) => {
+    removed.push(workspace)
+    await nativeRemove(workspace)
+  }
+
+  await integrate("integrate-receiptless-graph-check")
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)).toMatchObject({ state: "integrated", reason: null })
+  expect(removed).toContain(candidate.workspace)
+  expect(await f.host.worktrees()).not.toContain(candidate.workspace)
+  expect(
+    f.store
+      .effects(plan.id)
+      .filter((effect) => effect.kind.startsWith("graph-verify:"))
+      .map((effect) => [effect.id, effect.state, effect.payload, effect.receipt]),
+  ).toEqual(checksBefore)
+})
+
+test("integrated cleanup preserves a receipt-less graph reservation while its process is running", async () => {
+  const { f, plan, integrate } = await acceptedMergedFixture()
+  const artifact = plan.artifact!
+  const candidate = await addGraphCandidate(f, plan.id, artifact, "combined-live-reservation")
+  const reservation = addReceiptlessGraphCheckReplacement(f, plan.id, candidate.workspace, artifact)
+  const replacement = f.store
+    .effects(plan.id)
+    .find((entry) => entry.id === reservation.replacementID)!
+  const replacementPayload = JSON.parse(replacement.payload) as Record<string, unknown>
+  replacementPayload.sourceGeneration = "later-repair-generation"
+  replacementPayload.verificationEpoch = 284
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET payload=? WHERE id=?")
+      .run(JSON.stringify(replacementPayload), replacement.id),
+  )
+  const effect = f.store.effects(plan.id).find((entry) => entry.id === reservation.reservationID)!
+  const identity = { effectID: effect.id, payload: effect.payload }
+  const activityIdentity = fingerprint(identity)
+  let finishActivity!: (receipt: RunnerCheckReceipt) => void
+  const pendingActivity = new Promise<RunnerCheckReceipt>((resolve) => {
+    finishActivity = resolve
+  })
+  const activity = startVerificationActivity<RunnerCheckReceipt>({
+    databasePath: f.store.repository.path,
+    key: verificationActivityKey(f.store.repository.path, effect.id),
+    identity: activityIdentity,
+    owner: f.runtime.owner,
+    metadata: {
+      kind: "effect",
+      projectDirectory: f.root,
+      planID: plan.id,
+      effectID: effect.id,
+    },
+    run: () => pendingActivity,
+    summarize: summarizeCheckReceipt,
+  }).activity
+
+  try {
+    await integrate("integrate-live-receiptless-graph-check")
+    await f.runtime.tick()
+    expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+    expect(f.store.plan(plan.id)?.reason).toContain("process is not settled")
+    expect(await f.host.worktrees()).toContain(candidate.workspace)
+
+    finishActivity!(reservation.checkReceipt)
+    await activity.settled
+    await f.runtime.tick()
+
+    expect(f.store.plan(plan.id)).toMatchObject({ state: "integrated", reason: null })
+    expect(await f.host.worktrees()).not.toContain(candidate.workspace)
+  } finally {
+    finishActivity(reservation.checkReceipt)
+    await activity.settled
+    forgetVerificationActivity(activity.key, activityIdentity)
+  }
+})
+
+test("integrated cleanup preserves uncertain superseded process evidence despite a settled replacement", async () => {
+  const { f, plan, integrate } = await acceptedMergedFixture()
+  const artifact = plan.artifact!
+  const candidate = await addGraphCandidate(f, plan.id, artifact, "combined-uncertain-reservation")
+  const reservation = addReceiptlessGraphCheckReplacement(f, plan.id, candidate.workspace, artifact)
+  const unsettledCheck = {
+    ...reservation.checkReceipt,
+    processCleanup: {
+      state: "uncertain",
+      capability: "process-group",
+      rootPID: 28401,
+    },
+  }
+  const supersededReceipt = JSON.stringify({
+    superseded: true,
+    reason: "No settled receipt was recorded; the check re-runs",
+    previous: { result: { check: unsettledCheck } },
+  })
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET receipt=? WHERE id=?")
+      .run(supersededReceipt, reservation.reservationID),
+  )
+
+  await integrate("integrate-uncertain-receiptless-graph-check")
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+  expect(f.store.plan(plan.id)?.reason).toContain("not conclusively complete")
+  expect(await f.host.worktrees()).toContain(candidate.workspace)
+  expect(
+    f.store.effects(plan.id).find((effect) => effect.id === reservation.reservationID)?.receipt,
+  ).toBe(supersededReceipt)
+})
+
+test("integrated cleanup visibly preserves a receipt-less graph reservation with wrong check lineage", async () => {
+  const { f, plan, integrate } = await acceptedMergedFixture()
+  const artifact = plan.artifact!
+  const candidate = await addGraphCandidate(f, plan.id, artifact, "combined-wrong-lineage")
+  const reservation = addReceiptlessGraphCheckReplacement(f, plan.id, candidate.workspace, artifact)
+  const replacement = f.store
+    .effects(plan.id)
+    .find((effect) => effect.id === reservation.replacementID)!
+  f.store.atomic((db) => {
+    const payload = JSON.parse(replacement.payload) as { check: { command: string } }
+    payload.check.command = "different combined check"
+    db.query("UPDATE runner_effects SET payload=? WHERE id=?").run(
+      JSON.stringify(payload),
+      replacement.id,
+    )
+  })
+
+  await integrate("integrate-mismatched-check-graph-lineage")
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+  expect(f.store.plan(plan.id)?.reason).toContain("no matching settled replacement")
+  expect(await f.host.worktrees()).toContain(candidate.workspace)
+  expect(
+    f.store.effects(plan.id).find((effect) => effect.id === reservation.reservationID),
+  ).toMatchObject({ state: "failed", receipt: reservation.reservationReceipt })
 })
 
 test("historical graph cleanup retries after nested process settlement without rewriting check evidence", async () => {

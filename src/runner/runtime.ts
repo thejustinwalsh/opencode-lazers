@@ -592,6 +592,9 @@ export class TaskRuntime {
       adoptionCheckInputMatches: (...args) =>
         this.adoptionExecution.adoptionCheckInputMatches(...args),
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+      checkEffectActivity: (...args) => this.checkActivities.checkEffectActivity(...args),
+      checkEffectActivityIdentity: (...args) =>
+        this.checkActivities.checkEffectActivityIdentity(...args),
       directory: this.directory,
       effect: (...args) => this.journal.effect(...args),
       host: this.host,

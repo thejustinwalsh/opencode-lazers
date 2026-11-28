@@ -74,6 +74,50 @@ const newerWorkspace = "/project.worktrees/newer"
 const olderArtifact = "a".repeat(40)
 const newerArtifact = "b".repeat(40)
 
+function supersededGraphWorkspace() {
+  const workspace = olderWorkspace
+  const artifact = olderArtifact
+  const checkID = "reserved"
+  const command = "run combined checks"
+  const [source, reservation] = graphWorkspace({ workspace, artifact, checkID, command })
+  const payload = {
+    workspace,
+    artifact,
+    check: { id: checkID, command },
+    sourceGeneration: "repair-generation",
+    verificationEpoch: 283,
+  }
+  const originalReceipt = JSON.parse(reservation!.receipt!) as {
+    check?: Record<string, unknown>
+  }
+  const receipt = JSON.stringify({
+    superseded: true,
+    reason: "No settled receipt was recorded; the check re-runs",
+    previous: null,
+  })
+  reservation!.state = "failed"
+  reservation!.payload = JSON.stringify(payload)
+  reservation!.receipt = receipt
+
+  const replacement = effect({
+    id: "replacement-reserved",
+    kind: `graph-verify:${checkID}`,
+    state: "completed",
+    payload: {
+      ...payload,
+      check: { ...payload.check, timeoutMs: 2_000, inactivityTimeoutMs: 1_000 },
+      verificationDeadline: { defaultInactivityTimeoutMs: 1_000 },
+    },
+    receipt: {
+      check: {
+        ...originalReceipt.check,
+        phasesComplete: true,
+      },
+    },
+  })
+  return { source: source!, reservation: reservation!, replacement }
+}
+
 test("graph workspace settlement follows each candidate's own checks and preserves failed results", () => {
   const oldEffects = graphWorkspace({
     workspace: olderWorkspace,
@@ -149,6 +193,132 @@ test("a nested uncertain check only settles workspace cleanup when its process r
     exitCode: 9,
     aborted: true,
   })
+})
+
+test("a receipt-less superseded graph check follows a later settled check with exact lineage", () => {
+  const { source, reservation, replacement } = supersededGraphWorkspace()
+  const reservationReceipt = reservation.receipt
+
+  expect(() =>
+    assertGraphWorkspaceQuiescent([source, reservation, replacement], olderWorkspace),
+  ).not.toThrow()
+  expect(reservation.state).toBe("failed")
+  expect(reservation.receipt).toBe(reservationReceipt)
+})
+
+test("catch-path supersession reasons and additive receipt metadata are diagnostic only", () => {
+  const { source, reservation, replacement } = supersededGraphWorkspace()
+  reservation.receipt = JSON.stringify({
+    superseded: true,
+    reason: "The check re-runs: native receipt could not be read",
+    previous: null,
+    reconciliation: "catch-path",
+    observation: { retry: 2 },
+  })
+
+  expect(() =>
+    assertGraphWorkspaceQuiescent([source, reservation, replacement], olderWorkspace),
+  ).not.toThrow()
+})
+
+test("settled replacement across verification generations still proves workspace quiescence", () => {
+  const { source, reservation, replacement } = supersededGraphWorkspace()
+  const payload = JSON.parse(replacement.payload) as Record<string, unknown>
+  payload.sourceGeneration = "later-repair-generation"
+  payload.verificationEpoch = 284
+  replacement.payload = JSON.stringify(payload)
+
+  expect(() =>
+    assertGraphWorkspaceQuiescent([source, reservation, replacement], olderWorkspace),
+  ).not.toThrow()
+})
+
+test("a receipt-less superseded graph check holds without an exact later replacement", () => {
+  const cases = [
+    {
+      name: "no replacement",
+      mutate: (effects: EffectRow[]) => effects.pop(),
+    },
+    {
+      name: "wrong artifact",
+      mutate: (effects: EffectRow[]) => {
+        const payload = JSON.parse(effects[2]!.payload) as Record<string, unknown>
+        payload.artifact = newerArtifact
+        effects[2]!.payload = JSON.stringify(payload)
+      },
+    },
+    {
+      name: "wrong check",
+      mutate: (effects: EffectRow[]) => {
+        const payload = JSON.parse(effects[2]!.payload) as {
+          check: { command: string }
+        }
+        payload.check.command = "different check"
+        effects[2]!.payload = JSON.stringify(payload)
+      },
+    },
+    {
+      name: "missing check identity",
+      mutate: (effects: EffectRow[]) => {
+        const payload = JSON.parse(effects[2]!.payload) as Record<string, unknown>
+        delete payload.check
+        effects[2]!.payload = JSON.stringify(payload)
+      },
+    },
+    {
+      name: "replacement precedes reservation",
+      mutate: (effects: EffectRow[]) => effects.splice(1, 2, effects[2]!, effects[1]!),
+    },
+    {
+      name: "replacement is not completed",
+      mutate: (effects: EffectRow[]) => {
+        effects[2]!.state = "uncertain"
+      },
+    },
+  ]
+
+  for (const { mutate } of cases) {
+    const { source, reservation, replacement } = supersededGraphWorkspace()
+    const effects = [source, reservation, replacement]
+    mutate(effects)
+
+    expect(() => assertGraphWorkspaceQuiescent(effects, olderWorkspace)).toThrow()
+  }
+})
+
+test("a superseded check with nested uncertain process evidence still holds cleanup", () => {
+  const { source, reservation, replacement } = supersededGraphWorkspace()
+  const unsettledCheck = {
+    id: "reserved",
+    command: "run combined checks",
+    cwd: olderWorkspace,
+    artifact: olderArtifact,
+    inputIdentity: olderArtifact,
+    environmentIdentity: "{}",
+    startedAt: 1,
+    endedAt: 2,
+    exitCode: 0,
+    timedOut: false,
+    stdout: "",
+    stderr: "",
+    processCleanup: {
+      state: "uncertain",
+      capability: "process-group",
+      rootPID: 42,
+    },
+  }
+  reservation.receipt = JSON.stringify({
+    superseded: true,
+    reason: "No settled receipt was recorded; the check re-runs",
+    previous: { result: { check: unsettledCheck } },
+  })
+
+  expect(() =>
+    assertGraphWorkspaceQuiescent([source, reservation, replacement], olderWorkspace),
+  ).toThrow("not conclusively complete")
+  expect(JSON.parse(reservation.receipt!).previous.result.check.processCleanup.state).toBe(
+    "uncertain",
+  )
 })
 
 test("active, unsettled, malformed, or mismatched graph check evidence holds cleanup", () => {

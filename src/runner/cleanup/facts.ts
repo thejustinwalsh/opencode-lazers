@@ -24,6 +24,7 @@ type CleanupPlanFacts = {
 type CleanupRetryFact = {
   sourceID: string
   workspace: string
+  graphCheckActivityRefs: CleanupGraphCheckActivityRef[]
   workspaceExists: boolean
   retryFacts?: string
   removalFound: boolean
@@ -31,6 +32,11 @@ type CleanupRetryFact = {
   previousFacts?: unknown
   previousCheckedAt?: unknown
   liveBlocker: boolean
+}
+
+export type CleanupGraphCheckActivityRef = {
+  effectID: string
+  identity: string
 }
 
 export type CleanupFacts = {
@@ -156,6 +162,7 @@ function readCleanupFacts(
     return {
       sourceID: effect.id,
       workspace,
+      graphCheckActivityRefs: graphCheckActivityRefs(effects, workspace),
       workspaceExists: existsSync(workspace),
       retryFacts,
       removalFound: removal !== undefined,
@@ -166,6 +173,22 @@ function readCleanupFacts(
     }
   })
   return { plan: { state: plan.state }, pending, retries }
+}
+
+function graphCheckActivityRefs(
+  effects: EffectRow[],
+  workspace: string,
+): CleanupGraphCheckActivityRef[] {
+  return effects.flatMap((effect) => {
+    if (!effect.kind.startsWith("graph-verify:") || jsonWorkspace(effect.payload) !== workspace)
+      return []
+    return [
+      {
+        effectID: effect.id,
+        identity: fingerprint({ effectID: effect.id, payload: effect.payload }),
+      },
+    ]
+  })
 }
 
 /** Current facts for a source effect; used by active cleanup and retry receipts. */
